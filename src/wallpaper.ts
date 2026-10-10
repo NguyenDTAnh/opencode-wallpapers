@@ -8,6 +8,12 @@ export interface Scene {
   readonly W: number
   readonly H: number
   readonly pixels: Uint8Array
+  // Optional: boxes [x0, y0, x1, y1, ...] in pixels, inclusive, outside which this frame's pixels match the last
+  // frame's (Canvas provides it). Without it the engine refits every cell every frame.
+  readonly changed?: readonly number[]
+  // Optional: boxes like changed's around what this frame drew over the still background, so the engine can let cells
+  // where something moves follow it more closely (Canvas provides it).
+  readonly touched?: readonly number[]
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void
@@ -17,6 +23,17 @@ export interface Scene {
   react?(event: AgentEvent): void
   // Optional reaction to a click on open background, in screen heights: x runs 0..W/H across and y 0..1 down.
   poke?(x: number, y: number): void
+  // Optional: where OpenCode's text sits, sent when the scene starts and about once a second after that, so creatures
+  // can keep to open ground and visitors can come on where they'll be seen.
+  textMap?(map: TextMap): void
+}
+
+// A coarse grid over the whole screen, row-major: how much each cell is covered by text, its scrim or a panel, from 0
+// (open) to 1 (hidden).
+export interface TextMap {
+  readonly cols: number
+  readonly rows: number
+  readonly cover: Float32Array
 }
 
 export const AGENT_EVENTS = ["busy", "idle", "done", "error"] as const

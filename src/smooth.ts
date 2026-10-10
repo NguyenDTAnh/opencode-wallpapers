@@ -105,16 +105,17 @@ let grid: Float32Array = new Float32Array(0)
 let GW = 0
 let GH = 0
 let curve: Uint8Array = new Uint8Array(256)
-// Each cell's sub-pixels when its glyph was last chosen here: most edges hold still, and keep their glyph cheaply.
-let seen = new Float32Array(0)
+let seen: Float32Array = new Float32Array(0)
 
-// The frame's sub-pixel grid (2x4 per cell, RGB) and tone curve, which refineEdge reads around each cell.
-export function prepareEdges(frame: Float32Array, width: number, height: number, tone: Uint8Array) {
+// The frame's sub-pixel grid (2x4 per cell, RGB) and tone curve, which refineEdge reads around each cell, and the
+// engine's record of each cell's sub-pixels when its glyph was last chosen here (24 values per cell, -1 to start):
+// most edges hold still, and keep their glyph cheaply.
+export function prepareEdges(frame: Float32Array, width: number, height: number, tone: Uint8Array, record: Float32Array) {
   grid = frame
   GW = width
   GH = height
   curve = tone
-  if (seen.length !== (width / 2) * (height / 4) * 24) seen = new Float32Array((width / 2) * (height / 4) * 24).fill(-1)
+  seen = record
 }
 
 // Given the octant writeOctant chose for cell (x, y) from its sub-pixels q, looks for a smooth glyph that fits the
