@@ -123,6 +123,7 @@ export function prepareEdges(frame: Float32Array, width: number, height: number,
 // octants' staircase. Keeps last frame's glyph unless the new one is clearly better. Returns the glyph id used;
 // writeOctant must have been given previous only if it was an octant.
 export function refineEdge(q: Float32Array, previous: number, octant: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number, x: number, y: number, deepR: number, deepG: number, deepB: number, st: number, sb: number) {
+  if (octant === 0 || octant === 255) return octant
   let range = 0
   for (let c = 0; c < 3; c++) {
     low[c] = 255
@@ -134,9 +135,9 @@ export function refineEdge(q: Float32Array, previous: number, octant: number, ch
     }
     range = Math.max(range, high[c] - low[c])
   }
-  if (range < EDGE || octant === 0 || octant === 255) return octant
+  if (range < EDGE) return octant
   let same = previous >= 0
-  for (let s = 0; s < 24 && same; s++) same = Math.abs(q[s] - seen[i * 24 + s]) < 0.5
+  for (let s = 0; s < 24 && same; s++) same = Math.abs(q[s] - seen[i * 24 + s]) < 3
   if (same) return previous >= FIRST ? write(q, previous, char, fg, bg, i, o) : octant
   seen.set(q, i * 24)
   for (let ny = 0; ny < 6; ny++) {
