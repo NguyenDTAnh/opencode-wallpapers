@@ -1079,7 +1079,7 @@ export function createEngine(
       const [deepR, deepG, deepB] = scrimAt(scrim, y / Math.max(1, H - 1), light)
       for (let x = 0; x < W; x++) {
         const i = y * W + x
-        // Cells where something moves fit with a looser hysteresis (see tolerance), so they are never reused.
+        // Cells where something moves fit differently (see tolerance), so they are never reused.
         const reusable = fitted[i] === 1 && !refitAll && refit[i] === 0 && moving[i] === 0
         fitted[i] = 0
         if (imageCell[i]) continue
@@ -1134,7 +1134,8 @@ export function createEngine(
           rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
           fitTop[i] = st
           fitBottom[i] = sb
-          fitted[i] = 1
+          // A fit made while something moved (see tolerance) isn't reused next frame.
+          fitted[i] = moving[i] ? 0 : 1
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue
