@@ -34,3 +34,11 @@ export function glyph(code: number): Uint8Array | undefined {
   if (code < 32 || code > 126) return undefined
   return glyphs[code - 32]
 }
+
+// Round dot glyphs the engine draws stars with (· ∙ •): radius and center height in pixels of an 8x16 cell, roughly
+// as a typical monospace font draws them.
+export const DOTS = new Map([
+  [0xb7, { r: 1.1, y: 8.5 }],
+  [0x2219, { r: 1.5, y: 8.5 }],
+  [0x2022, { r: 2.2, y: 8.5 }],
+])

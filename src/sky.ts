@@ -1,5 +1,6 @@
 // Sky pieces shared by outdoor wallpapers: a depth-graded sky with a sun or moon, stars and drifting clouds.
 import { TAU, fbm1, lerp, smoothstep, type RGB } from "./math"
+import type { Points } from "./points"
 
 // The sun or moon: x as a fraction of the width, y and r as fractions of the height.
 export interface Orb {
@@ -72,13 +73,18 @@ export function makeStars(count: number, top: number): Star[] {
   return Array.from({ length: count }, () => ({ x: Math.random(), y: Math.random() * top, b: 0.4 + Math.random() * 0.6, phase: Math.random() * TAU, tint: STAR_TINTS[Math.floor(Math.random() * STAR_TINTS.length)] }))
 }
 
-// Stars twinkling slowly, fading toward the horizon at `top`.
-export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[], time: number, top: number, brightness: number) {
+// Stars twinkling slowly, fading toward the horizon at `top`. Given a canvas's points, they go there, so terminal
+// cells show them as round dots, the brightest a little larger.
+export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[], time: number, top: number, brightness: number, points?: Points) {
   for (const s of stars) {
     const x = (s.x * W) | 0
     const y = (s.y * H) | 0
     if (x < 0 || y < 0 || x >= W || y >= H) continue
     const k = s.b * Math.max(0, 1 - s.y / top) * (0.7 + 0.3 * Math.sin(time * 0.8 + s.phase)) * brightness
+    if (points) {
+      points.add(hdr, W, H, x, y, k * s.tint[0], k * s.tint[1], k * s.tint[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1)
+      continue
+    }
     const o = (y * W + x) * 3
     hdr[o] += k * s.tint[0]
     hdr[o + 1] += k * s.tint[1]

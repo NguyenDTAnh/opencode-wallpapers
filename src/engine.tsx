@@ -1,6 +1,7 @@
 import type { Context } from "@opencode/plugin/tui/context"
 import { MouseButton, NativeImagePool, Renderable, type KittyImageTransport, type MouseEvent, type OptimizedBuffer, type RenderContext } from "@opentui/core"
 import { appendFileSync } from "node:fs"
+import { DOT, Dots, lightDot, placeDot } from "./dots"
 import { watchEgg } from "./egg"
 import { lerp, smoothstep, type RGB } from "./math"
 import { OCTANTS } from "./octants"
@@ -474,6 +475,7 @@ export function createEngine(
   let grid = new Float32Array(0)
   let gridBlur = new Float32Array(0)
   let light = false
+  const dots = new Dots()
 
   // Box-filters the scene down to the 2x4-per-cell octant grid, then applies an unsharp mask.
   const buildGrid = (px: Uint8Array, PW: number, PH: number, GW: number, GH: number) => {
@@ -734,6 +736,11 @@ export function createEngine(
     const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings!.time], t)
     // Blending in the previous frame fades at the same speed per second whatever the frame rate.
     const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE
+    if (advanced) {
+      dots.clear(W * H)
+      dots.gather(scene.points, t, scene.W, scene.H, W, H, desaturate, shade)
+      dots.gather(from?.scene.points, 1 - t, scene.W, scene.H, W, H, desaturate, shade)
+    }
     paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim)
     if (options.dump && !dumped && frames > 120) {
       dumped = true
@@ -888,6 +895,13 @@ export function createEngine(
           if (!surface[i]) continue
         }
         if (ch === SPACE && !atCursor(x, y)) {
+          if (dots.size[i] && placeDot(dots, i, x, y, q, grid, GW, st, sb, curve, previousMask[i] === DOT, char, fg, bg, o)) {
+            previousMask[i] = DOT
+            applyTint(bg, o, cellTint[i])
+            applyTint(fg, o, cellTint[i])
+            continue
+          }
+          if (dots.size[i]) lightDot(dots, i, x, y, q, grid, GW, st, sb, curve)
           if (octants) previousMask[i] = writeOctant(q, order, previousMask[i], char, fg, bg, i, o)
           else previousMask[i] = writeQuadrant(q, previousMask[i], char, fg, bg, i, o)
           applyTint(bg, o, cellTint[i])

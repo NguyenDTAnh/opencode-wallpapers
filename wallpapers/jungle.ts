@@ -675,14 +675,14 @@ class Jungle extends Canvas {
         const k = Math.max(together, Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6))
         if (k < 0.02) continue
         this.disc(f.x * H, f.y * H, 1.3, 0.9 * k * 2, 1.2 * k * 2, 0.3 * k * 2, 0.6)
-        this.add(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
+        this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
       }
       return
     }
     const [lr, lg, lb] = this.look.light
     for (const p of this.pollen) {
       const k = (0.05 + p.s * 0.08) * (1 - p.y)
-      this.add(p.x * H, p.y * H, lr * k, lg * k, lb * k * 0.8)
+      this.splat(p.x * H, p.y * H, lr * k, lg * k, lb * k * 0.8)
     }
   }
 

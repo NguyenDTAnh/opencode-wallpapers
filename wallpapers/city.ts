@@ -294,7 +294,7 @@ class City extends Canvas {
   render() {
     const { W, H, look } = this
     this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4)
+    if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4, this.points)
     const [top, bottom] = this.weather.scud ?? [look.clouds.top, look.clouds.bottom]
     paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, look.clouds.puffy)
     paintStorm(this.hdr, W, H, this.storm, look.clouds.top, look.clouds.bottom, this.gloom)
@@ -928,8 +928,8 @@ class City extends Canvas {
     const foam: RGB = look.night ? [0.04, 0.12, 0.2] : look.glow > 0 ? [0.3, 0.14, 0.1] : [0.25, 0.3, 0.35]
     for (let i = 1; i < 14; i++) {
       const k = (1 - i / 14) * 0.6
-      this.add(X(-L / 2 - i * 0.006), y + (i % 2 ? 0.5 : 1.5), foam[0] * k, foam[1] * k, foam[2] * k)
-      this.add(X(-L / 2 - i * 0.006), y - (i % 2 ? 0.5 : 0), foam[0] * k, foam[1] * k, foam[2] * k)
+      this.splat(X(-L / 2 - i * 0.006), y + (i % 2 ? 0.5 : 1.5), foam[0] * k, foam[1] * k, foam[2] * k)
+      this.splat(X(-L / 2 - i * 0.006), y - (i % 2 ? 0.5 : 0), foam[0] * k, foam[1] * k, foam[2] * k)
     }
     this.polygon([[X(-L / 2), y - 0.008 * H], [X(L / 2 + 0.006), y - 0.009 * H], [X(L / 2 - 0.006), y], [X(-L / 2 + 0.004), y]], this.paint(b.tour ? [0.85, 0.82, 0.75] : [0.75, 0.6, 0.15]))
     const cabin = this.paint(b.tour ? [0.75, 0.74, 0.72] : [0.85, 0.85, 0.82])
@@ -985,7 +985,7 @@ class City extends Canvas {
       const y = r.y * H
       for (let k = 0; k < n; k++) {
         const a = (1 - k / n) * 0.9
-        this.add(x + k * 0.15, y - k, RAIN[0] * a, RAIN[1] * a, RAIN[2] * a)
+        this.splat(x + k * 0.15, y - k, RAIN[0] * a, RAIN[1] * a, RAIN[2] * a)
       }
     }
   }

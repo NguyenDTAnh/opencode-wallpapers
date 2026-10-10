@@ -316,7 +316,7 @@ class Space extends Canvas {
       if (x < 0 || x >= W || y >= H || this.ringMask[i]) continue
       const k = s.b * (0.4 + s.layer * 0.3) * look.starK * (s.b > 0.85 ? 0.75 + 0.25 * Math.sin(this.time * 1.5 + s.phase) : 1) * 0.5
       const t = look.starTints ? s.tint : WHITE_STAR
-      this.add(x, y, k * t[0], k * t[1], k * t[2])
+      this.point(x, y, k * t[0], k * t[1], k * t[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1, true)
     }
   }
 
@@ -490,7 +490,7 @@ class Space extends Canvas {
         const t = i / 47
         const d = t * 0.12 * H
         const a = (1 - t) * k
-        this.add(m.x * H - (m.vx / v) * d, m.y * H - (m.vy / v) * d, c[0] * a, c[1] * a, c[2] * a)
+        this.splat(m.x * H - (m.vx / v) * d, m.y * H - (m.vy / v) * d, c[0] * a, c[1] * a, c[2] * a)
       }
       this.disc(m.x * H, m.y * H, 1.1, c[0] * 1.3, c[1] * 1.3, c[2] * 1.3, k)
     }
@@ -518,15 +518,15 @@ class Space extends Canvas {
       this.lighting,
       0.8,
     )
-    for (let i = 0; i < 10; i++) this.add(...P(-0.3 + i * 0.06, 0.008), 1.3, 0.65, 0.12)
+    for (let i = 0; i < 10; i++) this.splat(...P(-0.3 + i * 0.06, 0.008), 1.3, 0.65, 0.12)
     for (const v of [-0.04, 0.04]) {
       const [ex, ey] = P(-0.47, v)
       this.disc(ex, ey, 0.016 * S, 0.35, 1, 2.2, 0.9)
-      this.add(ex, ey, 0.3, 0.8, 1.6)
+      this.splat(ex, ey, 0.3, 0.8, 1.6)
     }
     const blink = Math.sin(this.time * 3) > 0.7 ? 1.5 : 0
-    this.add(...P(-0.1, -0.075), blink, 0.1 * blink, 0.1 * blink)
-    this.add(...P(-0.1, 0.075), 0.1 * blink, blink, 0.2 * blink)
+    this.splat(...P(-0.1, -0.075), blink, 0.1 * blink, 0.1 * blink)
+    this.splat(...P(-0.1, 0.075), 0.1 * blink, blink, 0.2 * blink)
   }
 
   // Spacecraft cross the sky slowly, wait offscreen, then come back.
@@ -559,8 +559,8 @@ class Space extends Canvas {
     parts.push(cap(...P(-0.13, 0), ...P(0.13, 0), 0.045 * S, 0.045 * S, white), cap(...P(0, -0.12), ...P(0, 0.1), 0.035 * S, 0.035 * S, white), cap(...P(0.13, 0.02), ...P(0.2, 0.08), 0.02 * S, 0.02 * S, white))
     this.shape(parts, this.lighting, 0.8)
     const blink = Math.sin(this.time * 4) > 0.6 ? 1.5 : 0
-    this.add(...P(0.5, 0), blink, 0.1 * blink, 0.1 * blink)
-    this.add(...P(-0.5, 0), 0.1 * blink, blink, 0.2 * blink)
+    this.splat(...P(0.5, 0), blink, 0.1 * blink, 0.1 * blink)
+    this.splat(...P(-0.5, 0), 0.1 * blink, blink, 0.2 * blink)
   }
 
   // A small satellite with a gold body, two ribbed panels and a blinking red light.
@@ -574,7 +574,7 @@ class Space extends Canvas {
     const P = (u: number, v: number): [number, number] => [x + u * S, y + v * S]
     const panel = this.paint([0.18, 0.22, 0.5])
     this.shape([cap(...P(-0.55, 0), ...P(-0.12, 0), 0.08 * S, 0.08 * S, panel, 3), cap(...P(0.12, 0), ...P(0.55, 0), 0.08 * S, 0.08 * S, panel, 3), cap(...P(-0.09, 0), ...P(0.09, 0), 0.08 * S, 0.08 * S, this.paint([0.8, 0.6, 0.2])), ell(...P(0, -0.13), 0.06 * S, 0.03 * S, 0, this.paint([0.75, 0.75, 0.78]))], this.lighting, 0.8)
-    if (Math.sin(this.time * 3 + 1) > 0.7) this.add(...P(0, 0.1), 1.5, 0.1, 0.1)
+    if (Math.sin(this.time * 3 + 1) > 0.7) this.splat(...P(0, 0.1), 1.5, 0.1, 0.1)
   }
 
   // A tumbling asteroid: a lumpy rock with a pitted surface, lit from the star's side.
@@ -660,7 +660,7 @@ class Space extends Canvas {
       const on = Math.floor(this.time * 4) % 6 === i ? 2 : 0.4
       const lx = x + Math.cos((i / 5) * Math.PI) * 0.075 * H
       const c = [[1, 0.2, 0.2], [0.2, 1, 0.3], [0.3, 0.5, 1]][i % 3]
-      this.add(lx, y + 0.008 * H, c[0] * on, c[1] * on, c[2] * on)
+      this.splat(lx, y + 0.008 * H, c[0] * on, c[1] * on, c[2] * on)
     }
   }
 }

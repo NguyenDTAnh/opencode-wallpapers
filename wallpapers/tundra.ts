@@ -221,8 +221,9 @@ class Tundra extends Canvas {
 
   render() {
     this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    // Before the stars: anything drawn over a star afterwards keeps it a plain pixel rather than a dot on cells.
     if (this.look.aurora > 0 && !this.weather.covered) this.drawAurora()
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
     paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
@@ -436,7 +437,7 @@ class Tundra extends Canvas {
       const k = (0.12 + f.z * 0.25) * (0.6 + 0.4 * f.s)
       const [x, y] = [f.x * H, f.y * H]
       if (f.z > 0.75) this.disc(x, y, 1.1, look.flakes[0] * k * 2, look.flakes[1] * k * 2, look.flakes[2] * k * 2, 0.5)
-      else this.add(x, y, look.flakes[0] * k, look.flakes[1] * k, look.flakes[2] * k)
+      else this.splat(x, y, look.flakes[0] * k, look.flakes[1] * k, look.flakes[2] * k)
     }
   }
 

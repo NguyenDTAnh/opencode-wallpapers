@@ -235,7 +235,7 @@ class Prehistoric extends Canvas {
 
   render() {
     this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points)
     const orange = this.look.lava[1]
     flowLava(this.hdr, this.lava.index, this.lava.k, this.lava.along, this.time, orange[0], orange[1], orange[2])
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
@@ -778,7 +778,7 @@ class Prehistoric extends Canvas {
       for (let i = 0; i < 64; i++) {
         const a = (i / 64) * TAU
         const r = (0.03 + f * 0.12) * H
-        this.add(cx * H + Math.cos(a) * r, (y - 0.03) * H + Math.sin(a) * r * 0.5, 0.2 * k, 0.55 * k, 1.4 * k)
+        this.splat(cx * H + Math.cos(a) * r, (y - 0.03) * H + Math.sin(a) * r * 0.5, 0.2 * k, 0.55 * k, 1.4 * k)
       }
     }
     const appear = clamp(d.t / (FLASH * 0.5), 0, 1)
@@ -926,7 +926,7 @@ class Prehistoric extends Canvas {
       const a = (1 - r) * e * 0.35
       for (let i = 0; i < 48; i++) {
         const t = (i / 48) * TAU
-        this.add(n.x * H + Math.cos(t) * rx, n.y * H + Math.sin(t) * rx * 0.2, look.ripple[0] * a, look.ripple[1] * a, look.ripple[2] * a)
+        this.splat(n.x * H + Math.cos(t) * rx, n.y * H + Math.sin(t) * rx * 0.2, look.ripple[0] * a, look.ripple[1] * a, look.ripple[2] * a)
       }
     }
     const skin = this.paint([0.3, 0.4, 0.36])

@@ -261,7 +261,7 @@ class Farm extends Canvas {
 
   render() {
     this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
     paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
@@ -874,7 +874,7 @@ class Farm extends Canvas {
     for (let i = 0; i < 6; i++) {
       const on = Math.floor(this.time * 4) % 6 === i ? 2 : 0.4
       const color = [[1, 0.2, 0.2], [0.2, 1, 0.3], [0.3, 0.5, 1]][i % 3]
-      this.add(x + Math.cos((i / 5) * Math.PI) * 0.075 * H, y + 0.008 * H, color[0] * on, color[1] * on, color[2] * on)
+      this.splat(x + Math.cos((i / 5) * Math.PI) * 0.075 * H, y + 0.008 * H, color[0] * on, color[1] * on, color[2] * on)
     }
   }
 
@@ -885,7 +885,7 @@ class Farm extends Canvas {
       const k = Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6)
       if (k < 0.02) continue
       this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6)
-      this.add(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
+      this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
     }
   }
 }

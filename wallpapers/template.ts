@@ -116,7 +116,7 @@ class Template extends Canvas {
   // Draws one frame into hdr (linear light; values above about 0.8 bloom), then finish() tone-maps it into pixels.
   render() {
     this.hdr.set(this.background)
-    paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.55, 0.5)
+    paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.55, 0.5, this.points)
     paintClouds(this.hdr, this.W, this.H, this.clouds, this.look.clouds.top, this.look.clouds.bottom, this.look.clouds.alpha, true)
     if (this.activity !== "calm") this.drawBalloon()
     if (this.activity === "teeming" && this.look.night) this.drawFireflies()

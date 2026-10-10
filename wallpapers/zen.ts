@@ -295,7 +295,7 @@ class Zen extends Canvas {
 
   render() {
     this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3, this.points)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
     paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
@@ -1228,7 +1228,7 @@ class Zen extends Canvas {
       const k = Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6)
       if (k < 0.02) continue
       this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6)
-      this.add(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
+      this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
     }
   }
 }

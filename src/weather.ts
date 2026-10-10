@@ -3,6 +3,7 @@
 // end of render, just before finish().
 import type { Time, Weather } from "./wallpaper"
 import { clamp, fbm2, hash, smoothstep, type RGB } from "./math"
+import { splat } from "./points"
 
 interface Palette {
   deck: [top: RGB, bottom: RGB]
@@ -278,24 +279,10 @@ function streak(hdr: Float32Array, W: number, H: number, x: number, y: number, d
 function splash(hdr: Float32Array, W: number, H: number, x: number, y: number, rx: number, t: number, r: number, g: number, b: number) {
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2
-    const px = (x + Math.cos(a) * rx) | 0
-    const py = (y + Math.sin(a) * rx * 0.3) | 0
-    if (px < 0 || py < 0 || px >= W || py >= H) continue
-    const o = (py * W + px) * 3
-    hdr[o] += r
-    hdr[o + 1] += g
-    hdr[o + 2] += b
+    splat(hdr, W, H, x + Math.cos(a) * rx, y + Math.sin(a) * rx * 0.3, r, g, b)
   }
   const up = Math.sin(t * Math.PI) * rx * 0.9
-  for (const side of [-1, 1]) {
-    const px = (x + side * rx * 0.7) | 0
-    const py = (y - up) | 0
-    if (px < 0 || py < 0 || px >= W || py >= H) continue
-    const o = (py * W + px) * 3
-    hdr[o] += r * 2
-    hdr[o + 1] += g * 2
-    hdr[o + 2] += b * 2
-  }
+  for (const side of [-1, 1]) splat(hdr, W, H, x + side * rx * 0.7, y - up, r * 2, g * 2, b * 2)
 }
 
 // A soft snowflake mixed over the four pixels around (x, y).
