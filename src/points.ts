@@ -3,6 +3,7 @@
 // takes it back out of the frame and the engine draws it as a round dot glyph where its cell is otherwise flat. Moving
 // specks use splat() instead, which shares their light between the pixels around them, so they glide rather than hop
 // a whole pixel at a time.
+import { touch } from "./touched"
 
 // Values per point: x and y in pixels, size (1 small, 2 medium, 3 large), glide (1 when it drifts sideways), its light
 // (r, g, b), which resolve() turns into what it adds on screen in display units (0-255), and the pixel's value just
@@ -26,6 +27,7 @@ export class Points {
     hdr[o] += r
     hdr[o + 1] += g
     hdr[o + 2] += b
+    touch(hdr, x | 0, y | 0, x | 0, y | 0)
     if (!this.on) return
     if ((this.pending + 1) * POINT_STRIDE > this.next.length) {
       const grown = new Float32Array(this.next.length * 2)
@@ -90,6 +92,7 @@ export function splat(hdr: Float32Array, W: number, H: number, x: number, y: num
   const y0 = Math.floor(py)
   const fx = px - x0
   const fy = py - y0
+  touch(hdr, x0, y0, x0 + 1, y0 + 1)
   for (let j = 0; j < 2; j++) {
     const yi = y0 + j
     if (yi < 0 || yi >= H) continue

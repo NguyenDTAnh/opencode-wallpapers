@@ -3,6 +3,7 @@
 // end of render, just before finish().
 import type { Time, Weather } from "./wallpaper"
 import { clamp, fbm2, hash, smoothstep, type RGB } from "./math"
+import { touch } from "./touched"
 import { splat } from "./points"
 
 interface Palette {
@@ -182,7 +183,10 @@ export class WeatherLayer {
     }
     const p = this.palette
     const k = this.kind
-    if (k.dim < 1 || k.fog > 0) grade(hdr, W, H, k.dim, p.desaturate * k.gray, p.fog, this.fogRows, this.time)
+    if (k.dim < 1 || k.fog > 0) {
+      grade(hdr, W, H, k.dim, p.desaturate * k.gray, p.fog, this.fogRows, this.time)
+      touch(hdr, 0, 0, W - 1, H - 1)
+    }
     const f = this.flakes
     for (let i = 0; i < this.snowCount * 4; i += 4) {
       const z = f[i + 2]
@@ -190,6 +194,7 @@ export class WeatherLayer {
       flake(hdr, W, H, f[i] * W, f[i + 1] * H, p.snow[0], p.snow[1], p.snow[2], b)
       // Nearer flakes are bigger.
       if (z > 0.55) flake(hdr, W, H, f[i] * W + 0.8, f[i + 1] * H + 0.6, p.snow[0], p.snow[1], p.snow[2], b)
+      touch(hdr, f[i] * W - 2, f[i + 1] * H - 2, f[i] * W + 2, f[i + 1] * H + 2)
     }
     const d = this.drops
     for (let i = 0; i < this.rainCount * 3; i += 3) {
@@ -197,6 +202,7 @@ export class WeatherLayer {
       const len = (0.025 + z * 0.035) * H
       const b = 0.05 + z * 0.12
       streak(hdr, W, H, d[i] * W, d[i + 1] * H, len * 0.12, len, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b)
+      touch(hdr, d[i] * W - len * 0.12 - 2, d[i + 1] * H - len - 1, d[i] * W + 1, d[i + 1] * H + 1)
     }
     const s = this.splashes
     for (let i = 0; i < s.length; i += 4) {
@@ -208,7 +214,9 @@ export class WeatherLayer {
       }
       const t = age / SPLASH_LIFE
       const b = (1 - t) * (0.12 + s[i + 3] * 0.2)
-      splash(hdr, W, H, s[i] * W, s[i + 1] * H, (0.003 + s[i + 3] * 0.006) * H * (0.6 + t * 1.6), t, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b)
+      const rx = (0.003 + s[i + 3] * 0.006) * H * (0.6 + t * 1.6)
+      splash(hdr, W, H, s[i] * W, s[i + 1] * H, rx, t, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b)
+      touch(hdr, s[i] * W - rx - 2, s[i + 1] * H - rx - 2, s[i] * W + rx + 2, s[i + 1] * H + rx * 0.3 + 2)
     }
   }
 }
