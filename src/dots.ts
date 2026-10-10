@@ -10,8 +10,9 @@ const GLYPHS = [0xb7, 0x2219, 0x2022]
 const FLAT = 400
 // Scrim strength past which a point is painted rather than dotted, keeping dots out of the scrim's strongest part.
 const SCRIM = 0.5
-// A gliding point fades into the next cell over the outer sixth or so of its cell on either side.
-const GLIDE = 0.15
+// A gliding point fades into the next cell over the outer twelfth of its cell on either side: a quick crossfade
+// instead of a hop, and seldom long enough to show as two dots.
+const GLIDE = 0.08
 // A dot covers less of its cell than the block a lone sub-pixel turns into, so smaller dots are drawn brighter.
 const GAINS = [2, 1.5, 1.1]
 // The unsharp mask lifts a lone bright sub-pixel by about this much; painted points get the same lift.
