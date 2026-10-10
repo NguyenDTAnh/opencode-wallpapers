@@ -88,7 +88,9 @@ export const FIRST = 256
 const EDGE = 24
 // A smooth glyph must leave less than this share of the cell's variance unexplained, so that cells holding more than
 // a two-color edge (a thin line, a corner, texture) keep their octant.
-const CLEAN = 0.2
+const CLEAN = 0.15
+// How much of the octant's error a smooth glyph may leave.
+const GAIN = 0.85
 // Like writeOctant's hysteresis, on the finer grid: a cell keeps last frame's glyph while its error is within this of
 // the best.
 const RATIO = 1.35
@@ -100,7 +102,8 @@ const fine = new Float32Array(32 * 3)
 const along = new Float32Array(32)
 const low = new Float32Array(3)
 const high = new Float32Array(3)
-const fit = { fr: 0, fg: 0, fb: 0, br: 0, bg: 0, bb: 0, err: 0 }
+const fit = { fr: 0, fg: 0, fb: 0, br: 0, bg: 0, bb: 0, err: 0, worst: 0 }
+const sampleErr = new Float32Array(32)
 let grid: Float32Array = new Float32Array(0)
 let GW = 0
 let GH = 0
@@ -164,6 +167,7 @@ export function refineEdge(q: Float32Array, previous: number, octant: number, ch
   }
   fitCover(fine, 32, bits, 0)
   const octantErr = fit.err
+  const octantWorst = fit.worst
   // Rank glyphs along the axis between the octant's two colors; for colors on that axis this is the least squares fit.
   for (let f = 0; f < 32; f++) along[f] = fine[f * 3] * (fit.fr - fit.br) + fine[f * 3 + 1] * (fit.fg - fit.bg) + fine[f * 3 + 2] * (fit.fb - fit.bb)
   let best = 0
@@ -176,11 +180,14 @@ export function refineEdge(q: Float32Array, previous: number, octant: number, ch
   }
   fitCover(fine, 32, FINE, best * 32)
   const smoothErr = fit.err
+  const smoothWorst = fit.worst
   if (previous >= FIRST) {
     fitCover(fine, 32, FINE, (previous - FIRST) * 32)
-    if (fit.err <= Math.min(octantErr, smoothErr) * RATIO + HYSTERESIS) return write(q, previous, char, fg, bg, i, o)
+    if (fit.err <= Math.min(octantErr, smoothErr) * RATIO + HYSTERESIS && fit.worst <= octantWorst * RATIO + HYSTERESIS) return write(q, previous, char, fg, bg, i, o)
   } else if (previous === octant && octantErr <= smoothErr * RATIO + HYSTERESIS) return octant
-  if (smoothErr >= octantErr || smoothErr > total(fine) * CLEAN) return octant
+  // A wedge must fit the edge clearly better overall and nowhere worse than the octant: on thin or spiky shapes it
+  // would cut a notch through a sub-pixel the octant gets right.
+  if (smoothErr >= octantErr * GAIN || smoothErr > total(fine) * CLEAN || smoothWorst > octantWorst) return octant
   return write(q, FIRST + best, char, fg, bg, i, o)
 }
 
@@ -218,6 +225,7 @@ function fitCover(samples: Float32Array, n: number, cover: Float32Array, at: num
   let spread = 0
   for (let s = 0; s < n; s++) spread += (cover[at + s] - mean) ** 2
   let err = 0
+  sampleErr.fill(0, 0, n)
   for (let c = 0; c < 3; c++) {
     let avg = 0
     let dot = 0
@@ -228,10 +236,16 @@ function fitCover(samples: Float32Array, n: number, cover: Float32Array, at: num
     const slope = spread > 0 ? dot / spread : 0
     const b = Math.min(high[c], Math.max(low[c], avg - slope * mean))
     const f = Math.min(high[c], Math.max(low[c], avg - slope * mean + slope))
-    for (let s = 0; s < n; s++) err += (samples[s * 3 + c] - b - cover[at + s] * (f - b)) ** 2
+    for (let s = 0; s < n; s++) sampleErr[s] += (samples[s * 3 + c] - b - cover[at + s] * (f - b)) ** 2
     if (c === 0) ((fit.fr = f), (fit.br = b))
     if (c === 1) ((fit.fg = f), (fit.bg = b))
     if (c === 2) ((fit.fb = f), (fit.bb = b))
   }
+  let worst = 0
+  for (let s = 0; s < n; s++) {
+    err += sampleErr[s]
+    if (sampleErr[s] > worst) worst = sampleErr[s]
+  }
   fit.err = err
+  fit.worst = worst
 }

@@ -380,13 +380,27 @@ function markMoving(moving: Uint8Array, touched: readonly number[] | undefined, 
   }
 }
 
+// Marks the cells the sun or moon discs (see Scene.orbs) reach into.
+function markOrbs(round: Uint8Array, orbs: readonly number[] | undefined, PW: number, PH: number, W: number, H: number) {
+  round.fill(0)
+  if (!orbs) return
+  for (let b = 0; b < orbs.length; b += 3) {
+    const r = orbs[b + 2] + 2
+    const x0 = Math.max(0, Math.floor(((orbs[b] - r) * W) / PW))
+    const x1 = Math.min(W - 1, Math.floor(((orbs[b] + r) * W) / PW))
+    const y0 = Math.max(0, Math.floor(((orbs[b + 1] - r) * H) / PH))
+    const y1 = Math.min(H - 1, Math.floor(((orbs[b + 1] + r) * H) / PH))
+    for (let y = y0; y <= y1; y++) if (x0 <= x1) round.fill(1, y * W + x0, y * W + x1 + 1)
+  }
+}
+
 // The most error a cell's previous split may have and still be kept, given the best split's. Where something moves,
 // a step of one sub-pixel (not back to the split before) is taken as soon as it fits a little better, so slow motion
 // glides a sub-pixel at a time instead of jumping several at once. Bigger changes, steps back, and every static cell
 // keep the full margin, so noise and swaying stay steady.
 function tolerance(bestErr: number, best: number, previous: number, older: number, moving: number, margin: number) {
   const d = best ^ previous
-  return moving && (d & (d - 1)) === 0 && best !== older ? bestErr * 1.05 + margin * 0.3 : bestErr * 1.35 + margin
+  return moving && (d & (d - 1)) === 0 && best !== older ? bestErr * 1.1 + margin * 0.6 : bestErr * 1.35 + margin
 }
 
 // The terminal is sent every cell whose character or colors differ from the last frame, and slow light (aurora, twinkle,
@@ -737,8 +751,10 @@ export function createEngine(
   // The split each cell showed before its current one, and the cells where something moves this frame (see tolerance).
   let olderMask = new Int16Array(0)
   let moving = new Uint8Array(0)
-  // Each cell's sub-pixels when src/smooth.ts last chose its glyph.
+  // Each cell's sub-pixels when src/smooth.ts last chose its glyph, and the cells over the sun or moon, which keep
+  // their octants: wedges would turn the disc into a polygon.
   let edgeSeen = new Float32Array(0)
+  let round = new Uint8Array(0)
   let history = new Float32Array(0)
   // What each cell showed last frame, and the colors OpenCode drew this frame before the scene went in, for quieten.
   let shownChar = new Uint32Array(0)
@@ -995,7 +1011,7 @@ export function createEngine(
     const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings!.time], t)
     // Blending in the previous frame fades at the same speed per second whatever the frame rate.
     const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE
-    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim, from ? undefined : scene.changed, from ? undefined : scene.touched)
+    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim, from ? undefined : scene.changed, from ? undefined : scene.touched, scene.orbs)
     if (mapFresh) {
       mapFresh = false
       scene.textMap?.(textMap)
@@ -1021,7 +1037,7 @@ export function createEngine(
 
   // Everything after the scene has drawn its frame. It never touches the scene object: each wallpaper's scene is a
   // different class, and the optimizer would otherwise fall back to slow code for this whole function after a switch.
-  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim, changed: readonly number[] | undefined, touched: readonly number[] | undefined) => {
+  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim, changed: readonly number[] | undefined, touched: readonly number[] | undefined, orbs: readonly number[] | undefined) => {
     const W = buf.width
     const H = buf.height
     const GW = W * 2
@@ -1052,10 +1068,12 @@ export function createEngine(
       for (let x = 0; x < W; x++) cellX.fill(x, colStart[x], colStart[x + 1])
       for (let y = 0; y < H; y++) cellY.fill(y, rowStart[y], rowStart[y + 1])
       moving = new Uint8Array(cells)
+      round = new Uint8Array(cells)
       edgeSeen = new Float32Array(cells * 24).fill(-1)
     }
     if (advanced) {
       markMoving(moving, touched, PW, PH, W, H)
+      markOrbs(round, orbs, PW, PH, W, H)
       // Anything that changes every pixel's blend, or a frame without a list of what changed, blends every cell again.
       const blend = `${desaturate} ${shade} ${persistence}`
       const everything = reset || !dirty || !changed || px !== lastSource || blend !== lastBlend
@@ -1222,8 +1240,9 @@ export function createEngine(
           const was = previousMask[i]
           if (octants) {
             const octant = writeOctant(q, order, was < FIRST ? was : -1, olderMask[i], moving[i], char, fg, bg, i, o)
-            // Soft cells keep their gradient band; edges may take a smooth glyph instead of the octant.
-            previousMask[i] = smooth && !softFit ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB, st, sb) : octant
+            // Soft cells keep their gradient band; still edges may take a smooth glyph instead of the octant, but not
+            // where something moves (it would flip between wedge and octant as it glides) or over the sun and moon.
+            previousMask[i] = smooth && !softFit && !round[i] && !moving[i] ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB, st, sb) : octant
           } else previousMask[i] = writeQuadrant(q, was, olderMask[i], moving[i], char, fg, bg, i, o)
           if (previousMask[i] !== was) olderMask[i] = was
           rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)

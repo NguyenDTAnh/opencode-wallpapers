@@ -6,6 +6,7 @@ import { bird, flyAway, startle, type Flier } from "../src/flock"
 import { TAU, clamp, fbm1, fbm2, hash, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { campfire, lightPool } from "../src/light"
+import { addOrb } from "../src/orbs"
 import { driftClouds, makeClouds, makeStorm, paintClouds, paintStorm, type Cloud } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
 import { WeatherLayer } from "../src/weather"
@@ -465,6 +466,7 @@ class Desert extends Canvas {
     const { W, H, hdr, look } = this
     const { orb } = look
     const R = orb.r * H
+    addOrb(hdr, this.orbX, this.orbY, R)
     for (let y = 0; y < H; y++) {
       const v = y / H
       const i = look.sky.findIndex(([at]) => at >= v)

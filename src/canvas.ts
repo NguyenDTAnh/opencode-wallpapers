@@ -1,5 +1,6 @@
 import type { AgentEvent, TextMap } from "./wallpaper"
 import { clamp, rand, smoothstep, type RGB } from "./math"
+import { trackOrbs } from "./orbs"
 import { clearShadows, keepShadows } from "./shadow"
 import { addBox, trackTouched } from "./touched"
 
@@ -66,6 +67,8 @@ export abstract class Canvas {
   readonly changed: number[] = []
   // Whether this frame started with restore(); a scene that never calls it can have drawn anywhere.
   private restored = false
+  // The sun and moon discs layout() painted, [cx, cy, r, ...] in pixels (see src/orbs.ts).
+  readonly orbs: number[] = []
 
   private bw = 0
   private bh = 0
@@ -195,6 +198,8 @@ export abstract class Canvas {
     this.A = W / H
     this.hdr = new Float32Array(W * H * 3)
     trackTouched(this.hdr, this.touched)
+    this.orbs.length = 0
+    trackOrbs(this.hdr, this.orbs)
     this.pixels = new Uint8Array(W * H * 4)
     this.bw = Math.ceil(W / BLOOM)
     this.bh = Math.ceil(H / BLOOM)
