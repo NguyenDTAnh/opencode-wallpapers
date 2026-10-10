@@ -66,9 +66,9 @@ function level(gain: number, wash: number, scrim: number, reach: number) {
   return { dark, light, scrim, reach }
 }
 const LEVELS: Record<Brightness, ReturnType<typeof level>> = {
-  subtle: level(0.6, 0.65, 0.9, 3.25),
-  normal: level(1, 0.5, 0.93, 3.75),
-  vivid: level(1.6, 0.35, 0.96, 4.5),
+  subtle: level(0.6, 0.65, 0.9, 11),
+  normal: level(1, 0.5, 0.93, 12),
+  vivid: level(1.6, 0.35, 0.96, 14),
 }
 // Night scenes keep their color: it is what separates them from light text.
 const DESATURATE = { day: 0.22, sunset: 0.22, night: 0.04 }
@@ -884,11 +884,14 @@ export function createEngine(
         const edgeTint = isBlock(ch) ? tintOf(fgKey(fg, o)) : NO_TINT
         const edge = edgeTint !== NO_TINT
         if (!surface[i] && !edge) continue
-        // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order.
+        // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order. The scrim darkens the whole cell evenly
+        // (its sub-pixels' mean): varying it within a cell would split the cell into a dark and a light half, turning the
+        // halo's soft fade into a hard outline around the text.
+        let k = 0
+        for (let s = 0; s < 8; s++) k += mask[(y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)] / 8
         for (let s = 0; s < 8; s++) {
           const g = (y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)
           const a = g * 3
-          const k = mask[g]
           q[s * 3] = curve[grid[a] | 0] * (1 - k) + deepR * k
           q[s * 3 + 1] = curve[grid[a + 1] | 0] * (1 - k) + deepG * k
           q[s * 3 + 2] = curve[grid[a + 2] | 0] * (1 - k) + deepB * k
