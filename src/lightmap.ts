@@ -1,4 +1,5 @@
 import { noise1, smoothstep, type RGB } from "./math"
+import { touch } from "./touched"
 
 // A coarse grid of light, one node every H/30 pixels, that moving and flickering lights write into each frame;
 // apply() then spreads it over the scene in one pass, bilinearly between nodes. Like lightPool(), lift lights what is
@@ -84,13 +85,21 @@ export function firelight(t: number, seed: number) {
 }
 
 // Spreads the map over hdr block by block (a block lies between four nodes), skipping blocks with no light at their
-// corners: each pixel gains its capped brightness times the interpolated lift, plus the interpolated glow.
+// corners: each pixel gains its capped brightness times the interpolated lift, plus the interpolated glow. Each row's
+// runs of lit blocks are touched (see Canvas.touched).
 function applyLight(hdr: Float32Array, W: number, H: number, cell: number, cols: number, lift: Float32Array, glow: Float32Array, lit: Uint8Array, dim: Float32Array, bi0: number, bj0: number, bi1: number, bj1: number) {
-  for (let bj = bj0; bj <= bj1; bj++)
-    for (let bi = bi0; bi <= bi1; bi++) {
+  for (let bj = bj0; bj <= bj1; bj++) {
+    let run = -1
+    for (let bi = bi0; bi <= bi1 + 1; bi++) {
       const a = bj * cols + bi
       const c = a + cols
-      if (!lit[a] && !lit[a + 1] && !lit[c] && !lit[c + 1]) continue
+      const on = bi <= bi1 && (lit[a] || lit[a + 1] || lit[c] || lit[c + 1])
+      if (!on && run >= 0) touch(hdr, run * cell, bj * cell, bi * cell - 1, (bj + 1) * cell - 1)
+      if (!on) {
+        run = -1
+        continue
+      }
+      if (run < 0) run = bi
       const dl = dim[bi]
       const dr = dim[bi + 1]
       const x0 = bi * cell
@@ -122,4 +131,5 @@ function applyLight(hdr: Float32Array, W: number, H: number, cell: number, cols:
         }
       }
     }
+  }
 }

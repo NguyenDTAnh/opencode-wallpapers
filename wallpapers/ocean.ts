@@ -114,12 +114,16 @@ interface Particle {
 }
 
 class Ocean extends Canvas {
+  // The whole scene sways, so layout() paints nothing.
+  protected override supersample = 1
   private time = 0
   private rowCol = new Float32Array(0)
   private rayFade = new Float32Array(0)
   private floorPx = new Float32Array(0)
   private farPx = new Float32Array(0)
   private midPx = new Float32Array(0)
+  // By day, broad lighter and darker stretches along the near ridge, so it reads as rock rather than a flat cutout.
+  private midTone = new Float32Array(0)
   private pad = 0
   private lastA = 1
   private fish: Fish[] = []
@@ -139,7 +143,8 @@ class Ocean extends Canvas {
   private sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE, spin: 0 }
 
   // Each creature keeps to its own home area so they never pile up: shark along the top, fish lower left, octopus
-  // lower right, diver upper left, turtle along the bottom. Areas are laid out before the first resize, at A = 1.
+  // lower right, diver upper left, turtle along the bottom, which leaves the middle, where text sits, to open water.
+  // Within its area each heads for the spots least covered by text. Areas are laid out before the first resize, at A = 1.
   private readonly activity: Activity
   private readonly timeOfDay: Time
 
@@ -150,10 +155,10 @@ class Ocean extends Canvas {
     this.timeOfDay = settings.time
     if (activity === "teeming") this.fish.push(this.makeFish("ambient:shark", "shark", [0.3, 1, 0.17, 0.33], { len: 0.64, z: 0.55 }))
     if (activity !== "calm") {
-      this.fish.push(this.makeFish("ambient:fish", "fish", [0, 0.44, 0.48, 0.72], { len: 0.26, z: 0.35, hue: 0.07, sat: 0.85 }))
-      const zone: Zone = [0.58, 1, 0.46, 0.7]
+      this.fish.push(this.makeFish("ambient:fish", "fish", [0, 0.36, 0.5, 0.76], { len: 0.19, z: 0.35, hue: 0.07, sat: 0.85 }))
+      const zone: Zone = [0.74, 1, 0.54, 0.76]
       const ox = ((zone[0] + zone[1]) / 2) * this.A
-      this.octopus = { x: ox, y: 0.58, z: 0.4, vx: 0, vy: 0, size: 0.1, hue: 0.02, phase: 0, pulse: 0, next: 2, dir: -Math.PI / 2, wx: ox, wy: 0.58, zone }
+      this.octopus = { x: ox, y: 0.64, z: 0.4, vx: 0, vy: 0, size: 0.1, hue: 0.02, phase: 0, pulse: 0, next: 2, dir: -Math.PI / 2, wx: ox, wy: 0.64, zone }
     }
     if (activity === "teeming") {
       this.turtle = { x: 0.5 * this.A, y: 0.84, z: 0.4, vx: 0, vy: 0, face: -1, turn: -1, heading: -1, phase: 0, wx: 0.5 * this.A, wy: 0.84, wanderT: 0, zone: [0.22, 0.8, 0.78, 0.9] }
@@ -219,8 +224,7 @@ class Ocean extends Canvas {
       tu.wanderT -= dt
       if (tu.wanderT <= 0 || Math.hypot(tu.wx - tu.x, tu.wy - tu.y) < 0.04) {
         tu.wanderT = rand(8, 14)
-        tu.wx = rand(zx0, zx1)
-        tu.wy = rand(tu.zone[2], tu.zone[3])
+        ;[tu.wx, tu.wy] = this.openSpot(zx0, zx1, tu.zone[2], tu.zone[3])
       }
       tu.phase += dt * 1.5
       const dx = tu.wx - tu.x
@@ -241,8 +245,7 @@ class Ocean extends Canvas {
       dv.wanderT -= dt
       if (dv.wanderT <= 0 || Math.hypot(dv.wx - dv.x, dv.wy - dv.y) < 0.03) {
         dv.wanderT = rand(5, 10)
-        dv.wx = rand(zx0, zx1)
-        dv.wy = rand(dv.zone[2], dv.zone[3])
+        ;[dv.wx, dv.wy] = this.openSpot(zx0, zx1, dv.zone[2], dv.zone[3])
       }
       const dx = dv.wx - dv.x
       const dy = dv.wy - dv.y
@@ -268,8 +271,7 @@ class Ocean extends Canvas {
       o.next -= dt
       if (o.next <= 0) {
         if (Math.hypot(o.wx - o.x, o.wy - o.y) < 0.12 || Math.random() < 0.3) {
-          o.wx = rand(o.zone[0] * this.A + 0.12, o.zone[1] * this.A - 0.12)
-          o.wy = rand(o.zone[2] + 0.04, o.zone[3] - 0.04)
+          ;[o.wx, o.wy] = this.openSpot(o.zone[0] * this.A + 0.12, o.zone[1] * this.A - 0.12, o.zone[2] + 0.04, o.zone[3] - 0.04)
         }
         const dx = o.wx - o.x
         const dy = o.wy - o.y
@@ -296,6 +298,7 @@ class Ocean extends Canvas {
 
   render() {
     const night = this.timeOfDay === "night"
+    this.restore()
     this.drawWater()
     if (night) this.water.set(this.hdr)
     this.drawWhale()
@@ -364,7 +367,7 @@ class Ocean extends Canvas {
       const k = (0.12 + p.s * 0.45) * pulse
       const green = p.s > 0.5
       if (p.s > 0.75) this.disc(p.x * H, p.y * H, 1.2, 0.1 * k * 4, (green ? 0.9 : 0.6) * k * 4, (green ? 0.6 : 1) * k * 4, 0.5)
-      this.add(p.x * H, p.y * H, 0.1 * k, (green ? 0.9 : 0.6) * k, (green ? 0.6 : 1) * k)
+      this.splat(p.x * H, p.y * H, 0.1 * k, (green ? 0.9 : 0.6) * k, (green ? 0.6 : 1) * k)
     }
     if (this.diver) this.drawTorch(this.diver, 4, [1, 0.55, 0.15])
   }
@@ -409,12 +412,14 @@ class Ocean extends Canvas {
     this.pad = Math.ceil(H * 0.2)
     this.farPx = new Float32Array(W + this.pad * 2)
     this.midPx = new Float32Array(W + this.pad * 2)
+    this.midTone = new Float32Array(W + this.pad * 2)
     for (let x = 0; x < W + this.pad * 2; x++) {
       const u = (x - this.pad) / H
       const spires = Math.pow(noise1(u * 4.2, 9), 5) * 0.32
       this.farPx[x] = (0.56 - (fbm1(u * 1.4, 7) - 0.5) * 0.3 - spires) * H
       const arches = Math.pow(noise1(u * 6.5, 12), 7) * 0.25
       this.midPx[x] = (0.72 - (fbm1(u * 2.3, 11) - 0.5) * 0.2 - arches) * H
+      this.midTone[x] = this.timeOfDay === "day" ? 0.6 + 0.55 * smoothstep(0.3, 0.7, fbm1(u * 3.1, 17)) : 1
     }
     // Three kelp strands in the gaps between the creatures' areas.
     this.kelp = this.activity === "teeming" ? [[0.05, 0.28], [0.5, 0.21], [0.96, 0.3]].map(([x, height]) => ({ x: x * A, height, phase: x * 9 })) : []
@@ -454,8 +459,7 @@ class Ocean extends Canvas {
     if (f.wanderT <= 0 || Math.hypot(f.wx - f.x, f.wy - f.y) < 0.05) {
       f.wanderT = rand(3, 8)
       const m = f.len * this.zScale(f) * 0.5
-      f.wx = rand(f.zone[0] * this.A + m, Math.max(f.zone[0] * this.A + m, f.zone[1] * this.A - m))
-      f.wy = rand(f.zone[2], f.zone[3])
+      ;[f.wx, f.wy] = this.openSpot(f.zone[0] * this.A + m, Math.max(f.zone[0] * this.A + m, f.zone[1] * this.A - m), f.zone[2], f.zone[3])
     }
     const dx = tx - f.x
     const dy = ty - f.y
@@ -505,7 +509,7 @@ class Ocean extends Canvas {
       if (w.next > 0) return
       w.dir = Math.random() < 0.5 ? 1 : -1
       w.x = w.dir > 0 ? -0.9 : this.A + 0.9
-      w.y = rand(0.3, 0.48)
+      w.y = this.openRow(0.22, 0.48)
       return
     }
     w.x += w.dir * 0.055 * dt
@@ -522,7 +526,7 @@ class Ocean extends Canvas {
       if (s.wait > 0) return
       s.dir = Math.random() < 0.5 ? 1 : -1
       s.x = s.dir > 0 ? -0.3 : this.A + 0.3
-      s.y = rand(0.32, 0.42)
+      s.y = this.openRow(0.28, 0.44)
       return
     }
     s.x += s.dir * 0.1 * cdt
@@ -616,13 +620,13 @@ class Ocean extends Canvas {
       if (p.kind === "spark") {
         const k = p.life / p.max
         const i = k * k * 2.2
-        this.add(x, y, 0.8 * i, i, i)
+        this.splat(x, y, 0.8 * i, i, i)
         continue
       }
       const R = Math.max(0.8, p.size * H)
       const fade = Math.min(1, (p.max - p.life) * 4)
       if (R < 1.3) {
-        this.add(x, y, 0.25 * fade, 0.4 * fade, 0.45 * fade)
+        this.splat(x, y, 0.25 * fade, 0.4 * fade, 0.45 * fade)
         continue
       }
       for (let yy = Math.floor(y - R - 1); yy <= y + R + 1; yy++)
@@ -643,14 +647,17 @@ class Ocean extends Canvas {
 
   // Depth-graded water with god rays, distant ridges, and a bright rippling surface with caustics.
   private drawWater() {
-    const { W, H, hdr, rowCol, rayFade, farPx, midPx } = this
+    const { W, H, hdr, rowCol, rayFade, farPx, midPx, midTone } = this
     const t = this.time
     const surf = SURFACE * H
     const camFar = Math.round(Math.sin(t * 0.09) * H * 0.04) + this.pad
     const camMid = Math.round(Math.sin(t * 0.09) * H * 0.08) + this.pad
     const cs = 128 / (H * 0.55)
+    // The caustic net is squashed into the thin surface band; less so on terminal cells, which would break its lines up.
+    const squash = this.cells ? 2 : 4
     // After an error the rays fade, as if clouds had covered the sun.
     const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.7
+    this.touch(0, 0, W - 1, H - 1)
     for (let y = 0; y < H; y++) {
       const rf = rayFade[y] * overcast
       const ry1 = y * 0.42 + t * 7
@@ -661,7 +668,7 @@ class Ocean extends Canvas {
         const sl = surf + Math.sin(x * 0.045 + t * 1.3) * 1.4 + Math.sin(x * 0.13 - t * 2.1) * 0.7
         if (y < sl) {
           const cu = ((x * 0.6 * cs + t * 9) | 0) & 127
-          const cv = ((y * 4 * cs + x * 0.2 * cs - t * 6) | 0) & 127
+          const cv = ((y * squash * cs + x * 0.2 * cs - t * 6) | 0) & 127
           const c = CAUSTICS[cv * CAUS_N + cu]
           const win = Math.exp(-Math.pow((x / W - 0.5) * 2.2, 2)) * 0.6
           const edge = smoothstep(sl - 3, sl, y)
@@ -683,9 +690,10 @@ class Ocean extends Canvas {
         const near = midPx[x + camMid]
         if (y > near) {
           const k = smoothstep(near, near + 2, y)
-          r = lerp(r, r * 0.35, k)
-          g = lerp(g, g * 0.42, k)
-          b = lerp(b, b * 0.5, k)
+          const tone = midTone[x + camMid]
+          r = lerp(r, r * 0.35 * tone, k)
+          g = lerp(g, g * 0.42 * tone, k)
+          b = lerp(b, b * 0.5 * tone, k)
         }
         const ray = RAYS_A[((x + ry1) | 0) & 1023] * (0.45 + 0.55 * RAYS_B[((x * 0.7 + ry2) | 0) & 1023]) * rf * flick
         hdr[i] = r + ray * 0.5
@@ -758,15 +766,20 @@ class Ocean extends Canvas {
     }
   }
 
-  // Marine snow: faint specks behind the whale's depth, a few brighter flakes in front.
+  // Marine snow: faint specks behind the whale's depth, a few brighter flakes in front, lit up like dust motes as they
+  // drift through a shaft of light.
   private drawSnow(back: boolean) {
-    const H = this.H
+    const { H, rayFade } = this
+    const t = this.time
     for (const s of this.snow) {
       if (back !== s.z > 0.35) continue
-      const tw = 0.6 + 0.4 * Math.sin(this.time * 2 + s.s * 40)
-      const k = (back ? 0.08 + (1 - s.z) * 0.1 : 0.25) * tw
+      const tw = 0.6 + 0.4 * Math.sin(t * 2 + s.s * 40)
+      const x = s.x * H
+      const y = clamp(Math.floor(s.y * H), 0, H - 1)
+      const ray = RAYS_A[((x + y * 0.42 + t * 7) | 0) & 1023] * (0.45 + 0.55 * RAYS_B[((x * 0.7 + y * 0.6 - t * 4.3) | 0) & 1023]) * rayFade[y]
+      const k = (back ? 0.08 + (1 - s.z) * 0.1 : 0.25) * tw + ray * 1.5
       if (!back && s.s > 0.7) this.disc(s.x * H, s.y * H, 1.1, 0.6 + k, 0.75 + k, 0.8 + k, 0.35)
-      else this.add(s.x * H, s.y * H, k * 0.8, k, k)
+      else this.splat(s.x * H, s.y * H, k * 0.8, k, k)
     }
   }
   // Swaying kelp: a stem of overlapping discs with leaf blades on alternating sides, rooted below the screen.
@@ -791,7 +804,9 @@ class Ocean extends Canvas {
       r = lerp(r, fog[0], 0.3)
       g = lerp(g, fog[1], 0.3)
       b = lerp(b, fog[2], 0.3)
-      const stem = Math.max(0.6, w * 0.55)
+      // On terminal cells the stem and blades stay at least a sub-pixel or so wide, so they sway without shimmering.
+      const least = this.cells ? 1.1 : 0.6
+      const stem = Math.max(least, w * 0.55)
       const steps = Math.max(1, Math.ceil(Math.hypot(nx - px, ny - py) / Math.max(0.5, stem * 0.6)))
       for (let j = 0; j < steps; j++) {
         const u = j / steps
@@ -810,7 +825,7 @@ class Ocean extends Canvas {
           const bend = dirA * (1 + q * 0.6)
           const lx = nx + Math.sin(bend) * bladeL * q
           const ly = ny - Math.cos(bend) * bladeL * q
-          const rad = Math.max(0.5, w * 0.95 * Math.sin(Math.PI * Math.min(0.98, q * 0.9 + 0.08)))
+          const rad = Math.max(least - 0.1, w * 0.95 * Math.sin(Math.PI * Math.min(0.98, q * 0.9 + 0.08)))
           this.disc(lx, ly, rad, lr * (0.85 + q * 0.3), lg * (0.85 + q * 0.3), lb * (0.85 + q * 0.3), 0.88)
         }
       }
@@ -1193,7 +1208,9 @@ class Ocean extends Canvas {
     const skinFar: RGB = [0.26, 0.3, 0.2]
     const stroke = Math.sin(tu.phase)
 
-    // A flipper: a curved paddle from its root, swept back and rotated by the stroke.
+    // A flipper: a curved paddle from its root, swept back and rotated by the stroke. Its tip trails the stroke,
+    // curling one way on the downstroke and the other on the way back up.
+    const whip = Math.cos(tu.phase) * 0.05
     const flipper = (u0: number, v0: number, length: number, angle: number, width: number, color: RGB) => {
       const [r, g, b] = tint(color)
       let u = u0
@@ -1207,7 +1224,7 @@ class Ocean extends Canvas {
         blob(x, y, Math.max(0.6, w * L), r, g, b)
         u += Math.cos(a) * (length / n)
         v += Math.sin(a) * (length / n)
-        a += 0.04
+        a += 0.04 + whip * q
       }
     }
     const front = Math.PI - 0.55 - stroke * 0.6
