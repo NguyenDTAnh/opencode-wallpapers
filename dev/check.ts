@@ -3,7 +3,7 @@
 // and, only when given, on frame cost above --max-ms: bun dev/check.ts [--quiet] [--max-ms=N] [--max-flicker=N] [--verify-dirty] [wallpaper...] [season] [weather]
 // --verify-dirty plays each combination twice, refitting every cell every frame (WALLPAPER_DIRTY=0) and then only the
 // cells that changed, with text edits, redraws between frames and agent events mixed in, and fails on any cell that
-// differs between the two.
+// differs between the two, and on any pixel a scene draws outside its touched boxes.
 import { mkdirSync, rmSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { ACTIVITIES, SEASONS, TIMES, WEATHERS, type Activity, type Engine, type Time, type Wallpaper } from "../src/engine"
@@ -47,6 +47,7 @@ for (const { wallpaper, activity, time } of runs) {
     result.flicker > maxFlicker && `flicker over ${maxFlicker}`,
     result.ms > maxMs && `slower than ${maxMs} ms`,
     result.mismatches && `${result.mismatches} cells differ from a full refit, first ${result.first}`,
+    result.uncovered && `${result.uncovered} pixels drawn outside the touched boxes, first ${result.where}`,
   ].filter(Boolean)
   if (problems.length) failed++
   if (args.values.quiet && !problems.length) continue
@@ -67,7 +68,10 @@ function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: strin
   performance.now = () => (hold ? held : (held = tick()))
   screen.renderer.getCursorState = () => cursor
   seed(1)
-  screen.engine.start(wallpaper, { activity, time, season, weather })
+  let uncovered = 0
+  let where = ""
+  const watched = verify && dirty === "1" ? watch(wallpaper, (n, at) => ((uncovered += n), (where ||= at))) : wallpaper
+  screen.engine.start(watched, { activity, time, season, weather })
   let previous = new Uint32Array(W * H)
   let changes = 0
   let total = 0
@@ -75,7 +79,7 @@ function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: strin
   let first = ""
   const recording: Uint16Array[] = []
   for (let f = 0; f < frames; f++) {
-    if (verify) script(f, screen.engine, wallpaper, activity, time)
+    if (verify) script(f, screen.engine, watched, activity, time)
     const start = Bun.nanoseconds()
     screen.frame(verify && f >= 100 && f < 160 ? (x, y) => text(x + 3, y) : text)
     hold = false
@@ -106,7 +110,7 @@ function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: strin
     }
   }
   screen.engine.stop()
-  return { ms: total / (frames - 60), flicker: changes / (frames - 60), mismatches, first, recording }
+  return { ms: total / (frames - 60), flicker: changes / (frames - 60), mismatches, first, recording, uncovered, where }
 }
 
 // Text edits, redraws between frames, a moving cursor, agent events, a brightness change and a crossfade, to exercise every reason
@@ -120,4 +124,36 @@ function script(f: number, engine: Engine, wallpaper: Wallpaper, activity: Activ
   if (f === 200) engine.react("idle")
   if (f === 180) engine.start(wallpaper, { activity, time, season, weather, brightness: "vivid" })
   if (f === 205) engine.start(wallpaper, { activity, time: time === "night" ? "day" : "night", season, weather, brightness: "vivid" })
+}
+
+// A wallpaper whose scenes check, after every render, that each pixel that differs from the cached background lies in
+// a touched box: finish() only works out what's under them, so anything drawn elsewhere would never show.
+function watch(wallpaper: Wallpaper, report: (pixels: number, at: string) => void): Wallpaper {
+  return {
+    ...wallpaper,
+    create(settings) {
+      const scene = wallpaper.create(settings)
+      const canvas = scene as unknown as { hdr: Float32Array; background?: Float32Array; touched?: number[] }
+      const render = scene.render.bind(scene)
+      scene.render = () => {
+        render()
+        const bg = canvas.background
+        const t = canvas.touched
+        if (!bg || !t || bg.length !== canvas.hdr.length) return
+        const inside = new Uint8Array(scene.W * scene.H)
+        for (let b = 0; b < t.length; b += 4)
+          for (let y = Math.max(0, Math.floor(t[b + 1])); y <= Math.min(scene.H - 1, Math.floor(t[b + 3])); y++)
+            for (let x = Math.max(0, Math.floor(t[b])); x <= Math.min(scene.W - 1, Math.floor(t[b + 2])); x++) inside[y * scene.W + x] = 1
+        let n = 0
+        let at = ""
+        for (let i = 0; i < inside.length; i++) {
+          if (inside[i] || (canvas.hdr[i * 3] === bg[i * 3] && canvas.hdr[i * 3 + 1] === bg[i * 3 + 1] && canvas.hdr[i * 3 + 2] === bg[i * 3 + 2])) continue
+          n++
+          at ||= `${i % scene.W},${(i / scene.W) | 0}`
+        }
+        if (n) report(n, `${settings.time} at ${at}`)
+      }
+      return scene
+    },
+  }
 }
