@@ -176,7 +176,7 @@ seasonal shower or flurry without the cloud deck, as the farm does in winter. `w
 
 ## Scrim
 
-Text gets a soft scrim that fades the scene toward a dark color around it. `scrim` gives that color (0 to 255) for
+Text gets a scrim that fades the scene toward a dark color under and just around each character. `scrim` gives that color (0 to 255) for
 each time of day at the top, middle and bottom of the screen. Darker, more saturated versions of the scene's own colors
 at those depths read better than black: dark sky blue at the top and dark green over grass by day, deep navy at night.
 Check that text stays readable with `bun dev/preview.ts` at every time of day.

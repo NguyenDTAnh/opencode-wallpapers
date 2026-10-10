@@ -178,8 +178,9 @@ quadrant blocks (2x2). These environment variables tune rendering:
 ## How it works
 
 The plugin post-processes each frame OpenCode draws. Cells painted with OpenCode's neutral surface colors are replaced
-by the scene, while colored backgrounds such as diffs and selections are left alone. Text keeps a soft scrim that fades
-the scene toward a dark tint around it. Scenes render in HDR with bloom and tone mapping, then are fitted to two colors
+by the scene, while colored backgrounds such as diffs and selections are left alone. Text keeps a scrim that hugs it:
+the scene fades toward a dark tint under each character and within a cell or two around it, so it still shows between
+lines and after short ones, and OpenCode's panels and dialogs keep a lighter frost. Scenes render in HDR with bloom and tone mapping, then are fitted to two colors
 per character cell. While one look fades into another, both scenes render and blend, scrim included, so only
 transitions cost extra.
 

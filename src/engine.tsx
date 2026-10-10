@@ -488,7 +488,7 @@ export function createEngine(
   const quad = new Float32Array(24)
   const order = new Uint8Array(8)
   const octants = process.env.WALLPAPER_OCTANTS !== "0" && (process.env.WALLPAPER_OCTANTS === "1" || OCTANT_TERMINALS.test(`${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`))
-  let glyphs = new Uint8Array(0)
+  let shapes = new Uint8Array(0)
   let scrimLook: (typeof LEVELS)[Brightness] | undefined
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
@@ -831,7 +831,7 @@ export function createEngine(
     if (surface.length !== cells) {
       surface = new Uint8Array(cells)
       cellTint = new Int32Array(cells)
-      glyphs = new Uint8Array(cells)
+      shapes = new Uint8Array(cells)
       mask = new Float32Array(GW * GH)
       scrimLook = undefined
     }
@@ -845,11 +845,11 @@ export function createEngine(
       cellTint[i] = tint
       // 1 for text, 2 for a blank cell of a panel (a surface other than the base, such as a dialog), else 0.
       const shape = !on ? 0 : char[i] !== SPACE && !(isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT) ? 1 : k !== base && tint === TINT_ZERO ? 2 : 0
-      if (glyphs[i] !== shape) ((glyphs[i] = shape), (reshaped = true))
+      if (shapes[i] !== shape) ((shapes[i] = shape), (reshaped = true))
     }
     if (reshaped) {
       scrimLook = look
-      buildScrim(glyphs, mask, W, H, look.scrim, look.reach)
+      buildScrim(shapes, mask, W, H, look.scrim, look.reach)
     }
     if (open.length !== cells) open = new Uint8Array(cells)
     openW = W
