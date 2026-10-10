@@ -58,7 +58,8 @@ export abstract class Canvas {
   // and wherever bloom changed. finish() tone-maps only these, and the engine refits only the cells under them.
   readonly changed: number[] = []
 
-  // Last frame's touched boxes, the thresholded bloom input they were judged against, and which bloom cells to tone-map.
+  // Last frame's touched boxes and thresholded bloom input, the bloom cells where that input changed, and which bloom
+  // cells to tone-map.
   private drawn: number[] = []
   private bloomIn = new Float32Array(0)
   private readonly bloomBox = new Int32Array(4)

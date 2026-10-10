@@ -71,7 +71,7 @@ exposure, 1.25 by default.
 ### layout() for static backgrounds
 
 `layout()` runs after every resize, once the buffers match the new size. Paint whatever never moves there (sky,
-mountains, buildings, a tree), copy `hdr` into a field, and start each frame from that copy:
+mountains, buildings, a tree), copy `hdr` into a field, and start each frame from that copy with `restore()`:
 
 ```ts
 protected override layout() {
@@ -81,13 +81,21 @@ protected override layout() {
 }
 
 render() {
-  this.hdr.set(this.background)
+  this.restore(this.background)
   // …moving things…
   this.finish()
 }
 ```
 
 This is the biggest single saving: a full-screen gradient with noise costs more than every creature together.
+
+The engine also refits only the terminal cells that can have changed since the last frame. `restore()` starts the
+frame's `touched` list of boxes, and every drawing method below adds the box it drew in. A scene that writes `hdr` in
+its own loop during `render()` must call `touch(x0, y0, x1, y1)` (pixels, inclusive) for that area, and pass
+`this.touched` to `paintStars`, `paintClouds`, `paintStorm` and `WeatherLayer.draw`. A scene that draws everything
+each frame calls `restore()` with no background. Anything left untouched keeps last frame's cells, so a missed loop
+shows as a smear; `bun dev/check.ts --verify-dirty <id>` catches it. A scene that never calls `restore()` is refitted
+in full every frame.
 
 ### Drawing
 
@@ -102,7 +110,7 @@ This is the biggest single saving: a full-screen gradient with noise costs more 
 | `polygon(points, color, alpha?)` | An anti-aliased polygon in a flat color, for straight-edged things like buildings and boats |
 | `shape(parts, lighting, light?)` | Rounded parts joined into one lit form, for creatures, people and plants |
 
-For per-pixel effects such as water, sand or fog, loop over `hdr` directly.
+For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and `touch()` the area (see above).
 
 ### Shapes
 
@@ -135,10 +143,10 @@ details), and values in between soften it.
 - `paintSky(hdr, W, H, stops, orb)` fills the canvas with a vertical gradient through `[fraction of height, color]`
   stops, a glow around the sun or moon, and the orb itself. An `Orb` has x (fraction of width), y and r (fractions
   of height), `core` and `glow` colors, `near` and `wide` glow strengths, and `moon: true` for a cratered moon.
-- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness)` draw slowly twinkling stars that
+- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness, touched)` draw slowly twinkling stars that
   fade toward `top`. Stars are tinted from `STAR_TINTS`, never white.
 - `makeClouds(count, puffy, y0, y1)`, `driftClouds(clouds, A, dt)` and `paintClouds(hdr, W, H, clouds, top, bottom,
-  alpha, puffy)` give puffy cumulus or thin streaks, shaded from `top` to `bottom`.
+  alpha, puffy, touched)` give puffy cumulus or thin streaks, shaded from `top` to `bottom`.
 
 `src/math.ts` has `TAU`, `lerp`, `clamp`, `smoothstep`, `rand`, stable hashes (`hash`, `hash2`, `hashString`), smooth
 noise (`noise1`, `noise2`, `fbm1`, `fbm2`), `hsv` and the `RGB` type.
@@ -170,7 +178,7 @@ really change (blossom, leaves, snow, crowds) and nothing for indoor or timeless
 
 `settings.weather` is clear, overcast, rain, snow or fog, or missing for the wallpaper's own weather. Outdoor scenes
 make one `WeatherLayer` (from `src/weather.ts`) with the weather, time of day and horizon, and call its `cover()` in
-`layout()` right after painting the sky, `step(dt)` in `step`, and `draw()` at the end of `render()` before `finish()`.
+`layout()` right after painting the sky, `step(dt)` in `step`, and `draw(hdr, W, H, touched)` at the end of `render()` before `finish()`.
 Skip stars when `covered` is set, and color clouds with `scud` when it is. Passing `light` as the last argument gives a
 seasonal shower or flurry without the cloud deck, as the farm does in winter. `wallpapers/farm.ts` shows all of it.
 
@@ -216,7 +224,8 @@ All optional, and all on `Scene`:
 
 ## Performance
 
-A typical wallpaper costs 8 to 12 ms per frame at 15 fps through the whole pipeline (`bun dev/check.ts`). Timings vary
+A typical wallpaper costs 3 to 10 ms per frame at 15 fps through the whole pipeline (`bun dev/check.ts`), most of it
+fitting the cells that changed: scenes that move everywhere (the ocean, the beach's sea) cost the most. Timings vary
 a lot with machine load, so compare against an existing wallpaper measured back to back.
 
 - Paint static things once in `layout()`.
@@ -236,6 +245,7 @@ a lot with machine load, so compare against an existing wallpaper measured back 
 ```sh
 bun run typecheck
 bun dev/check.ts [id...] [season] [weather]       # every activity and time: errors, ms/frame, flicker
+bun dev/check.ts --verify-dirty [id...]           # also checks that refitting only changed cells matches a full refit
 bun dev/snap.ts <id> [activity] [time] [season] [weather] [seconds...] # scene PNGs in dev/out/, and ms per render
 bun dev/preview.ts <id> [activity] [time] [season] [weather] [seconds] # terminal cells behind text, as a PNG
 bun dev/pixel-check.ts [id] [activity] [time]     # real-pixel mode against a mock kitty terminal
@@ -251,6 +261,8 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
   `--quiet` prints only failures, and it fails on flicker above `--max-flicker` (150) and, if given, on frames slower
   than `--max-ms`; CI runs `--quiet --max-ms=60`. Dev renders seed `Math.random`, so they are reproducible.
   Errors thrown in `step` or `render` show up here; inside OpenCode they are only logged to `WALLPAPER_DEBUG`.
+  `--verify-dirty` plays each combination twice, refitting every cell (`WALLPAPER_DIRTY=0`) and then only what
+  changed, with text edits, redraws, agent events and a crossfade mixed in, and fails on any cell that differs.
 - `snap.ts` renders the scene directly, before terminal conversion, for judging the art.
 - `preview.ts` shows what the terminal will show, scrim included.
 - `dev/pty.ts [seconds] [keys...]` runs a real OpenCode in a pseudo-terminal and types each key argument, pausing

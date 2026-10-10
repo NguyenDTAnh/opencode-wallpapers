@@ -778,6 +778,8 @@ export function createEngine(
     try {
       render(buf)
     } catch (error) {
+      // A frame cut short leaves the cached fits out of step with the scene, so the next one starts over.
+      lastSize = ""
       log(`error: ${error instanceof Error ? error.stack : String(error)}`)
     }
   }
