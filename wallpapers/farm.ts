@@ -260,11 +260,11 @@ class Farm extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    this.restore(this.background)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.touched)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
-    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy, this.touched)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
     this.drawFan()
     this.drawTractor()
     for (const c of this.chickens) this.drawChicken(c)
@@ -276,7 +276,7 @@ class Farm extends Canvas {
     this.drawCornRow(3)
     this.drawFireflies()
     this.drawLeaves()
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 

@@ -220,12 +220,12 @@ class Tundra extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    this.restore(this.background)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.touched)
     if (this.look.aurora > 0 && !this.weather.covered) this.drawAurora()
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
-    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy, this.touched)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
     if (this.owl.x > -5) this.drawOwl()
     if (this.yeti.t >= 0) this.drawYeti()
     if (this.bear) this.drawBear(this.bear)
@@ -233,7 +233,7 @@ class Tundra extends Canvas {
     for (const p of [...this.penguins].sort((a, b) => a.y - b.y)) this.drawPenguin(p)
     if (this.fox) this.drawFox(this.fox)
     this.drawFlakes()
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 
@@ -413,10 +413,12 @@ class Tundra extends Canvas {
   private drawAurora() {
     const { W, H, hdr, look } = this
     const t = this.time
+    let bottom = 0
     for (let x = 0; x < W; x++) {
       const u = x / H
       const band = (0.17 + 0.05 * Math.sin(u * 1.7 + t * 0.07) + 0.03 * Math.sin(u * 4.1 - t * 0.05)) * H
       const fold = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(u * 14 + Math.sin(u * 3 + t * 0.1) * 3 + t * 0.15), 2)
+      bottom = Math.max(bottom, band + 0.05 * H)
       for (let y = 0; y < Math.min(H, band + 0.05 * H); y++) {
         const above = band - y
         const k = (above > 0 ? Math.exp(-above / (0.12 * H)) : Math.exp(-((above / (0.015 * H)) ** 2))) * fold * 0.35 * look.aurora
@@ -428,6 +430,7 @@ class Tundra extends Canvas {
         hdr[o + 2] += k * lerp(0.5, 0.9, violet)
       }
     }
+    this.touch(0, 0, W - 1, bottom)
   }
 
   private drawFlakes() {

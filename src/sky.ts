@@ -72,8 +72,8 @@ export function makeStars(count: number, top: number): Star[] {
   return Array.from({ length: count }, () => ({ x: Math.random(), y: Math.random() * top, b: 0.4 + Math.random() * 0.6, phase: Math.random() * TAU, tint: STAR_TINTS[Math.floor(Math.random() * STAR_TINTS.length)] }))
 }
 
-// Stars twinkling slowly, fading toward the horizon at `top`.
-export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[], time: number, top: number, brightness: number) {
+// Stars twinkling slowly, fading toward the horizon at `top`. Pass a Canvas's touched to record what changed.
+export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[], time: number, top: number, brightness: number, touched?: number[]) {
   for (const s of stars) {
     const x = (s.x * W) | 0
     const y = (s.y * H) | 0
@@ -83,6 +83,7 @@ export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[
     hdr[o] += k * s.tint[0]
     hdr[o + 1] += k * s.tint[1]
     hdr[o + 2] += k * s.tint[2]
+    touched?.push(x, y, x, y)
   }
 }
 
@@ -111,19 +112,21 @@ export function makeStorm(): Cloud[] {
   return makeClouds(8, true, 0.04, 0.26)
 }
 
-export function paintStorm(hdr: Float32Array, W: number, H: number, clouds: Cloud[], top: RGB, bottom: RGB, gloom: number) {
+export function paintStorm(hdr: Float32Array, W: number, H: number, clouds: Cloud[], top: RGB, bottom: RGB, gloom: number, touched?: number[]) {
   if (gloom <= 0) return
-  paintClouds(hdr, W, H, clouds, [top[0] * 0.45, top[1] * 0.45, top[2] * 0.5], [bottom[0] * 0.4, bottom[1] * 0.4, bottom[2] * 0.45], smoothstep(0, 1, gloom) * 0.8, true)
+  paintClouds(hdr, W, H, clouds, [top[0] * 0.45, top[1] * 0.45, top[2] * 0.5], [bottom[0] * 0.4, bottom[1] * 0.4, bottom[2] * 0.45], smoothstep(0, 1, gloom) * 0.8, true, touched)
 }
 
-// Clouds shaded from top to bottom; puffy ones are nearly opaque, streaks are thin and soft.
-export function paintClouds(hdr: Float32Array, W: number, H: number, clouds: Cloud[], top: RGB, bottom: RGB, alpha: number, puffy: boolean) {
+// Clouds shaded from top to bottom; puffy ones are nearly opaque, streaks are thin and soft. Pass a Canvas's touched to
+// record what changed.
+export function paintClouds(hdr: Float32Array, W: number, H: number, clouds: Cloud[], top: RGB, bottom: RGB, alpha: number, puffy: boolean, touched?: number[]) {
   for (const c of clouds)
     for (const p of c.puffs) {
       const cx = (c.x + p.dx) * H
       const cy = (c.y + p.dy) * H
       const rx = p.rx * H
       const ry = p.ry * H
+      touched?.push(cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1)
       for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
         for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, Math.ceil(cx + rx)); x++) {
           const dx = (x + 0.5 - cx) / rx

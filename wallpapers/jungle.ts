@@ -215,7 +215,7 @@ class Jungle extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     this.drawShafts()
     this.drawFalls()
     if (this.toucan.x > -5) this.drawToucan(this.toucan)
@@ -230,7 +230,7 @@ class Jungle extends Canvas {
     for (const b of this.butterflies) this.drawButterfly(b)
     this.drawMotes()
     for (const l of this.leaves) this.drawLeaf(l)
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 
@@ -394,6 +394,7 @@ class Jungle extends Canvas {
     const [lr, lg, lb] = look.light
     // After an error the shafts fade, as if clouds had covered the sun.
     const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.75
+    this.touch(0, 0, W - 1, H * 0.85)
     for (let y = 0; y < H * 0.85; y++) {
       const fade = Math.pow(1 - y / (H * 0.85), 1.4) * look.shafts * overcast
       for (let x = 0; x < W; x++) {
@@ -425,6 +426,7 @@ class Jungle extends Canvas {
       }
     const rx = f.half * 3
     const ry = 0.03 * H
+    this.touch(f.x - rx - 1, f.bottom - ry - 1, f.x + rx + 1, f.bottom + ry + 1)
     for (let y = Math.max(0, Math.floor(f.bottom - ry)); y < Math.min(H, f.bottom + ry); y++)
       for (let x = Math.max(0, Math.floor(f.x - rx)); x < Math.min(W, f.x + rx); x++) {
         const q = ((x + 0.5 - f.x) / rx) ** 2 + ((y + 0.5 - f.bottom) / ry) ** 2

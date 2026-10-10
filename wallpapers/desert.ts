@@ -338,10 +338,10 @@ class Desert extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) this.drawStars()
     this.drawClouds()
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
     for (const b of this.flock) this.look.night ? this.drawBat(b) : this.drawBird(b, 0.3, "vulture")
     if (this.bigBird) this.drawBird(this.bigBird, 0.8, this.look.night ? "owl" : "eagle")
     if (this.coyote) this.drawCoyote(this.coyote)
@@ -350,7 +350,7 @@ class Desert extends Canvas {
     for (const b of this.startled) this.silhouette(bird(b, this.H, 0.022 * this.H, this.look.flock), 0.4)
     this.drawTumbleweed()
     this.drawDust()
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 
@@ -744,6 +744,7 @@ class Desert extends Canvas {
         const rx = p.rx * H
         const ry = p.ry * H
         const warm = puffy ? 1 : 0.6 + 0.6 * Math.exp(-Math.abs(cx - this.orbX) / (0.5 * H))
+        this.touch(cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1)
         for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
           for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, Math.ceil(cx + rx)); x++) {
             const dx = (x + 0.5 - cx) / rx

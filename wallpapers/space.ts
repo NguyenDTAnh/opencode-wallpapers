@@ -209,7 +209,7 @@ class Space extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     this.drawStars()
     this.drawMoon()
     this.drawPlanet()

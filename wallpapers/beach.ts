@@ -247,11 +247,11 @@ class Beach extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
+    this.restore(this.background)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3, this.touched)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
-    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy, this.touched)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
     this.drawSea()
     for (const s of this.swimmers) this.drawSwimmer(s)
     this.drawBoat()
@@ -267,7 +267,7 @@ class Beach extends Canvas {
       this.drawTrunk(p)
       this.drawFronds(p)
     }
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 
@@ -331,11 +331,13 @@ class Beach extends Canvas {
     const [, wet] = look.sand
     const ox = look.orb.x * W
     const roll = (t * 0.08) % 1
+    let bottom = 0
     for (let x = 0; x < W; x++) {
       const u = x / H
       const edge = this.shore(u) * H
       const reach = (0.74 + 0.01 * Math.sin(u * 2.3 + 1) + 0.014) * H
       const wave = lerp(0.62, edge / H - 0.005, roll) * H
+      bottom = Math.max(bottom, reach + 2, edge + 0.02 * H)
       for (let y = Math.floor(HORIZON * H); y < Math.min(H, reach + 2); y++) {
         const o = (y * W + x) * 3
         if (y > edge) {
@@ -386,6 +388,7 @@ class Beach extends Canvas {
           hdr[o + 2] += look.foam[2] * k
         }
     }
+    this.touch(0, Math.floor(HORIZON * H), W - 1, bottom)
   }
 
   // A palm trunk curving from its base to the crown, ringed with old leaf scars, with coconuts at the top.

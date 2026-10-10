@@ -293,11 +293,11 @@ class City extends Canvas {
 
   render() {
     const { W, H, look } = this
-    this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4)
+    this.restore(this.background)
+    if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4, this.touched)
     const [top, bottom] = this.weather.scud ?? [look.clouds.top, look.clouds.bottom]
-    paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, look.clouds.puffy)
-    paintStorm(this.hdr, W, H, this.storm, look.clouds.top, look.clouds.bottom, this.gloom)
+    paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, look.clouds.puffy, this.touched)
+    paintStorm(this.hdr, W, H, this.storm, look.clouds.top, look.clouds.bottom, this.gloom, this.touched)
     if (this.hero.t >= 0) this.drawHero()
     this.drawBlimp()
     this.drawRiver()
@@ -312,7 +312,7 @@ class City extends Canvas {
     for (const w of this.walkers) this.drawWalker(w)
     for (const b of this.pigeons) this.shape(bird(b, H, 0.022 * H, this.paint([0.42, 0.44, 0.5])), this.lighting, 0.4)
     this.drawRain()
-    this.weather.draw(this.hdr, W, H)
+    this.weather.draw(this.hdr, W, H, this.touched)
     this.finish()
   }
 
@@ -401,6 +401,7 @@ class City extends Canvas {
         buf[o + 1] += c[1] * a
         buf[o + 2] += c[2] * a
       }
+    if (buf === this.hdr) this.touch(cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1)
   }
 
   private tower(x: number, w: number, h: number, seed: number, far: boolean): Tower {
@@ -713,6 +714,7 @@ class City extends Canvas {
     const { W, H, hdr, river, water } = this
     const r0 = Math.floor(BANK * H)
     const r1 = Math.min(H, Math.ceil(QUAY * H))
+    this.touch(0, r0, W - 1, r1 - 1)
     for (let y = r0; y < r1; y++) {
       const amp = (0.25 + ((y - r0) / (r1 - r0)) * 0.9) * (H / 200)
       const s = Math.sin(y * 0.45 + this.time * 1.3) * amp + Math.sin(y * 0.17 - this.time * 0.7) * amp * 0.6

@@ -5,6 +5,9 @@ import { clamp, type RGB } from "./math"
 const BLOOM = 4
 const BLOOM_THRESHOLD = 0.82
 const BLUR = [1, 6, 15, 20, 15, 6, 1]
+// How far, in bloom cells, a change to bloom's input can reach: two blurs at each level, the half-resolution level
+// counting double, plus the bilinear lookups between levels.
+const BLOOM_REACH = 23
 
 export type Part =
   | { kind: "capsule"; ax: number; ay: number; bx: number; by: number; r0: number; r1: number; color: RGB; ribs: number }
@@ -48,6 +51,23 @@ export abstract class Canvas {
   protected cells = false
   hdr = new Float32Array(0)
   pixels = new Uint8Array(0)
+  // Boxes [x0, y0, x1, y1, ...] in pixels, inclusive, around what render() drew this frame over the cached background.
+  // restore() clears it and every drawing method adds to it; scenes touch() what their own pixel loops write.
+  readonly touched: number[] = []
+  // Boxes around every pixel whose `pixels` value may differ from last frame's: what was drawn this frame or last,
+  // and wherever bloom changed. finish() tone-maps only these, and the engine refits only the cells under them.
+  readonly changed: number[] = []
+
+  // Last frame's touched boxes, the thresholded bloom input they were judged against, and which bloom cells to tone-map.
+  private drawn: number[] = []
+  private bloomIn = new Float32Array(0)
+  private readonly bloomBox = new Int32Array(4)
+  private tiles = new Uint8Array(0)
+  // Whether this frame started with restore(); scenes that never call it are tone-mapped in full every frame.
+  private restored = false
+  private fresh = true
+  // WALLPAPER_DIRTY=0 tone-maps every pixel every frame, the reference dev/check.ts --verify-dirty compares against.
+  private readonly dirty = process.env.WALLPAPER_DIRTY !== "0"
 
   private bw = 0
   private bh = 0
@@ -109,6 +129,9 @@ export abstract class Canvas {
     this.bh2 = Math.ceil(this.bh / 2)
     this.bloom2A = new Float32Array(this.bw2 * this.bh2 * 3)
     this.bloom2B = new Float32Array(this.bw2 * this.bh2 * 3)
+    this.bloomIn = new Float32Array(this.bw * this.bh * 3)
+    this.tiles = new Uint8Array(this.bw * this.bh)
+    this.fresh = true
     const invR = 1 / Math.hypot(W / 2, H / 2)
     this.vignette = new Float32Array(W * H)
     for (let y = 0; y < H; y++)
@@ -147,6 +170,28 @@ export abstract class Canvas {
     return this.cells ? Math.max(radius * this.H, min) : radius * this.H
   }
 
+  // Starts a frame: copies the cached background (if given) into hdr and clears touched.
+  protected restore(background?: Float32Array) {
+    if (background) this.hdr.set(background)
+    this.touched.length = 0
+    this.restored = true
+  }
+
+  // Marks pixels a scene's own loop writes, x0..x1 by y0..y1 inclusive, so they are tone-mapped and refitted.
+  protected touch(x0: number, y0: number, x1: number, y1: number) {
+    const t = this.touched
+    const n = t.length
+    // Pixel-by-pixel loops (add, blend) grow the last box instead of adding one box per pixel.
+    if (n && x0 >= t[n - 4] - 1 && y0 >= t[n - 3] - 1 && x1 <= t[n - 2] + 1 && y1 <= t[n - 1] + 1) {
+      t[n - 4] = Math.min(t[n - 4], x0)
+      t[n - 3] = Math.min(t[n - 3], y0)
+      t[n - 2] = Math.max(t[n - 2], x1)
+      t[n - 1] = Math.max(t[n - 1], y1)
+      return
+    }
+    t.push(x0, y0, x1, y1)
+  }
+
   // Adds light to one pixel.
   protected add(x: number, y: number, r: number, g: number, b: number) {
     const xi = x | 0
@@ -156,6 +201,7 @@ export abstract class Canvas {
     this.hdr[i] += r
     this.hdr[i + 1] += g
     this.hdr[i + 2] += b
+    this.touch(xi, yi, xi, yi)
   }
 
   // Mixes a color over the pixel at hdr index i by coverage a.
@@ -164,21 +210,37 @@ export abstract class Canvas {
     h[i] += (r - h[i]) * a
     h[i + 1] += (g - h[i + 1]) * a
     h[i + 2] += (b - h[i + 2]) * a
+    const y = Math.floor(i / 3 / this.W)
+    const x = i / 3 - y * this.W
+    this.touch(x, y, x, y)
   }
 
   // An anti-aliased filled circle, mixed over the scene.
   protected disc(cx: number, cy: number, rad: number, r: number, g: number, b: number, a: number) {
     fillDisc(this.hdr, this.W, this.H, cx, cy, rad, r, g, b, a)
+    this.touch(cx - rad - 2, cy - rad - 2, cx + rad + 2, cy + rad + 2)
   }
 
   // An anti-aliased filled ellipse, mixed over the scene; handy for parts that narrow as a creature turns edge-on.
   protected ellipse(cx: number, cy: number, rx: number, ry: number, r: number, g: number, b: number, a: number) {
     fillEllipse(this.hdr, this.W, this.H, cx, cy, rx, ry, r, g, b, a)
+    this.touch(cx - rx - 2, cy - ry - 2, cx + rx + 2, cy + ry + 2)
   }
 
   // An anti-aliased filled polygon in a flat color, for straight-edged things like buildings and machines.
   protected polygon(points: readonly (readonly [number, number])[], color: RGB, alpha = 1) {
     fillPolygon(this.hdr, this.W, this.H, points, color[0], color[1], color[2], alpha)
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const [x, y] of points) {
+      x0 = Math.min(x0, x)
+      y0 = Math.min(y0, y)
+      x1 = Math.max(x1, x)
+      y1 = Math.max(y1, y)
+    }
+    if (points.length) this.touch(x0 - 2, y0 - 2, x1 + 2, y1 + 2)
   }
 
   // Draws parts as one shape: each pixel takes the nearest part's color, so joints stay seamless. With rim lighting
@@ -186,12 +248,48 @@ export abstract class Canvas {
   // light scales the effect (0 draws flat color).
   protected shape(parts: Part[], lighting: Lighting, light = 1) {
     fillShape(this.hdr, this.W, this.H, parts, lighting, light)
+    for (const p of parts) {
+      const r = (p.kind === "capsule" ? Math.max(p.r0, p.r1) : Math.max(p.rx, p.ry)) + 2
+      if (p.kind === "capsule") this.touch(Math.min(p.ax, p.bx) - r, Math.min(p.ay, p.by) - r, Math.max(p.ax, p.bx) + r, Math.max(p.ay, p.by) + r)
+      else this.touch(p.cx - r, p.cy - r, p.cx + r, p.cy + r)
+    }
   }
 
-  // Bloom, vignette and ACES tone mapping from hdr into pixels.
+  // Bloom, vignette and ACES tone mapping from hdr into pixels. Only pixels that can have changed since last frame are
+  // tone-mapped again: those under this frame's or last frame's touched boxes, and those bloom reaches from wherever
+  // its input changed.
   protected finish(exposure = 1.25) {
-    bloom(this.hdr, this.W, this.H, this.bw, this.bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp)
-    toneMap(this.hdr, this.pixels, this.W, this.H, this.bloomUp, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
+    const full = !this.dirty || this.fresh || !this.restored
+    // A scene that never calls restore() can have drawn anywhere.
+    if (!this.restored) this.touched.splice(0, this.touched.length, 0, 0, this.W - 1, this.H - 1)
+    this.restored = false
+    this.fresh = false
+    const box = this.bloomBox
+    bloom(this.hdr, this.W, this.H, this.bw, this.bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp, this.bloomIn, box, full)
+    const changed = this.changed
+    changed.length = 0
+    if (full) changed.push(0, 0, this.W - 1, this.H - 1)
+    else {
+      for (const t of this.touched) changed.push(t)
+      for (const t of this.drawn) changed.push(t)
+      if (box[0] <= box[2]) changed.push((box[0] - BLOOM_REACH) * BLOOM, (box[1] - BLOOM_REACH) * BLOOM, (box[2] + BLOOM_REACH + 1) * BLOOM, (box[3] + BLOOM_REACH + 1) * BLOOM)
+    }
+    this.drawn.length = 0
+    for (const t of this.touched) this.drawn.push(t)
+    markTiles(this.tiles, this.bw, this.bh, changed)
+    toneMap(this.hdr, this.pixels, this.W, this.H, this.bloomUp, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure, this.tiles, this.bw)
+  }
+}
+
+// Marks the bloom cells (BLOOM pixels square) that any box overlaps.
+function markTiles(tiles: Uint8Array, bw: number, bh: number, boxes: number[]) {
+  tiles.fill(0)
+  for (let b = 0; b < boxes.length; b += 4) {
+    const x0 = Math.max(0, Math.floor(boxes[b] / BLOOM))
+    const y0 = Math.max(0, Math.floor(boxes[b + 1] / BLOOM))
+    const x1 = Math.min(bw - 1, Math.floor(boxes[b + 2] / BLOOM))
+    const y1 = Math.min(bh - 1, Math.floor(boxes[b + 3] / BLOOM))
+    for (let y = y0; y <= y1; y++) tiles.fill(1, y * bw + x0, y * bw + x1 + 1)
   }
 }
 
@@ -372,12 +470,18 @@ function fillShape(hdr: Float32Array, W: number, H: number, parts: Part[], light
     }
 }
 
-function toneMap(hdr: Float32Array, pixels: Uint8Array, W: number, H: number, bloomUp: Float32Array, vignette: Float32Array, rowA: Int32Array, rowB: Int32Array, rowF: Float32Array, colA: Int32Array, colB: Int32Array, colF: Float32Array, exposure: number) {
+// Tone-maps the pixels in marked tiles (BLOOM pixels square, bw across).
+function toneMap(hdr: Float32Array, pixels: Uint8Array, W: number, H: number, bloomUp: Float32Array, vignette: Float32Array, rowA: Int32Array, rowB: Int32Array, rowF: Float32Array, colA: Int32Array, colB: Int32Array, colF: Float32Array, exposure: number, tiles: Uint8Array, bw: number) {
   for (let y = 0; y < H; y++) {
     const rA = rowA[y]
     const rB = rowB[y]
     const fy = rowF[y]
+    const row = Math.floor(y / BLOOM) * bw
     for (let x = 0; x < W; x++) {
+      if (!tiles[row + Math.floor(x / BLOOM)]) {
+        x += BLOOM - 1 - (x % BLOOM)
+        continue
+      }
       const i = y * W + x
       const fx = colF[x]
       const w00 = (1 - fx) * (1 - fy)
@@ -400,7 +504,9 @@ function toneMap(hdr: Float32Array, pixels: Uint8Array, W: number, H: number, bl
   }
 }
 
-function bloom(hdr: Float32Array, W: number, H: number, bw: number, bh: number, bloomA: Float32Array, bloomB: Float32Array, bw2: number, bh2: number, bloom2A: Float32Array, bloom2B: Float32Array, bloomUp: Float32Array) {
+// Unless full is set, bloomUp is left as it was when the thresholded input matches last frame's (bloomIn); box gets
+// the bloom cells where it differs (x0 > x1 when none).
+function bloom(hdr: Float32Array, W: number, H: number, bw: number, bh: number, bloomA: Float32Array, bloomB: Float32Array, bw2: number, bh2: number, bloom2A: Float32Array, bloom2B: Float32Array, bloomUp: Float32Array, bloomIn: Float32Array, box: Int32Array, full: boolean) {
   for (let by = 0; by < bh; by++)
     for (let bx = 0; bx < bw; bx++) {
       let r = 0
@@ -425,6 +531,7 @@ function bloom(hdr: Float32Array, W: number, H: number, bw: number, bh: number, 
       bloomA[o + 1] = g * k
       bloomA[o + 2] = b * k
     }
+  if (!diffBloom(bloomA, bloomIn, bw, bh, box) && !full) return
   blur(bloomA, bloomB, bw, bh)
   blur(bloomA, bloomB, bw, bh)
   for (let y = 0; y < bh2; y++)
@@ -467,6 +574,26 @@ function bloom(hdr: Float32Array, W: number, H: number, bw: number, bh: number, 
       }
     }
   }
+}
+
+// Copies bloom's thresholded input into last, recording the bounding box of the cells that differed; false if none did.
+function diffBloom(next: Float32Array, last: Float32Array, bw: number, bh: number, box: Int32Array) {
+  box[0] = bw
+  box[1] = bh
+  box[2] = -1
+  box[3] = -1
+  for (let i = 0; i < next.length; i++) {
+    if (next[i] === last[i]) continue
+    last[i] = next[i]
+    const cell = (i / 3) | 0
+    const x = cell % bw
+    const y = (cell / bw) | 0
+    box[0] = Math.min(box[0], x)
+    box[1] = Math.min(box[1], y)
+    box[2] = Math.max(box[2], x)
+    box[3] = Math.max(box[3], y)
+  }
+  return box[2] >= 0
 }
 
 function fillPolygon(hdr: Float32Array, W: number, H: number, pts: readonly (readonly [number, number])[], r: number, g: number, b: number, a: number) {

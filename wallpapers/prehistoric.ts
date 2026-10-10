@@ -173,7 +173,7 @@ class Prehistoric extends Canvas {
   private clouds: Cloud[]
   private smoke = Array.from({ length: SMOKE_PUFFS }, (_, i) => ({ age: (i / SMOKE_PUFFS) * SMOKE_LIFE, seed: Math.random() * 100 }))
   // Lava pixels (hdr index, strength, height down the flow) that pulse each frame.
-  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0) }
+  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0), box: [0, 0, -1, -1] }
   private trees: [number, number] = [0, 0]
   private rex = { x: -9, dir: 1, next: 2, phase: 0 }
   private dust: { x: number; y: number; vx: number; age: number }[] = []
@@ -234,13 +234,14 @@ class Prehistoric extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    this.restore(this.background)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.touched)
     const orange = this.look.lava[1]
     flowLava(this.hdr, this.lava.index, this.lava.k, this.lava.along, this.time, orange[0], orange[1], orange[2])
+    this.touch(this.lava.box[0], this.lava.box[1], this.lava.box[2], this.lava.box[3])
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
-    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy, this.touched)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
     this.drawSmoke()
     if (this.activity !== "calm") {
       this.drawPterosaurs()
@@ -257,7 +258,7 @@ class Prehistoric extends Canvas {
     if (this.activity === "teeming") for (const d of this.dragonflies) this.drawDragonfly(d)
     if (this.delorean.t >= 0) this.drawDelorean()
     for (const b of this.birds) this.shape(bird(b, this.H, 0.024 * this.H, this.paint([0.5, 0.3, 0.2])), this.lighting, 0.4)
-    this.weather.draw(this.hdr, this.W, this.H)
+    this.weather.draw(this.hdr, this.W, this.H, this.touched)
     this.finish()
   }
 
@@ -418,7 +419,8 @@ class Prehistoric extends Canvas {
       this.blend(i * 3, lerp(red[0], orange[0], h), lerp(red[1], orange[1], h), lerp(red[2], orange[2], h), core[i])
       index.push(i)
     }
-    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]) }
+    const box = index.length ? [index.reduce((m, i) => Math.min(m, i % W), W), Math.floor(index[0] / W), index.reduce((m, i) => Math.max(m, i % W), 0), Math.floor(index[index.length - 1] / W)] : [0, 0, -1, -1]
+    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]), box }
   }
 
   // A still lake in front of the volcano, mirroring it and the sky, with a muddy shore.

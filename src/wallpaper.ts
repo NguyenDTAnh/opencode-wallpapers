@@ -8,6 +8,9 @@ export interface Scene {
   readonly W: number
   readonly H: number
   readonly pixels: Uint8Array
+  // Optional: boxes [x0, y0, x1, y1, ...] in pixels, inclusive, outside which this frame's pixels match the last
+  // frame's (Canvas provides it). Without it the engine refits every cell every frame.
+  readonly changed?: readonly number[]
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void
