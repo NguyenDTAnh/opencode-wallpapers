@@ -1,9 +1,9 @@
 // Weather shared by outdoor wallpapers: an overcast cloud deck, rain streaks with splashes, snow and fog. A scene makes
 // one WeatherLayer, calls cover() in layout right after painting its sky, step() with its scaled dt, and draw() at the
 // end of render, just before finish().
-import { addBox, touchedBy } from "./canvas"
 import type { Time, Weather } from "./wallpaper"
 import { clamp, fbm2, hash, smoothstep, type RGB } from "./math"
+import { touch } from "./touched"
 
 interface Palette {
   deck: [top: RGB, bottom: RGB]
@@ -182,28 +182,26 @@ export class WeatherLayer {
     }
     const p = this.palette
     const k = this.kind
-    const touched = touchedBy(hdr)
-    // The fog drifts, so grading changes the whole frame.
     if (k.dim < 1 || k.fog > 0) {
       grade(hdr, W, H, k.dim, p.desaturate * k.gray, p.fog, this.fogRows, this.time)
-      addBox(touched, 0, 0, W, H)
+      touch(hdr, 0, 0, W - 1, H - 1)
     }
     const f = this.flakes
     for (let i = 0; i < this.snowCount * 4; i += 4) {
       const z = f[i + 2]
       const b = (0.35 + z * 0.5) * (0.6 + 0.4 * f[i + 3])
-      addBox(touched, f[i] * W - 1, f[i + 1] * H - 1, f[i] * W + 3, f[i + 1] * H + 3)
       flake(hdr, W, H, f[i] * W, f[i + 1] * H, p.snow[0], p.snow[1], p.snow[2], b)
       // Nearer flakes are bigger.
       if (z > 0.55) flake(hdr, W, H, f[i] * W + 0.8, f[i + 1] * H + 0.6, p.snow[0], p.snow[1], p.snow[2], b)
+      touch(hdr, f[i] * W - 2, f[i + 1] * H - 2, f[i] * W + 2, f[i + 1] * H + 2)
     }
     const d = this.drops
     for (let i = 0; i < this.rainCount * 3; i += 3) {
       const z = d[i + 2]
       const len = (0.025 + z * 0.035) * H
       const b = 0.05 + z * 0.12
-      addBox(touched, d[i] * W - len * 0.12 - 1, d[i + 1] * H - len, d[i] * W + 2, d[i + 1] * H + 1)
       streak(hdr, W, H, d[i] * W, d[i + 1] * H, len * 0.12, len, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b)
+      touch(hdr, d[i] * W - len * 0.12 - 2, d[i + 1] * H - len - 1, d[i] * W + 1, d[i + 1] * H + 1)
     }
     const s = this.splashes
     for (let i = 0; i < s.length; i += 4) {
@@ -216,8 +214,8 @@ export class WeatherLayer {
       const t = age / SPLASH_LIFE
       const b = (1 - t) * (0.12 + s[i + 3] * 0.2)
       const rx = (0.003 + s[i + 3] * 0.006) * H * (0.6 + t * 1.6)
-      addBox(touched, s[i] * W - rx - 1, s[i + 1] * H - rx - 1, s[i] * W + rx + 1, s[i + 1] * H + rx * 0.3 + 1)
       splash(hdr, W, H, s[i] * W, s[i + 1] * H, rx, t, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b)
+      touch(hdr, s[i] * W - rx - 2, s[i + 1] * H - rx - 2, s[i] * W + rx + 2, s[i + 1] * H + rx * 0.3 + 2)
     }
   }
 }
