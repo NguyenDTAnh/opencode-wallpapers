@@ -4,7 +4,7 @@ import { appendFileSync } from "node:fs"
 import { watchEgg } from "./egg"
 import { lerp, smoothstep, type RGB } from "./math"
 import { OCTANTS } from "./octants"
-import { AGENT_EVENTS, type AgentEvent, type Brightness, type Power, type Scene, type Scrim, type Settings, type Wallpaper } from "./wallpaper"
+import { AGENT_EVENTS, type AgentEvent, type Brightness, type Power, type Scene, type Scrim, type Settings, type TextMap, type Wallpaper } from "./wallpaper"
 
 export {
   ACTIVITIES,
@@ -22,6 +22,7 @@ export {
   type Scrim,
   type Season,
   type Settings,
+  type TextMap,
   type Time,
   type Wallpaper,
   type Weather,
@@ -73,6 +74,10 @@ const LEVELS: Record<Brightness, ReturnType<typeof level>> = {
 const DESATURATE = { day: 0.22, sunset: 0.22, night: 0.04 }
 // Seconds a change of wallpaper, activity or time of day crossfades over by default.
 export const FADE = 1.2
+// The map of where text sits that scenes get (see Scene.textMap): its grid, and how many frames apart it is rebuilt.
+const MAP_COLS = 16
+const MAP_ROWS = 9
+const MAP_EVERY = 15
 
 // Crossfades two equally sized RGBA frames into out.
 function mix(a: Uint8Array, b: Uint8Array, out: Uint8Array, t: number) {
@@ -156,9 +161,9 @@ function evalMask(q: Float32Array, mask: number) {
 }
 
 // Splits a cell's eight sub-pixels into two colours by brightness threshold, choosing the split with the least
-// squared error. A cell keeps last frame's split unless the new one is clearly better, so slow motion doesn't
-// make the glyph pattern flicker between near-equal choices. Returns the mask used.
-function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
+// squared error. A cell keeps last frame's split unless the new one is clearly better (see tolerance), so slow
+// motion doesn't make the glyph pattern flicker between near-equal choices. Returns the mask used.
+function writeOctant(q: Float32Array, order: Uint8Array, previous: number, older: number, moving: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
   for (let s = 0; s < 8; s++) {
     const l = q[s * 3] * 0.2126 + q[s * 3 + 1] * 0.7152 + q[s * 3 + 2] * 0.0722
     let j = s
@@ -208,7 +213,7 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char:
   let chosen = band < 0 ? bestMask : band
   if (band < 0 && previous >= 0 && previous !== bestMask) {
     evalMask(q, previous)
-    if (split.err <= bestErr * 1.35 + HYSTERESIS) chosen = previous
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS)) chosen = previous
   }
   evalMask(q, chosen)
   if (chosen === 0 || chosen === 255) {
@@ -234,6 +239,14 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char:
 const luma8 = new Float32Array(8)
 // Extra squared error (in 0-255 channel units) a cell tolerates before abandoning last frame's split.
 const HYSTERESIS = 150
+// Pixels around a touched box that still count as moving: anti-aliased edges and the trail PERSISTENCE leaves. Bloom
+// reaches further, but it only shifts colors smoothly, so those cells keep the steady fit.
+const MOVING_REACH = 4
+// Touched boxes under this many pixels (stars, snowflakes, motes) are points rather than edges and keep the steady fit.
+const MOVING_MIN = 30
+// Boxes over this share of the screen are layers redrawn every frame (water, an aurora, light shafts, fog), not
+// something moving across a still background, so they keep the steady fit too.
+const MOVING_MAX = 0.1
 // Share of the previous frame blended into each new one, which smooths sub-pixel motion.
 const PERSISTENCE = 0.45
 // How often the scene advances and redraws; wallpapers move slowly, so this stays low to save CPU and output.
@@ -264,7 +277,7 @@ const QUADRANTS = [
 
 // Picks the two-colour split of a cell's four sub-pixels with the least error and writes it as a quadrant block. Like
 // writeOctant it keeps last frame's split unless the new one is clearly better. Returns the mask used.
-function writeQuadrant(q8: Float32Array, previous: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
+function writeQuadrant(q8: Float32Array, previous: number, older: number, moving: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
   const q = quad4
   for (let s = 0; s < 4; s++) {
     const top = ((s >> 1) * 4 + (s & 1)) * 3
@@ -285,7 +298,7 @@ function writeQuadrant(q8: Float32Array, previous: number, char: Uint32Array, fg
   let chosen = band < 0 ? bestMask : band
   if (band < 0 && previous >= 0 && previous !== bestMask) {
     evalQuad(q, previous)
-    if (split.err <= bestErr * 1.35 + HYSTERESIS / 2) chosen = previous
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS / 2)) chosen = previous
   }
   evalQuad(q, chosen)
   bg[o] = split.br
@@ -344,6 +357,59 @@ function evalQuad(q: Float32Array, mask: number) {
   split.bg = bg
   split.bb = bb
   split.err = err
+}
+
+// Marks the cells under the scene's touched boxes (see Canvas.touched), widened by MOVING_REACH pixels.
+function markMoving(moving: Uint8Array, touched: readonly number[] | undefined, PW: number, PH: number, W: number, H: number) {
+  moving.fill(0)
+  if (!touched) return
+  const sx = W / PW
+  const sy = H / PH
+  for (let b = 0; b < touched.length; b += 4) {
+    const area = (touched[b + 2] - touched[b] + 1) * (touched[b + 3] - touched[b + 1] + 1)
+    if (area < MOVING_MIN || area > PW * PH * MOVING_MAX) continue
+    const x0 = Math.max(0, Math.floor((touched[b] - MOVING_REACH) * sx))
+    const x1 = Math.min(W, Math.ceil((touched[b + 2] + 1 + MOVING_REACH) * sx))
+    const y0 = Math.max(0, Math.floor((touched[b + 1] - MOVING_REACH) * sy))
+    const y1 = Math.min(H, Math.ceil((touched[b + 3] + 1 + MOVING_REACH) * sy))
+    for (let y = y0; y < y1; y++) if (x0 < x1) moving.fill(1, y * W + x0, y * W + x1)
+  }
+}
+
+// The most error a cell's previous split may have and still be kept, given the best split's. Where something moves,
+// a step of one sub-pixel (not back to the split before) is taken as soon as it fits a little better, so slow motion
+// glides a sub-pixel at a time instead of jumping several at once. Bigger changes, steps back, and every static cell
+// keep the full margin, so noise and swaying stay steady.
+function tolerance(bestErr: number, best: number, previous: number, older: number, moving: number, margin: number) {
+  const d = best ^ previous
+  return moving && (d & (d - 1)) === 0 && best !== older ? bestErr * 1.05 + margin * 0.3 : bestErr * 1.35 + margin
+}
+
+// The terminal is sent every cell whose character or colors differ from the last frame, and slow light (aurora, twinkle,
+// bloom around moving things) nudges hundreds of cells by a level or two of 255 each frame. A color the engine drew
+// that is within QUIET levels in every channel of what the cell showed last frame keeps last frame's value, so drift
+// builds up unseen and is sent once it adds up; a new glyph always sends its true colors.
+const QUIET = 3
+
+function quieten(char: Uint32Array, fg: Uint16Array, bg: Uint16Array, inputFg: Uint16Array, inputBg: Uint16Array, shownChar: Uint32Array, shownFg: Uint16Array, shownBg: Uint16Array, cells: number) {
+  for (let i = 0; i < cells; i++) {
+    if (char[i] !== shownChar[i]) {
+      shownChar[i] = char[i]
+      continue
+    }
+    const o = i * 4
+    holdColor(fg, inputFg, shownFg, o)
+    holdColor(bg, inputBg, shownBg, o)
+  }
+  shownFg.set(fg)
+  shownBg.set(bg)
+}
+
+// Colors OpenCode drew (unchanged from its input) are left exactly as they are.
+function holdColor(colors: Uint16Array, input: Uint16Array, shown: Uint16Array, o: number) {
+  if (colors[o] === input[o] && colors[o + 1] === input[o + 1] && colors[o + 2] === input[o + 2] && colors[o + 3] === input[o + 3]) return
+  for (let c = o; c < o + 4; c++) if (Math.abs(colors[c] - shown[c]) >= QUIET) return
+  for (let c = o; c < o + 4; c++) colors[c] = shown[c]
 }
 
 // Soft light (glows, haze, sky gradients) reads best as bands across its gradient: a cell's left and right halves, or
@@ -470,6 +536,122 @@ function isSurface(k: number, light: boolean) {
   return (light ? luma > 170 : luma < 70) && Math.max(r, g, b) - Math.min(r, g, b) < 24
 }
 
+// Marks the cells under any of the boxes (scene pixels, inclusive).
+function markCells(stale: Uint8Array, boxes: readonly number[], cellX: Int32Array, cellY: Int32Array, W: number, PW: number, PH: number) {
+  for (let b = 0; b < boxes.length; b += 4) {
+    const x0 = Math.max(0, Math.floor(boxes[b]))
+    const y0 = Math.max(0, Math.floor(boxes[b + 1]))
+    const x1 = Math.min(PW - 1, Math.ceil(boxes[b + 2]))
+    const y1 = Math.min(PH - 1, Math.ceil(boxes[b + 3]))
+    if (x0 > x1 || y0 > y1) continue
+    for (let y = cellY[y0]; y <= cellY[y1]; y++) stale.fill(1, y * W + cellX[x0], y * W + cellX[x1] + 1)
+  }
+}
+
+// Blends the scene into the history, desaturated and shaded, and writes the result to blended, for the cells marked in
+// stale. A cell whose blended pixels changed is marked in moved; stale is left marking the cells whose history is still
+// settling toward the scene, which need blending again next frame even if the scene doesn't change there. Cells not
+// marked keep their history and blended pixels exactly, since blending them again would change nothing.
+function settle(px: Uint8Array, blended: Uint8Array, history: Float32Array, PW: number, W: number, H: number, colStart: Int32Array, rowStart: Int32Array, stale: Uint8Array, moved: Uint8Array, desaturate: number, shade: number, persistence: number, fresh: boolean) {
+  for (let cy = 0; cy < H; cy++)
+    for (let cx = 0; cx < W; cx++) {
+      const cell = cy * W + cx
+      moved[cell] = 0
+      if (!stale[cell]) continue
+      let settled = true
+      let same = true
+      for (let y = rowStart[cy]; y < rowStart[cy + 1]; y++)
+        for (let x = colStart[cx]; x < colStart[cx + 1]; x++) {
+          const p = (y * PW + x) * 4
+          const l = px[p] * 0.2126 + px[p + 1] * 0.7152 + px[p + 2] * 0.0722
+          for (let c = p; c < p + 3; c++) {
+            const v = (px[c] + (l - px[c]) * desaturate) * shade
+            const h = fresh ? v : history[c] * persistence + v * (1 - persistence)
+            const before = history[c]
+            history[c] = h
+            if (history[c] !== before) settled = false
+            const was = blended[c]
+            blended[c] = h
+            if (blended[c] !== was) same = false
+          }
+        }
+      stale[cell] = settled ? 0 : 1
+      moved[cell] = same ? 0 : 1
+    }
+}
+
+// Box-filters the moved cells' pixels down to the 2x4-per-cell octant grid (raw), then applies a four-neighbor unsharp
+// mask into grid for them and their neighbors, marking in refit the cells whose sharpened grid changed.
+function regrid(px: Uint8Array, PW: number, PH: number, GW: number, GH: number, W: number, H: number, raw: Float32Array, grid: Float32Array, moved: Uint8Array, refit: Uint8Array) {
+  for (let cell = 0; cell < W * H; cell++) {
+    if (!moved[cell]) continue
+    const cx = cell % W
+    const cy = (cell / W) | 0
+    for (let gy = cy * 4; gy < cy * 4 + 4; gy++) {
+      const y0 = Math.floor((gy * PH) / GH)
+      const y1 = Math.max(y0 + 1, Math.floor(((gy + 1) * PH) / GH))
+      for (let gx = cx * 2; gx < cx * 2 + 2; gx++) {
+        const x0 = Math.floor((gx * PW) / GW)
+        const x1 = Math.max(x0 + 1, Math.floor(((gx + 1) * PW) / GW))
+        let r = 0
+        let g = 0
+        let b = 0
+        for (let yy = y0; yy < y1; yy++)
+          for (let xx = x0; xx < x1; xx++) {
+            const p = (yy * PW + xx) * 4
+            r += px[p]
+            g += px[p + 1]
+            b += px[p + 2]
+          }
+        const n = (y1 - y0) * (x1 - x0)
+        const o = (gy * GW + gx) * 3
+        raw[o] = r / n
+        raw[o + 1] = g / n
+        raw[o + 2] = b / n
+      }
+    }
+  }
+  const row = GW * 3
+  for (let cell = 0; cell < W * H; cell++) {
+    refit[cell] = 0
+    const cx = cell % W
+    const cy = (cell / W) | 0
+    if (!moved[cell] && !(cx > 0 && moved[cell - 1]) && !(cx < W - 1 && moved[cell + 1]) && !(cy > 0 && moved[cell - W]) && !(cy < H - 1 && moved[cell + W])) continue
+    for (let gy = cy * 4; gy < cy * 4 + 4; gy++) {
+      const up = gy > 0 ? -row : 0
+      const down = gy < GH - 1 ? row : 0
+      for (let gx = cx * 2; gx < cx * 2 + 2; gx++) {
+        const left = gx > 0 ? -3 : 0
+        const right = gx < GW - 1 ? 3 : 0
+        const o = (gy * GW + gx) * 3
+        for (let c = o; c < o + 3; c++) {
+          const v = raw[c]
+          const out = v + (v * 4 - raw[c + up] - raw[c + down] - raw[c + left] - raw[c + right]) * (SHARPEN / 4)
+          const before = grid[c]
+          grid[c] = out < 0 ? 0 : out > 255 ? 255 : out
+          if (grid[c] !== before) refit[cell] = 1
+        }
+      }
+    }
+  }
+}
+
+// Writes a cell's last fit back: its glyph, background, and foreground unless it is blank.
+function reuseFit(i: number, o: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, fitChar: Uint32Array, fitFg: Uint16Array, fitBg: Uint16Array) {
+  char[i] = fitChar[i]
+  for (let c = 0; c < 3; c++) bg[o + c] = fitBg[i * 3 + c]
+  bg[o + 3] = 255
+  if (char[i] === SPACE) return
+  for (let c = 0; c < 3; c++) fg[o + c] = fitFg[i * 3 + c]
+  fg[o + 3] = 255
+}
+
+function rememberFit(i: number, o: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, fitChar: Uint32Array, fitFg: Uint16Array, fitBg: Uint16Array) {
+  fitChar[i] = char[i]
+  for (let c = 0; c < 3; c++) fitBg[i * 3 + c] = bg[o + c]
+  if (char[i] !== SPACE) for (let c = 0; c < 3; c++) fitFg[i * 3 + c] = fg[o + c]
+}
+
 // A full-screen renderable at the very back of the tree, so its image placement is drawn before any UI.
 class SceneLayer extends Renderable {
   constructor(
@@ -546,7 +728,16 @@ export function createEngine(
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
   let previousMask = new Int16Array(0)
+  // The split each cell showed before its current one, and the cells where something moves this frame (see tolerance).
+  let olderMask = new Int16Array(0)
+  let moving = new Uint8Array(0)
   let history = new Float32Array(0)
+  // What each cell showed last frame, and the colors OpenCode drew this frame before the scene went in, for quieten.
+  let shownChar = new Uint32Array(0)
+  let shownFg = new Uint16Array(0)
+  let shownBg = new Uint16Array(0)
+  let inputFg = new Uint16Array(0)
+  let inputBg = new Uint16Array(0)
   let lastStep = 0
   let lastTarget = ""
   let imageCell = new Uint8Array(0)
@@ -554,58 +745,36 @@ export function createEngine(
   let openW = 0
   let pressed = -1
   let grid = new Float32Array(0)
-  let gridBlur = new Float32Array(0)
+  let raw = new Float32Array(0)
   let light = false
+  const textMap: TextMap = { cols: MAP_COLS, rows: MAP_ROWS, cover: new Float32Array(MAP_COLS * MAP_ROWS) }
+  const mapCount = new Float32Array(MAP_COLS * MAP_ROWS)
+  let mapped = false
+  let mapFresh = false
+  // Refitting only what changed (see settle and regrid). blended is the history-blended scene the grid is built from;
+  // per cell, stale marks pixels to blend again, moved the cells whose blended pixels changed and refit those whose grid
+  // did. fitted marks cells whose last fit (fitChar, fitFg, fitBg, under scrim fitTop and fitBottom) still holds.
+  let dirty = true
+  let blended = new Uint8Array(0)
+  let stale = new Uint8Array(0)
+  let moved = new Uint8Array(0)
+  let refit = new Uint8Array(0)
+  let fitted = new Uint8Array(0)
+  let fitChar = new Uint32Array(0)
+  let fitFg = new Uint16Array(0)
+  let fitBg = new Uint16Array(0)
+  let fitTop = new Float64Array(0)
+  let fitBottom = new Float64Array(0)
+  let colStart = new Int32Array(0)
+  let rowStart = new Int32Array(0)
+  let cellX = new Int32Array(0)
+  let cellY = new Int32Array(0)
+  let lastSize = ""
+  let lastSource: Uint8Array | undefined
+  let lastBlend = ""
+  let lastScrim: Scrim | undefined
+  let lastCurve: Uint8Array | undefined
 
-  // Box-filters the scene down to the 2x4-per-cell octant grid, then applies an unsharp mask.
-  const buildGrid = (px: Uint8Array, PW: number, PH: number, GW: number, GH: number) => {
-    if (grid.length !== GW * GH * 3) {
-      grid = new Float32Array(GW * GH * 3)
-      gridBlur = new Float32Array(GW * GH * 3)
-    }
-    for (let gy = 0; gy < GH; gy++) {
-      const y0 = Math.floor((gy * PH) / GH)
-      const y1 = Math.max(y0 + 1, Math.floor(((gy + 1) * PH) / GH))
-      for (let gx = 0; gx < GW; gx++) {
-        const x0 = Math.floor((gx * PW) / GW)
-        const x1 = Math.max(x0 + 1, Math.floor(((gx + 1) * PW) / GW))
-        let r = 0
-        let g = 0
-        let b = 0
-        for (let yy = y0; yy < y1; yy++)
-          for (let xx = x0; xx < x1; xx++) {
-            const p = (yy * PW + xx) * 4
-            r += px[p]
-            g += px[p + 1]
-            b += px[p + 2]
-          }
-        const n = (y1 - y0) * (x1 - x0)
-        const o = (gy * GW + gx) * 3
-        grid[o] = r / n
-        grid[o + 1] = g / n
-        grid[o + 2] = b / n
-      }
-    }
-    // Four-neighbor unsharp mask in one pass, written to gridBlur and swapped in.
-    const row = GW * 3
-    for (let gy = 0; gy < GH; gy++) {
-      const up = gy > 0 ? -row : 0
-      const down = gy < GH - 1 ? row : 0
-      for (let gx = 0; gx < GW; gx++) {
-        const left = gx > 0 ? -3 : 0
-        const right = gx < GW - 1 ? 3 : 0
-        const o = (gy * GW + gx) * 3
-        for (let c = o; c < o + 3; c++) {
-          const v = grid[c]
-          const out = v + (v * 4 - grid[c + up] - grid[c + down] - grid[c + left] - grid[c + right]) * (SHARPEN / 4)
-          gridBlur[c] = out < 0 ? 0 : out > 255 ? 255 : out
-        }
-      }
-    }
-    const swap = grid
-    grid = gridBlur
-    gridBlur = swap
-  }
   let imagePixels = new Uint8Array(0)
   let pool: NativeImagePool | undefined
   let savedTransport: KittyImageTransport | undefined
@@ -770,6 +939,8 @@ export function createEngine(
     try {
       render(buf)
     } catch (error) {
+      // A frame cut short leaves the cached fits out of step with the scene, so the next one starts over.
+      lastSize = ""
       log(`error: ${error instanceof Error ? error.stack : String(error)}`)
     }
   }
@@ -816,7 +987,12 @@ export function createEngine(
     const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings!.time], t)
     // Blending in the previous frame fades at the same speed per second whatever the frame rate.
     const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE
-    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim)
+    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim, from ? undefined : scene.changed, from ? undefined : scene.touched)
+    if (mapFresh) {
+      mapFresh = false
+      scene.textMap?.(textMap)
+      from?.scene.textMap?.(textMap)
+    }
     if (options.dump && !dumped && frames > 120) {
       dumped = true
       write(buf, options.dump)
@@ -837,27 +1013,52 @@ export function createEngine(
 
   // Everything after the scene has drawn its frame. It never touches the scene object: each wallpaper's scene is a
   // different class, and the optimizer would otherwise fall back to slow code for this whole function after a switch.
-  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim) => {
+  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim, changed: readonly number[] | undefined, touched: readonly number[] | undefined) => {
     const W = buf.width
     const H = buf.height
-    if (advanced) {
-      const fresh = history.length !== px.length
-      if (fresh) history = new Float32Array(px.length)
-      for (let p = 0; p < px.length; p += 4) {
-        const l = px[p] * 0.2126 + px[p + 1] * 0.7152 + px[p + 2] * 0.0722
-        for (let c = 0; c < 3; c++) {
-          const v = (px[p + c] + (l - px[p + c]) * desaturate) * shade
-          const h = fresh ? v : history[p + c] * persistence + v * (1 - persistence)
-          history[p + c] = h
-          px[p + c] = h
-        }
-      }
-    }
     const GW = W * 2
     const GH = H * 4
-    if (advanced || grid.length !== GW * GH * 3) buildGrid(px, PW, PH, GW, GH)
-    const { char, fg, bg } = buf.buffers
     const cells = W * H
+    const size = `${W}x${H} ${PW}x${PH}`
+    const reset = size !== lastSize || history.length !== px.length || grid.length !== GW * GH * 3
+    if (reset) {
+      lastSize = size
+      history = new Float32Array(px.length)
+      blended = new Uint8Array(px.length)
+      grid = new Float32Array(GW * GH * 3)
+      raw = new Float32Array(GW * GH * 3)
+      stale = new Uint8Array(cells)
+      moved = new Uint8Array(cells)
+      refit = new Uint8Array(cells)
+      fitted = new Uint8Array(cells)
+      fitChar = new Uint32Array(cells)
+      fitFg = new Uint16Array(cells * 3)
+      fitBg = new Uint16Array(cells * 3)
+      fitTop = new Float64Array(cells)
+      fitBottom = new Float64Array(cells)
+      // Pixel columns and rows of each cell, and the cell of each pixel column and row.
+      colStart = Int32Array.from({ length: W + 1 }, (_, x) => Math.floor((x * PW) / W))
+      rowStart = Int32Array.from({ length: H + 1 }, (_, y) => Math.floor((y * PH) / H))
+      cellX = new Int32Array(PW)
+      cellY = new Int32Array(PH)
+      for (let x = 0; x < W; x++) cellX.fill(x, colStart[x], colStart[x + 1])
+      for (let y = 0; y < H; y++) cellY.fill(y, rowStart[y], rowStart[y + 1])
+      moving = new Uint8Array(cells)
+    }
+    if (advanced) {
+      markMoving(moving, touched, PW, PH, W, H)
+      // Anything that changes every pixel's blend, or a frame without a list of what changed, blends every cell again.
+      const blend = `${desaturate} ${shade} ${persistence}`
+      const everything = reset || !dirty || !changed || px !== lastSource || blend !== lastBlend
+      lastSource = px
+      lastBlend = blend
+      if (everything) stale.fill(1)
+      else markCells(stale, changed, cellX, cellY, W, PW, PH)
+      settle(px, blended, history, PW, W, H, colStart, rowStart, stale, moved, desaturate, shade, persistence, reset)
+      if (reset || !dirty) moved.fill(1)
+      regrid(blended, PW, PH, GW, GH, W, H, raw, grid, moved, refit)
+    } else refit.fill(0)
+    const { char, fg, bg } = buf.buffers
 
     if (frames++ % 10 === 0) {
       light = context.themeMode === "light"
@@ -876,6 +1077,9 @@ export function createEngine(
     }
     const look = LEVELS[settings!.brightness ?? "normal"]
     const curve = light ? look.light : look.dark
+    const refitAll = reset || !dirty || scrim !== lastScrim || curve !== lastCurve
+    lastScrim = scrim
+    lastCurve = curve
 
     // Soft scrim: a blurred mask of where text is, at half-cell vertical resolution. The scene fades to
     // near-black under and around text with no hard edge, so letters and the spaces between them match.
@@ -887,6 +1091,7 @@ export function createEngine(
       cellTint = new Int32Array(W * H)
     }
     if (previousMask.length !== cells) previousMask = new Int16Array(cells).fill(-1)
+    if (olderMask.length !== cells) olderMask = new Int16Array(cells).fill(-1)
     mask.fill(0, 0, W * MH)
     for (let i = 0; i < cells; i++) {
       const tint = tintOf(key(bg, i * 4))
@@ -906,6 +1111,19 @@ export function createEngine(
     if (open.length !== cells) open = new Uint8Array(cells)
     openW = W
     for (let i = 0; i < cells; i++) open[i] = surface[i] && char[i] === SPACE && mask[((i / W) | 0) * 2 * W + (i % W)] < OPEN ? 1 : 0
+    if (frames % MAP_EVERY === 1) {
+      const cover = textMap.cover
+      cover.fill(0)
+      mapCount.fill(0)
+      for (let i = 0; i < cells; i++) {
+        const g = Math.floor((((i / W) | 0) * MAP_ROWS) / H) * MAP_COLS + Math.floor(((i % W) * MAP_COLS) / W)
+        cover[g] += surface[i] ? Math.min(1, mask[((i / W) | 0) * 2 * W + (i % W)] * look.reach) : 1
+        mapCount[g]++
+      }
+      for (let g = 0; g < cover.length; g++) cover[g] /= Math.max(1, mapCount[g])
+      mapped = true
+      mapFresh = true
+    }
 
     const cursor = renderer.getCursorState()
     const cursorX = cursor.visible ? cursor.x - 1 : -1
@@ -925,6 +1143,15 @@ export function createEngine(
     }
     layerPlaced = false
 
+    if (shownChar.length !== cells) {
+      shownChar = new Uint32Array(cells)
+      shownFg = new Uint16Array(cells * 4)
+      shownBg = new Uint16Array(cells * 4)
+      inputFg = new Uint16Array(cells * 4)
+      inputBg = new Uint16Array(cells * 4)
+    }
+    inputFg.set(fg)
+    inputBg.set(bg)
     const q = quad
     const cover = look.scrim
     const reach = look.reach
@@ -934,6 +1161,9 @@ export function createEngine(
       const [deepR, deepG, deepB] = scrimAt(scrim, y / Math.max(1, H - 1), light)
       for (let x = 0; x < W; x++) {
         const i = y * W + x
+        // Cells where something moves fit differently (see tolerance), so they are never reused.
+        const reusable = fitted[i] === 1 && !refitAll && refit[i] === 0 && moving[i] === 0
+        fitted[i] = 0
         if (imageCell[i]) continue
         const o = i * 4
         const ch = char[i]
@@ -942,6 +1172,15 @@ export function createEngine(
         if (!surface[i] && !edge) continue
         const st = cover * Math.min(1, mask[mTop + x] * reach)
         const sb = cover * Math.min(1, mask[mBottom + x] * reach)
+        const fits = !edge && ch === SPACE && !atCursor(x, y)
+        // Same grid and scrim as when this cell was last fitted, and fitting is idempotent under hysteresis: reuse it.
+        if (fits && reusable && st === fitTop[i] && sb === fitBottom[i]) {
+          reuseFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
+          fitted[i] = 1
+          applyTint(bg, o, cellTint[i])
+          if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
+          continue
+        }
         // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order.
         for (let s = 0; s < 8; s++) {
           const a = ((y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)) * 3
@@ -969,9 +1208,16 @@ export function createEngine(
           applyTint(fg, o, edgeTint)
           if (!surface[i]) continue
         }
-        if (ch === SPACE && !atCursor(x, y)) {
-          if (octants) previousMask[i] = writeOctant(q, order, previousMask[i], char, fg, bg, i, o)
-          else previousMask[i] = writeQuadrant(q, previousMask[i], char, fg, bg, i, o)
+        if (fits) {
+          const was = previousMask[i]
+          if (octants) previousMask[i] = writeOctant(q, order, was, olderMask[i], moving[i], char, fg, bg, i, o)
+          else previousMask[i] = writeQuadrant(q, was, olderMask[i], moving[i], char, fg, bg, i, o)
+          if (previousMask[i] !== was) olderMask[i] = was
+          rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
+          fitTop[i] = st
+          fitBottom[i] = sb
+          // A fit made while something moved (see tolerance) isn't reused next frame.
+          fitted[i] = moving[i] ? 0 : 1
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue
@@ -981,10 +1227,11 @@ export function createEngine(
         applyTint(bg, o, cellTint[i])
       }
     }
+    quieten(char, fg, bg, inputFg, inputBg, shownChar, shownFg, shownBg, cells)
 
     // Build next frame's image now; the back layer places it before OpenCode draws, so text lands on top.
     if (pixels && (advanced || !nextImage)) {
-      const image = publishImage(px, PW, PH, W, H, MH, scrim, look, curve)
+      const image = publishImage(blended, PW, PH, W, H, MH, scrim, look, curve)
       if (image) {
         nextImage?.dispose()
         nextImage = image
@@ -999,6 +1246,7 @@ export function createEngine(
     const created = next.create(chosen)
     if (busy) created.react?.("busy")
     if (failed) created.react?.("error")
+    if (mapped) created.textMap?.(textMap)
     return created
   }
 
@@ -1059,6 +1307,9 @@ export function createEngine(
       lastTarget = ""
       history = new Float32Array(0)
       previousMask = new Int16Array(0)
+      olderMask = new Int16Array(0)
+      shownChar = new Uint32Array(0)
+      dirty = process.env.WALLPAPER_DIRTY !== "0"
       lastActivity = Date.now()
       focused = true
       schedule()
