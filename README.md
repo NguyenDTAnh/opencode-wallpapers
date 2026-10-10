@@ -165,14 +165,16 @@ terminals that report focus, such as Ghostty, kitty, iTerm2 and tmux). Any input
 
 ## Terminals
 
-Any truecolor terminal works. Ghostty and kitty get octant characters (2x4 sub-pixels per cell); other terminals get
-quadrant blocks (2x2). These environment variables tune rendering:
+Any truecolor terminal works. Ghostty and kitty get octant characters (2x4 sub-pixels per cell), plus diagonal wedges
+and eighth blocks along edges, which they draw themselves; other terminals get quadrant blocks (2x2). These environment
+variables tune rendering:
 
 | Variable | Effect |
 | --- | --- |
 | `WALLPAPER_PIXELS=1` | In Ghostty or kitty, draw the scene as a real image behind the text instead of characters |
 | `WALLPAPER_SUPERSAMPLE=2` | Smoother edges in character mode, at about 2.5x the CPU |
 | `WALLPAPER_OCTANTS=0` or `1` | Force quadrant or octant characters |
+| `WALLPAPER_SMOOTH=0` | Octants only, without the wedges and eighth blocks (if a font draws them badly) |
 | `WALLPAPER_LOCATION` | A place or `latitude,longitude` for local weather, if none is set with `/wallpaper location` |
 
 ## How it works

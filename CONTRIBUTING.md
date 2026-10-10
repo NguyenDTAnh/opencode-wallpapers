@@ -47,7 +47,9 @@ In character mode each cell shows only two colors, so anything thinner than abou
 than a cell, turns into speckle and shimmers as it moves. `Canvas` sets `this.cells` then (not in snaps or pixel mode),
 so a scene can draw bolder there: `thick(radius, min)` gives a stroke radius in pixels that never drops below `min` on
 cells, `blade(spine, widths, color)` draws a frond's leaflets as one scalloped blade, and textures can coarsen or drop
-out. Judge it with `bun dev/preview.ts`, and with `WALLPAPER_OCTANTS=0` for quadrant terminals.
+out. Judge it with `bun dev/preview.ts`, and with `WALLPAPER_OCTANTS=0` for quadrant terminals. On octant terminals
+`src/smooth.ts` also draws high-contrast edge cells as diagonal wedges or eighth blocks when they fit better, so clean
+anti-aliased edges look smoother than thin lines and texture; `WALLPAPER_SMOOTH=0` turns that off for comparison.
 
 ### step and render
 
