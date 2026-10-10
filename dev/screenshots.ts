@@ -1,12 +1,16 @@
 // Re-renders the README gallery (teeming at 45 s via dev/snap.ts) and fails if any screenshot differs from the
-// committed one beyond a tiny tolerance; --update writes the fresh renders instead: bun dev/screenshots.ts [--update]
+// committed one beyond a tiny tolerance; --update writes the fresh renders instead. Naming wallpapers limits it to them:
+// bun dev/screenshots.ts [--update] [wallpaper...]
 import { availableParallelism } from "node:os"
 import { TIMES } from "../src/engine"
 import { WALLPAPERS } from "../wallpapers"
 import { decodePng } from "./png"
 
 const update = process.argv.includes("--update")
-const shots = WALLPAPERS.flatMap((w) => TIMES.map((time) => ({ id: w.id, time, file: `screenshots/${w.id}${time === "day" ? "" : `-${time}`}.png` })))
+const ids = process.argv.slice(2).filter((arg) => !arg.startsWith("--"))
+const unknown = ids.filter((id) => !WALLPAPERS.some((w) => w.id === id))
+if (unknown.length) throw new Error(`unknown wallpaper ${unknown.join(", ")}`)
+const shots = (ids.length ? WALLPAPERS.filter((w) => ids.includes(w.id)) : WALLPAPERS).flatMap((w) => TIMES.map((time) => ({ id: w.id, time, file: `screenshots/${w.id}${time === "day" ? "" : `-${time}`}.png` })))
 const queue = [...shots]
 const stale: string[] = []
 await Promise.all(
