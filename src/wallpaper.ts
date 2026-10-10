@@ -14,6 +14,8 @@ export interface Scene {
   // Optional: boxes like changed's around what this frame drew over the still background, so the engine can let cells
   // where something moves follow it more closely (Canvas provides it).
   readonly touched?: readonly number[]
+  // Optional: sun and moon discs [cx, cy, r, ...] in pixels, which the engine keeps smooth wedge glyphs off.
+  readonly orbs?: readonly number[]
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void
