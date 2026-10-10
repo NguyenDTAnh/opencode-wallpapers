@@ -11,6 +11,9 @@ export interface Scene {
   // Optional: boxes [x0, y0, x1, y1, ...] in pixels, inclusive, outside which this frame's pixels match the last
   // frame's (Canvas provides it). Without it the engine refits every cell every frame.
   readonly changed?: readonly number[]
+  // Optional: boxes like changed's around what this frame drew over the still background, so the engine can let cells
+  // where something moves follow it more closely (Canvas provides it).
+  readonly touched?: readonly number[]
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void
