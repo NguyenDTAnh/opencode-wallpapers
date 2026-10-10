@@ -1,7 +1,8 @@
 import { Canvas, cap, ell, type Lighting, type Part } from "../src/canvas"
 import { eggWait } from "../src/egg"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
-import { fireflyLight, lightPool } from "../src/light"
+import { fireflyLight } from "../src/light"
+import { LightMap, firelight } from "../src/lightmap"
 import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { driftClouds, makeClouds, makeStars, makeStorm, paintClouds, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
@@ -227,6 +228,7 @@ class Zen extends Canvas {
   // under a light snowfall in winter.
   private readonly season: Season
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private storm = makeStorm()
   private sparrows: Flier[] = []
   // The easter egg: a tanuki with a leaf on its head. t counts scene seconds since it appeared.
@@ -320,8 +322,14 @@ class Zen extends Canvas {
     if (this.tanuki.t >= 0) this.drawTanuki()
     for (const p of this.petals) if (p.state !== 1) this.drawPetal(p)
     for (const b of this.sparrows) this.shape(bird(b, this.H, 0.02 * this.H, this.paint([0.45, 0.33, 0.22])), this.lighting, 0.4)
-    // At night the lanterns light the gravel, the bank and whatever stands near them.
-    if (this.look.night) for (const l of this.lanterns()) lightPool(this.hdr, this.W, this.H, l.x * this.H, l.base * this.H, l.scale * 1.6 * this.H, l.scale * 0.6 * this.H, [1, 0.5, 0.15], 2, 0.01)
+    // At night the lanterns' candles light the gravel, the bank and whatever stands near them, flickering softly.
+    this.lights.clear(this.W, this.H)
+    if (this.look.night)
+      for (const [i, l] of this.lanterns().entries()) {
+        const k = 0.3 + 0.7 * firelight(this.time * 0.7, i + 2)
+        this.lights.pool(l.x * this.H, l.base * this.H, l.scale * 1.6 * this.H, l.scale * 0.6 * this.H, [1, 0.5, 0.15], 2.1 * k, 0.0105 * k)
+      }
+    this.lights.apply(this.hdr)
     this.drawFireflies()
     this.weather.draw(this.hdr, this.W, this.H)
     this.finish()

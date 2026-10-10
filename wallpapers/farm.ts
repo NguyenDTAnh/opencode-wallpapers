@@ -1,6 +1,7 @@
 import { Canvas, cap, ell, type Lighting, type Part } from "../src/canvas"
 import { eggWait } from "../src/egg"
-import { fireflyLight, lightPool } from "../src/light"
+import { fireflyLight } from "../src/light"
+import { LightMap, firelight } from "../src/lightmap"
 import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { driftClouds, makeClouds, makeStars, makeStorm, paintClouds, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
@@ -188,6 +189,7 @@ class Farm extends Canvas {
   private egg: { wait: number; t: number; cow: Walker | undefined } = { wait: eggWait() * TIME_SCALE, t: -1, cow: undefined }
   private readonly season: Season
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private hills: [far: RGB, near: RGB]
   private treeTops: [number, number][] = []
   // Blossom petals in spring and leaves in autumn, drifting down on the breeze.
@@ -275,8 +277,13 @@ class Farm extends Canvas {
     for (const { w, kind } of herd) kind === "cow" ? this.drawCow(w) : this.drawPig(w)
     this.drawEgg()
     if (this.activity === "teeming") this.drawFarmer()
-    // At night the open barn door spills warm light across the yard and whatever is in it.
-    if (this.look.windows === 1) lightPool(this.hdr, this.W, this.H, 0.74 * this.A * this.H, 0.67 * this.H, 0.24 * this.H, 0.07 * this.H, [1, 0.55, 0.15], 3, 0.02)
+    // At night the open barn door spills a lantern's flickering light across the yard and whatever is in it.
+    this.lights.clear(this.W, this.H)
+    if (this.look.windows === 1) {
+      const k = firelight(this.time * 0.8, 9)
+      this.lights.pool(0.74 * this.A * this.H, 0.67 * this.H, 0.24 * this.H, 0.07 * this.H, [1, 0.55, 0.15], 3.3 * k, 0.022 * k)
+    }
+    this.lights.apply(this.hdr)
     this.drawCornRow(3)
     this.drawFireflies()
     this.drawLeaves()

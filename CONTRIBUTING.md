@@ -162,7 +162,11 @@ Give night clear light structure so things stay readable: a lighter band at the 
 surface) for silhouettes to stand against, a strong rim `light` from the moon's side, and a few local pools of warm or
 glowing light. `lightPool()` in `src/light.ts` lights an ellipse in the light's own color, so ground and creatures
 passing through it pick it up; draw it each frame after the creatures it should light. `campfire()` and
-`fireflyLight()` there are ready-made pools. Keep the area behind text no brighter or busier than before.
+`fireflyLight()` there are ready-made pools. For light that moves or flickers over a wide area (aurora on snow, a
+fire, a buzzing sign), give the scene a `LightMap` from `src/lightmap.ts`: `clear()` it each frame, write `pool()`s or
+single `node()`s into its coarse grid, then `apply()` it once after the things it should light. It is cheap over large
+areas and dims itself behind the middle of the screen; `firelight()` there gives a slow flicker. Keep the area behind
+text no brighter or busier than before, and keep flicker slow.
 
 ## Seasons and weather
 
