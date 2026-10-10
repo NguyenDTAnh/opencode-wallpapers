@@ -156,9 +156,9 @@ function evalMask(q: Float32Array, mask: number) {
 }
 
 // Splits a cell's eight sub-pixels into two colours by brightness threshold, choosing the split with the least
-// squared error. A cell keeps last frame's split unless the new one is clearly better, so slow motion doesn't
-// make the glyph pattern flicker between near-equal choices. Returns the mask used.
-function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
+// squared error. A cell keeps last frame's split unless the new one is clearly better (see tolerance), so slow
+// motion doesn't make the glyph pattern flicker between near-equal choices. Returns the mask used.
+function writeOctant(q: Float32Array, order: Uint8Array, previous: number, older: number, moving: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
   for (let s = 0; s < 8; s++) {
     const l = q[s * 3] * 0.2126 + q[s * 3 + 1] * 0.7152 + q[s * 3 + 2] * 0.0722
     let j = s
@@ -205,7 +205,7 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char:
   let chosen = bestMask
   if (previous >= 0 && previous !== bestMask) {
     evalMask(q, previous)
-    if (split.err <= bestErr * 1.35 + HYSTERESIS) chosen = previous
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS)) chosen = previous
   }
   evalMask(q, chosen)
   if (chosen === 0 || chosen === 255) {
@@ -231,6 +231,14 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, char:
 const luma8 = new Float32Array(8)
 // Extra squared error (in 0-255 channel units) a cell tolerates before abandoning last frame's split.
 const HYSTERESIS = 150
+// Pixels around a touched box that still count as moving: anti-aliased edges and the trail PERSISTENCE leaves. Bloom
+// reaches much further (BLOOM_REACH), but it only shifts colors smoothly, so those cells keep the steady fit.
+const MOVING_REACH = 4
+// Touched boxes under this many pixels (stars, snowflakes, motes) are points rather than edges and keep the steady fit.
+const MOVING_MIN = 30
+// Boxes over this share of the screen are layers redrawn every frame (water, an aurora, light shafts, fog) or a scene
+// that repaints everything, not something moving across a still background, so they keep the steady fit too.
+const MOVING_MAX = 0.1
 // Share of the previous frame blended into each new one, which smooths sub-pixel motion.
 const PERSISTENCE = 0.45
 // How often the scene advances and redraws; wallpapers move slowly, so this stays low to save CPU and output.
@@ -261,7 +269,7 @@ const QUADRANTS = [
 
 // Picks the two-colour split of a cell's four sub-pixels with the least error and writes it as a quadrant block. Like
 // writeOctant it keeps last frame's split unless the new one is clearly better. Returns the mask used.
-function writeQuadrant(q8: Float32Array, previous: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
+function writeQuadrant(q8: Float32Array, previous: number, older: number, moving: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number) {
   const q = quad4
   for (let s = 0; s < 4; s++) {
     const top = ((s >> 1) * 4 + (s & 1)) * 3
@@ -279,7 +287,7 @@ function writeQuadrant(q8: Float32Array, previous: number, char: Uint32Array, fg
   let chosen = bestMask
   if (previous >= 0 && previous !== bestMask) {
     evalQuad(q, previous)
-    if (split.err <= bestErr * 1.35 + HYSTERESIS / 2) chosen = previous
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS / 2)) chosen = previous
   }
   evalQuad(q, chosen)
   bg[o] = split.br
@@ -338,6 +346,32 @@ function evalQuad(q: Float32Array, mask: number) {
   split.bg = bg
   split.bb = bb
   split.err = err
+}
+
+// Marks the cells under the scene's touched boxes (see Canvas.touched), widened by MOVING_REACH pixels.
+function markMoving(moving: Uint8Array, touched: readonly number[] | undefined, PW: number, PH: number, W: number, H: number) {
+  moving.fill(0)
+  if (!touched) return
+  const sx = W / PW
+  const sy = H / PH
+  for (let b = 0; b < touched.length; b += 4) {
+    const area = (touched[b + 2] - touched[b]) * (touched[b + 3] - touched[b + 1])
+    if (area < MOVING_MIN || area > PW * PH * MOVING_MAX) continue
+    const x0 = Math.max(0, Math.floor((touched[b] - MOVING_REACH) * sx))
+    const x1 = Math.min(W, Math.ceil((touched[b + 2] + MOVING_REACH) * sx))
+    const y0 = Math.max(0, Math.floor((touched[b + 1] - MOVING_REACH) * sy))
+    const y1 = Math.min(H, Math.ceil((touched[b + 3] + MOVING_REACH) * sy))
+    for (let y = y0; y < y1; y++) moving.fill(1, y * W + x0, y * W + x1)
+  }
+}
+
+// The most error a cell's previous split may have and still be kept, given the best split's. Where something moves,
+// a step of one sub-pixel (not back to the split before) is taken as soon as it fits a little better, so slow motion
+// glides a sub-pixel at a time instead of jumping several at once. Bigger changes, steps back, and every static cell
+// keep the full margin, so noise and swaying stay steady.
+function tolerance(bestErr: number, best: number, previous: number, older: number, moving: number, margin: number) {
+  const d = best ^ previous
+  return moving && (d & (d - 1)) === 0 && best !== older ? bestErr * 1.05 + margin * 0.3 : bestErr * 1.35 + margin
 }
 
 function isBlock(char: number) {
@@ -464,6 +498,8 @@ export function createEngine(
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
   let previousMask = new Int16Array(0)
+  let olderMask = new Int16Array(0)
+  let moving = new Uint8Array(0)
   let history = new Float32Array(0)
   let lastStep = 0
   let lastTarget = ""
@@ -734,7 +770,7 @@ export function createEngine(
     const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings!.time], t)
     // Blending in the previous frame fades at the same speed per second whatever the frame rate.
     const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE
-    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim)
+    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim, from ? undefined : scene.touched)
     if (options.dump && !dumped && frames > 120) {
       dumped = true
       write(buf, options.dump)
@@ -755,10 +791,12 @@ export function createEngine(
 
   // Everything after the scene has drawn its frame. It never touches the scene object: each wallpaper's scene is a
   // different class, and the optimizer would otherwise fall back to slow code for this whole function after a switch.
-  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim) => {
+  const paint = (buf: OptimizedBuffer, px: Uint8Array, PW: number, PH: number, advanced: boolean, pixels: boolean, desaturate: number, shade: number, persistence: number, scrim: Scrim, touched: readonly number[] | undefined) => {
     const W = buf.width
     const H = buf.height
+    if (moving.length !== W * H) moving = new Uint8Array(W * H)
     if (advanced) {
+      markMoving(moving, touched, PW, PH, W, H)
       const fresh = history.length !== px.length
       if (fresh) history = new Float32Array(px.length)
       for (let p = 0; p < px.length; p += 4) {
@@ -805,6 +843,7 @@ export function createEngine(
       cellTint = new Int32Array(W * H)
     }
     if (previousMask.length !== cells) previousMask = new Int16Array(cells).fill(-1)
+    if (olderMask.length !== cells) olderMask = new Int16Array(cells).fill(-1)
     mask.fill(0, 0, W * MH)
     for (let i = 0; i < cells; i++) {
       const tint = tintOf(key(bg, i * 4))
@@ -888,8 +927,10 @@ export function createEngine(
           if (!surface[i]) continue
         }
         if (ch === SPACE && !atCursor(x, y)) {
-          if (octants) previousMask[i] = writeOctant(q, order, previousMask[i], char, fg, bg, i, o)
-          else previousMask[i] = writeQuadrant(q, previousMask[i], char, fg, bg, i, o)
+          const was = previousMask[i]
+          if (octants) previousMask[i] = writeOctant(q, order, was, olderMask[i], moving[i], char, fg, bg, i, o)
+          else previousMask[i] = writeQuadrant(q, was, olderMask[i], moving[i], char, fg, bg, i, o)
+          if (previousMask[i] !== was) olderMask[i] = was
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue
@@ -977,6 +1018,7 @@ export function createEngine(
       lastTarget = ""
       history = new Float32Array(0)
       previousMask = new Int16Array(0)
+      olderMask = new Int16Array(0)
       lastActivity = Date.now()
       focused = true
       schedule()
