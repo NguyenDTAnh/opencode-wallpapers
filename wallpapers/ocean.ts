@@ -367,7 +367,7 @@ class Ocean extends Canvas {
       const k = (0.12 + p.s * 0.45) * pulse
       const green = p.s > 0.5
       if (p.s > 0.75) this.disc(p.x * H, p.y * H, 1.2, 0.1 * k * 4, (green ? 0.9 : 0.6) * k * 4, (green ? 0.6 : 1) * k * 4, 0.5)
-      this.add(p.x * H, p.y * H, 0.1 * k, (green ? 0.9 : 0.6) * k, (green ? 0.6 : 1) * k)
+      this.splat(p.x * H, p.y * H, 0.1 * k, (green ? 0.9 : 0.6) * k, (green ? 0.6 : 1) * k)
     }
     if (this.diver) this.drawTorch(this.diver, 4, [1, 0.55, 0.15])
   }
@@ -620,13 +620,13 @@ class Ocean extends Canvas {
       if (p.kind === "spark") {
         const k = p.life / p.max
         const i = k * k * 2.2
-        this.add(x, y, 0.8 * i, i, i)
+        this.splat(x, y, 0.8 * i, i, i)
         continue
       }
       const R = Math.max(0.8, p.size * H)
       const fade = Math.min(1, (p.max - p.life) * 4)
       if (R < 1.3) {
-        this.add(x, y, 0.25 * fade, 0.4 * fade, 0.45 * fade)
+        this.splat(x, y, 0.25 * fade, 0.4 * fade, 0.45 * fade)
         continue
       }
       for (let yy = Math.floor(y - R - 1); yy <= y + R + 1; yy++)
@@ -779,7 +779,7 @@ class Ocean extends Canvas {
       const ray = RAYS_A[((x + y * 0.42 + t * 7) | 0) & 1023] * (0.45 + 0.55 * RAYS_B[((x * 0.7 + y * 0.6 - t * 4.3) | 0) & 1023]) * rayFade[y]
       const k = (back ? 0.08 + (1 - s.z) * 0.1 : 0.25) * tw + ray * 1.5
       if (!back && s.s > 0.7) this.disc(s.x * H, s.y * H, 1.1, 0.6 + k, 0.75 + k, 0.8 + k, 0.35)
-      else this.add(s.x * H, s.y * H, k * 0.8, k, k)
+      else this.splat(s.x * H, s.y * H, k * 0.8, k, k)
     }
   }
   // Swaying kelp: a stem of overlapping discs with leaf blades on alternating sides, rooted below the screen.

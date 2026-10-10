@@ -1,6 +1,7 @@
 import type { Context } from "@opencode/plugin/tui/context"
 import { MouseButton, NativeImagePool, Renderable, type KittyImageTransport, type MouseEvent, type OptimizedBuffer, type RenderContext } from "@opentui/core"
 import { appendFileSync } from "node:fs"
+import { DOT, Dots, lightDot, placeDot } from "./dots"
 import { watchEgg } from "./egg"
 import { lerp, smoothstep, type RGB } from "./math"
 import { OCTANTS } from "./octants"
@@ -798,6 +799,7 @@ export function createEngine(
   let lastBlend = ""
   let lastScrim: Scrim | undefined
   let lastCurve: Uint8Array | undefined
+  const dots = new Dots()
 
   let imagePixels = new Uint8Array(0)
   let pool: NativeImagePool | undefined
@@ -1011,6 +1013,11 @@ export function createEngine(
     const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings!.time], t)
     // Blending in the previous frame fades at the same speed per second whatever the frame rate.
     const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE
+    if (advanced) {
+      dots.clear(W * H)
+      dots.gather(scene.points, t, scene.W, scene.H, W, H, desaturate, shade)
+      dots.gather(from?.scene.points, 1 - t, scene.W, scene.H, W, H, desaturate, shade)
+    }
     paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim, from ? undefined : scene.changed, from ? undefined : scene.touched, scene.orbs)
     if (mapFresh) {
       mapFresh = false
@@ -1190,7 +1197,7 @@ export function createEngine(
       for (let x = 0; x < W; x++) {
         const i = y * W + x
         // Cells where something moves fit differently (see tolerance), so they are never reused.
-        const reusable = fitted[i] === 1 && !refitAll && refit[i] === 0 && moving[i] === 0
+        const reusable = fitted[i] === 1 && !refitAll && refit[i] === 0 && moving[i] === 0 && dots.size[i] === 0
         fitted[i] = 0
         if (imageCell[i]) continue
         const o = i * 4
@@ -1238,8 +1245,17 @@ export function createEngine(
         }
         if (fits) {
           const was = previousMask[i]
+          // A dot glyph where a still point of light falls on an otherwise flat cell; a cell with a point is fitted
+          // afresh every frame, and once more after, since the point isn't part of the grid.
+          if (dots.size[i] && placeDot(dots, i, x, y, q, grid, GW, st, sb, curve, was === DOT, char, fg, bg, o)) {
+            previousMask[i] = DOT
+            applyTint(bg, o, cellTint[i])
+            applyTint(fg, o, cellTint[i])
+            continue
+          }
+          if (dots.size[i]) lightDot(dots, i, x, y, q, grid, GW, st, sb, curve)
           if (octants) {
-            const octant = writeOctant(q, order, was < FIRST ? was : -1, olderMask[i], moving[i], char, fg, bg, i, o)
+            const octant = writeOctant(q, order, was >= 0 && was < FIRST ? was : -1, olderMask[i], moving[i], char, fg, bg, i, o)
             // Soft cells keep their gradient band; still edges may take a smooth glyph instead of the octant, but not
             // where something moves (it would flip between wedge and octant as it glides) or over the sun and moon.
             previousMask[i] = smooth && !softFit && !round[i] && !moving[i] ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB, st, sb) : octant
@@ -1248,8 +1264,8 @@ export function createEngine(
           rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
           fitTop[i] = st
           fitBottom[i] = sb
-          // A fit made while something moved (see tolerance) isn't reused next frame.
-          fitted[i] = moving[i] ? 0 : 1
+          // A fit made with a point lit in, or while something moved (see tolerance), isn't reused next frame.
+          fitted[i] = dots.size[i] || moving[i] ? 0 : 1
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue

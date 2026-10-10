@@ -120,7 +120,9 @@ in full every frame.
 
 | Method | Draws |
 | --- | --- |
-| `add(x, y, r, g, b)` | Adds light to one pixel, for stars, sparks and glints |
+| `add(x, y, r, g, b)` | Adds light to one pixel, for glints on things that move with a creature |
+| `point(x, y, r, g, b, size?, glide?)` | A still point of light, such as a star or a distant lamp; on terminal cells a round dot glyph (see below) |
+| `splat(x, y, r, g, b)` | Adds light shared between the four pixels around (x, y), for moving specks: snowflakes, sparks, motes |
 | `blend(i, r, g, b, a)` | Mixes a color into the pixel at `hdr` index `i` by `a`, inside your own loops |
 | `disc(cx, cy, radius, r, g, b, a)` | An anti-aliased circle |
 | `ellipse(cx, cy, rx, ry, r, g, b, a)` | An anti-aliased axis-aligned ellipse |
@@ -131,6 +133,13 @@ For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and 
 (see above). `reflect()` in `src/water.ts` mirrors
 other rows of the scene into water rows with drifting ripples, a tint and a per-pixel weight; call it each frame over
 only the water's rows (as the beach and the prehistoric lake do), or once in `layout()` for still water such as ice.
+
+A lone bright pixel turns into a hard square block on terminal cells, and a speck drawn with `add` hops a whole
+pixel at a time. So draw still points with `point()`: on cells the engine shows each as a round dot glyph (`·`, `∙`
+or `•` by size) where its cell is otherwise flat, and as a plain pixel elsewhere. Draw them before anything that may
+pass in front of them, since whatever is drawn over a point keeps it a plain pixel. Set `glide` for points that drift
+sideways, such as space's stars, so their dot fades from cell to cell. Draw moving specks with `splat()`, so they glide
+and a faint one tints its cell instead of flipping its pattern.
 
 ### Shapes
 
@@ -163,8 +172,8 @@ details), and values in between soften it.
 - `paintSky(hdr, W, H, stops, orb)` fills the canvas with a vertical gradient through `[fraction of height, color]`
   stops, a glow around the sun or moon, and the orb itself. An `Orb` has x (fraction of width), y and r (fractions
   of height), `core` and `glow` colors, `near` and `wide` glow strengths, and `moon: true` for a cratered moon.
-- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness)` draw slowly twinkling stars that
-  fade toward `top`. Stars are tinted from `STAR_TINTS`, never white.
+- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness, this.points)` draw slowly twinkling
+  stars that fade toward `top`, as points (see Drawing). Stars are tinted from `STAR_TINTS`, never white.
 - `makeClouds(count, kind, y0, y1)`, `driftClouds(clouds, A, dt)` and `paintClouds(hdr, W, H, clouds, top, bottom,
   alpha, orb)` give clouds of one kind: `cumulus`, `towering` (standing on y, for a horizon), `cirrus`, `wisp`,
   `stratus` or `ash`. They are lit from the orb: the brighter of `top` and `bottom` faces it, and clouds near it are

@@ -302,7 +302,7 @@ class Farm extends Canvas {
     lightenGrass(this.hdr, this.W, this.H, this.pasture, this.gusts)
     if (x1 >= 0) this.touch(x0, this.pastureTop, x1, this.H - 1)
     this.corn.draw(this.hdr, this.W, this.H, this.time)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     const orb = this.weather.covered ? undefined : this.look.orb
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb)
@@ -1042,7 +1042,7 @@ class Farm extends Canvas {
     for (let i = 0; i < 6; i++) {
       const on = Math.floor(this.time * 4) % 6 === i ? 2 : 0.4
       const color = [[1, 0.2, 0.2], [0.2, 1, 0.3], [0.3, 0.5, 1]][i % 3]
-      this.add(x + Math.cos((i / 5) * Math.PI) * 0.075 * H, y + 0.008 * H, color[0] * on, color[1] * on, color[2] * on)
+      this.splat(x + Math.cos((i / 5) * Math.PI) * 0.075 * H, y + 0.008 * H, color[0] * on, color[1] * on, color[2] * on)
     }
   }
 
@@ -1054,7 +1054,7 @@ class Farm extends Canvas {
       if (k < 0.02) continue
       fireflyLight(this.hdr, this.W, H, f.x * H, f.y * H, k)
       this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6)
-      this.add(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
+      this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
     }
   }
 }

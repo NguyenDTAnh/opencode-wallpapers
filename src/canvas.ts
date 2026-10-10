@@ -1,5 +1,6 @@
 import type { AgentEvent, TextMap } from "./wallpaper"
 import { clamp, rand, smoothstep, type RGB } from "./math"
+import { Points, splat } from "./points"
 import { trackOrbs } from "./orbs"
 import { clearShadows, keepShadows } from "./shadow"
 import { addBox, trackTouched } from "./touched"
@@ -67,6 +68,8 @@ export abstract class Canvas {
   readonly changed: number[] = []
   // Whether this frame started with restore(); a scene that never calls it can have drawn anywhere.
   private restored = false
+  // Still points of light registered this frame (see point()), for the engine to draw as dot glyphs on cells.
+  readonly points = new Points()
   // The sun and moon discs layout() painted, [cx, cy, r, ...] in pixels (see src/orbs.ts).
   readonly orbs: number[] = []
 
@@ -195,6 +198,7 @@ export abstract class Canvas {
     this.W = W
     this.H = H
     this.cells = cells
+    this.points.on = cells
     this.A = W / H
     this.hdr = new Float32Array(W * H * 3)
     trackTouched(this.hdr, this.touched)
@@ -305,6 +309,19 @@ export abstract class Canvas {
     this.touch(xi, yi, xi, yi)
   }
 
+  // Adds a still point of light, such as a star or a distant lamp: one pixel, or on terminal cells a round dot glyph
+  // (size 1 small, 2 medium, 3 large) where its cell is otherwise flat. Set glide for points that drift sideways. Draw
+  // points before anything that may pass in front of them: whatever is drawn over one keeps it a plain pixel.
+  protected point(x: number, y: number, r: number, g: number, b: number, size = 1, glide = false) {
+    this.points.add(this.hdr, this.W, this.H, x, y, r, g, b, size, glide)
+  }
+
+  // Adds light for a moving speck (a snowflake, a spark, a firefly's core), shared between the pixels around it so
+  // it glides rather than hopping a pixel at a time.
+  protected splat(x: number, y: number, r: number, g: number, b: number) {
+    splat(this.hdr, this.W, this.H, x, y, r, g, b)
+  }
+
   // Mixes a color over the pixel at hdr index i by coverage a.
   protected blend(i: number, r: number, g: number, b: number, a: number) {
     const h = this.hdr
@@ -357,8 +374,10 @@ export abstract class Canvas {
   }
 
   // Bloom, vignette and ACES tone mapping from hdr into pixels. Only the blocks that differ from the still frame, or
-  // whose bloom does, are worked out again; the rest keep the still frame's pixels.
+  // whose bloom does, are worked out again; the rest keep the still frame's pixels. On terminal cells, still points
+  // come back out of hdr first (see point()).
   protected finish(exposure = 1.25) {
+    this.points.resolve(this.hdr, this.W, this.vignette, exposure)
     clearShadows(this.hdr)
     const { W, H, bw, bh, retone } = this
     const fresh = exposure !== this.stillExposure

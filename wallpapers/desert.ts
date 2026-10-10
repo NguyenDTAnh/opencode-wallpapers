@@ -6,7 +6,7 @@ import { bird, flyAway, startle, type Flier } from "../src/flock"
 import { TAU, clamp, fbm1, fbm2, hash, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { campfire, lightPool } from "../src/light"
-import { addOrb } from "../src/orbs"
+import { addOrb, onOrb } from "../src/orbs"
 import { driftClouds, makeClouds, makeStorm, paintClouds, paintStorm, type Cloud } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
 import { WeatherLayer } from "../src/weather"
@@ -735,8 +735,9 @@ class Desert extends Canvas {
     const top = this.look.milkyWay ? 0.55 : 0.32
     const bright = this.look.milkyWay ? 0.6 : 0.35
     for (const s of this.stars) {
+      if (onOrb(this.hdr, s.x * this.W, s.y * this.H, 1.5)) continue
       const k = s.b * (1 - s.y / top) * (0.7 + 0.3 * Math.sin(this.time * 0.8 + s.phase)) * bright
-      this.add(s.x * this.W, s.y * this.H, k * s.tint[0], k * s.tint[1], k * s.tint[2])
+      this.point(s.x * this.W, s.y * this.H, k * s.tint[0], k * s.tint[1], k * s.tint[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1)
     }
   }
 
@@ -959,7 +960,7 @@ class Desert extends Canvas {
       const x = d.x * H
       const y = d.y * H
       const k = (0.4 + d.s * 0.6) * (1 + glint * Math.exp(-Math.hypot(x - this.orbX, y - this.orbY) / (0.15 * H)))
-      this.add(x, y, look.dust[0] * k, look.dust[1] * k, look.dust[2] * k)
+      this.splat(x, y, look.dust[0] * k, look.dust[1] * k, look.dust[2] * k)
     }
   }
 }

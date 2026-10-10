@@ -16,6 +16,9 @@ export interface Scene {
   readonly touched?: readonly number[]
   // Optional: sun and moon discs [cx, cy, r, ...] in pixels, which the engine keeps smooth wedge glyphs off.
   readonly orbs?: readonly number[]
+  // Optional: still points of light the last render left out of pixels, for the engine to draw as dot glyphs (see
+  // src/points.ts; Canvas provides them).
+  readonly points?: { readonly count: number; readonly data: Float32Array }
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void
