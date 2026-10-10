@@ -109,7 +109,7 @@ function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: strin
   return { ms: total / (frames - 60), flicker: changes / (frames - 60), mismatches, first, recording }
 }
 
-// Text edits, redraws between frames, a moving cursor, agent events and a brightness change, to exercise every reason
+// Text edits, redraws between frames, a moving cursor, agent events, a brightness change and a crossfade, to exercise every reason
 // a cell's fit can go stale.
 function script(f: number, engine: Engine, wallpaper: Wallpaper, activity: Activity, time: Time) {
   hold = f % 9 === 4
@@ -119,4 +119,5 @@ function script(f: number, engine: Engine, wallpaper: Wallpaper, activity: Activ
   if (f === 150) engine.react("error")
   if (f === 200) engine.react("idle")
   if (f === 180) engine.start(wallpaper, { activity, time, season, weather, brightness: "vivid" })
+  if (f === 205) engine.start(wallpaper, { activity, time: time === "night" ? "day" : "night", season, weather, brightness: "vivid" })
 }
