@@ -1,6 +1,6 @@
 // Sky pieces shared by outdoor wallpapers: a depth-graded sky with a sun or moon, stars and drifting clouds.
 import { TAU, clamp, fbm1, fbm2, lerp, rand, smoothstep, type RGB } from "./math"
-import { addOrb } from "./orbs"
+import { addOrb, onOrb } from "./orbs"
 import type { Points } from "./points"
 import { touch } from "./touched"
 
@@ -75,7 +75,7 @@ export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[
   for (const s of stars) {
     const x = (s.x * W) | 0
     const y = (s.y * H) | 0
-    if (x < 0 || y < 0 || x >= W || y >= H) continue
+    if (x < 0 || y < 0 || x >= W || y >= H || onOrb(hdr, x + 0.5, y + 0.5, 1.5)) continue
     const k = s.b * Math.max(0, 1 - s.y / top) * (0.7 + 0.3 * Math.sin(time * 0.8 + s.phase)) * brightness
     if (points) {
       points.add(hdr, W, H, x, y, k * s.tint[0], k * s.tint[1], k * s.tint[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1)
