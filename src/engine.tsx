@@ -4,6 +4,7 @@ import { appendFileSync } from "node:fs"
 import { watchEgg } from "./egg"
 import { lerp, smoothstep, type RGB } from "./math"
 import { OCTANTS } from "./octants"
+import { FIRST, prepareEdges, refineEdge } from "./smooth"
 import { AGENT_EVENTS, type AgentEvent, type Brightness, type Power, type Scene, type Scrim, type Settings, type Wallpaper } from "./wallpaper"
 
 export {
@@ -460,6 +461,8 @@ export function createEngine(
   const quad = new Float32Array(24)
   const order = new Uint8Array(8)
   const octants = process.env.WALLPAPER_OCTANTS !== "0" && (process.env.WALLPAPER_OCTANTS === "1" || OCTANT_TERMINALS.test(`${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`))
+  // Octant terminals also draw the smooth mosaics and eighth blocks themselves, for smoother edges.
+  const smooth = octants && process.env.WALLPAPER_SMOOTH !== "0"
   let scratch = new Float32Array(0)
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
@@ -844,6 +847,7 @@ export function createEngine(
     layerPlaced = false
 
     const q = quad
+    if (smooth) prepareEdges(grid, GW, GH, curve)
     const cover = look.scrim
     const reach = look.reach
     for (let y = 0; y < H; y++) {
@@ -888,8 +892,11 @@ export function createEngine(
           if (!surface[i]) continue
         }
         if (ch === SPACE && !atCursor(x, y)) {
-          if (octants) previousMask[i] = writeOctant(q, order, previousMask[i], char, fg, bg, i, o)
-          else previousMask[i] = writeQuadrant(q, previousMask[i], char, fg, bg, i, o)
+          if (octants) {
+            const previous = previousMask[i]
+            const octant = writeOctant(q, order, previous < FIRST ? previous : -1, char, fg, bg, i, o)
+            previousMask[i] = smooth ? refineEdge(q, previous, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB, st, sb) : octant
+          } else previousMask[i] = writeQuadrant(q, previousMask[i], char, fg, bg, i, o)
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue
