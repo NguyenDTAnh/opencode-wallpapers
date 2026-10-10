@@ -4,7 +4,8 @@ import { eggWait } from "../src/egg"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
 import { haze } from "../src/grade"
 import { lightPool } from "../src/light"
-import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
+import { LightMap } from "../src/lightmap"
+import { TAU, clamp, fbm1, hash, hash2, lerp, noise1, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeStars, makeStorm, paintClouds, paintHaze, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
 import type { Activity, Settings, Time, Wallpaper } from "../src/wallpaper"
@@ -260,6 +261,7 @@ class City extends Canvas {
   private rain: { x: number; y: number; speed: number }[] = []
   // Rain or snow from the weather setting; the city's own night rain only falls without one.
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private readonly wet: boolean
   private storm = makeStorm()
   private pigeons: Flier[] = []
@@ -318,6 +320,7 @@ class City extends Canvas {
   render() {
     const { W, H, look } = this
     this.restore()
+    this.lights.clear(W, H)
     if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4, this.points)
     const [top, bottom] = this.weather.scud ?? [look.clouds.top, look.clouds.bottom]
     paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, this.weather.covered ? undefined : look.orb)
@@ -339,6 +342,8 @@ class City extends Canvas {
     for (const w of this.walkers) this.drawWalker(w)
     // At night the lamps under the highway light the sidewalk and the people passing beneath them.
     if (look.night) for (let i = 0; this.pillarX(i) - 0.21 < this.A + 0.1; i++) lightPool(this.hdr, W, H, (this.pillarX(i) - 0.21) * H, 0.96 * H, 0.14 * H, 0.08 * H, [1, 0.5, 0.12], 3, 0)
+    if (this.activity === "teeming" && look.glow > 0) this.buzzNeon()
+    this.lights.apply(this.hdr)
     for (const b of this.pigeons) this.shape(bird(b, H, 0.022 * H, this.paint([0.42, 0.44, 0.5])), this.lighting, 0.4)
     this.drawRain()
     this.weather.draw(this.hdr, W, H)
@@ -398,11 +403,7 @@ class City extends Canvas {
     this.river = this.hdr.slice()
     this.paintBridge()
     this.paintHighway()
-    if (this.activity === "teeming") {
-      const px = this.pillarX(1)
-      this.neon({ x0: px - 0.012, y0: UNDER + 0.006, x1: px + 0.012, y1: STREET - 0.012, color: NEON[0], seed: 7 }, true, true)
-      this.neon({ x0: this.pillarX(3) - 0.012, y0: UNDER + 0.01, x1: this.pillarX(3) + 0.012, y1: STREET - 0.015, color: NEON[2], seed: 11 }, true, true)
-    }
+    if (this.activity === "teeming") for (const s of this.streetSigns()) this.neon(s, true, true)
     // Water is wherever nothing solid has been painted over the river.
     this.water = new Uint8Array(W * H)
     for (let i = Math.floor(BANK * H) * W; i < Math.min(H, Math.ceil(QUAY * H)) * W; i++) this.water[i] = this.hdr[i * 3] === this.river[i * 3] && this.hdr[i * 3 + 2] === this.river[i * 3 + 2] ? 1 : 0
@@ -557,6 +558,28 @@ class City extends Canvas {
       const row = Math.floor(hash(t.seed * 5.9 + i) * ((BANK - tier.top - 0.012) / 0.012))
       const on = look.windows[Math.floor(hash(t.seed + i * 0.3) * look.windows.length)]
       this.flickers.push({ x: tier.x0 + 0.004 + col * 0.0085, y: tier.top + 0.006 + row * 0.012, w: 0.0085 * 0.55, h: 0.012 * 0.6, on: [on[0] * look.glow, on[1] * look.glow, on[2] * look.glow], off: body.map((c) => c * 0.6) as RGB, phase: hash(t.seed * 1.1 + i) * 100 })
+    }
+  }
+
+  // The two neon signs hung under the highway.
+  private streetSigns(): Sign[] {
+    const a = this.pillarX(1)
+    const b = this.pillarX(3)
+    return [
+      { x0: a - 0.012, y0: UNDER + 0.006, x1: a + 0.012, y1: STREET - 0.012, color: NEON[0], seed: 7 },
+      { x0: b - 0.012, y0: UNDER + 0.01, x1: b + 0.012, y1: STREET - 0.015, color: NEON[2], seed: 11 },
+    ]
+  }
+
+  // The signs under the highway throw their color on the street below, and now and then one buzzes and dims for a
+  // moment, its light on the street dimming with it.
+  private buzzNeon() {
+    const { H, look } = this
+    for (const s of this.streetSigns()) {
+      const dip = smoothstep(0.78, 0.95, noise1(this.time * 1.5, s.seed))
+      const k = look.glow * (1 - 0.6 * dip)
+      this.lights.pool(((s.x0 + s.x1) / 2) * H, (STREET + 0.035) * H, 0.08 * H, 0.055 * H, s.color, 2.2 * k, 0.012 * k)
+      if (dip > 0.01) this.polygon(this.rect(s.x0, s.y0, s.x1, s.y1), this.paint([0.1, 0.08, 0.12]), 0.55 * dip)
     }
   }
 
@@ -788,7 +811,11 @@ class City extends Canvas {
       const on = hash(Math.floor(this.time / 12 + f.phase)) > 0.45
       this.polygon(this.rect(f.x, f.y, f.x + f.w, f.y + f.h), on ? f.on : f.off)
     }
-    if (this.sign && look.glow > 0 && hash(Math.floor(this.time * 0.4) + 3.7) > 0.15) this.neon(this.sign, true, true)
+    if (!this.sign || look.glow <= 0 || hash(Math.floor(this.time * 0.4) + 3.7) <= 0.15) return
+    const s = this.sign
+    this.neon(s, true, true)
+    // While it is lit, it tints the facade and windows around it.
+    this.lights.pool(((s.x0 + s.x1) / 2) * H, ((s.y0 + s.y1) / 2) * H, 0.04 * H, 0.07 * H, s.color, 1.5 * look.glow, 0.02 * look.glow)
   }
 
   // Trees along the promenade between the highway lamps, nodding in the wind, and two flags that hang slack in calm

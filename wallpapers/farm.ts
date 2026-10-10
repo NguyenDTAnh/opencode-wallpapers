@@ -2,7 +2,8 @@ import { Canvas, cap, ell, type Lighting, type Part } from "../src/canvas"
 import { bob, body, chain, gait, limb, quadruped, stepGait, stride, type Gait } from "../src/creature"
 import { eggWait } from "../src/egg"
 import { haze, mottle } from "../src/grade"
-import { fireflyLight, lightPool } from "../src/light"
+import { fireflyLight } from "../src/light"
+import { LightMap, firelight } from "../src/lightmap"
 import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeShadows, makeStars, makeStorm, paintClouds, paintShadows, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
@@ -202,6 +203,7 @@ class Farm extends Canvas {
   private egg: { wait: number; t: number; cow: Walker | undefined } = { wait: eggWait() * TIME_SCALE, t: -1, cow: undefined }
   private readonly season: Season
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private hills: [far: RGB, near: RGB]
   private treeTops: [number, number][] = []
   // The barn and windmill stand toward the edges, in screen heights from the left, clear of the text in the middle.
@@ -317,8 +319,13 @@ class Farm extends Canvas {
     for (const { w, kind } of herd) kind === "cow" ? this.drawCow(w) : this.drawPig(w)
     this.drawEgg()
     if (this.activity === "teeming") this.drawFarmer()
-    // At night the open barn door spills warm light across the yard and whatever is in it.
-    if (this.look.windows === 1) lightPool(this.hdr, this.W, this.H, this.barnX * this.H, 0.67 * this.H, 0.24 * this.H, 0.07 * this.H, [1, 0.55, 0.15], 3, 0.02)
+    // At night the open barn door spills a lantern's flickering light across the yard and whatever is in it.
+    this.lights.clear(this.W, this.H)
+    if (this.look.windows === 1) {
+      const k = firelight(this.time * 0.8, 9)
+      this.lights.pool(this.barnX * this.H, 0.67 * this.H, 0.24 * this.H, 0.07 * this.H, [1, 0.55, 0.15], 3.3 * k, 0.022 * k)
+    }
+    this.lights.apply(this.hdr)
     this.drawCornRow(3)
     this.drawFireflies()
     this.drawLeaves()

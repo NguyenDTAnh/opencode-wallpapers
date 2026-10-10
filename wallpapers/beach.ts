@@ -4,6 +4,7 @@ import { eggWait } from "../src/egg"
 import { haze, mottle } from "../src/grade"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
 import { campfire, lightPool } from "../src/light"
+import { LightMap } from "../src/lightmap"
 import { TAU, clamp, fbm1, hash, hash2, lerp, noise1, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeShadows, makeStars, makeStorm, paintClouds, paintShadows, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
@@ -205,6 +206,7 @@ class Beach extends Canvas {
   private bottle = { wait: eggWait() * TIME_SCALE, t: -1 }
   private readonly season: Season
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private swimmers: { x: number; y: number; phase: number }[] = []
 
   constructor(settings: Settings) {
@@ -484,7 +486,10 @@ class Beach extends Canvas {
     const x = 0.17 * this.A * H
     const gy = 0.92 * H
     const fire = campfire(x, gy, H * 1.2, this.time)
-    lightPool(this.hdr, this.W, H, x, gy - 0.03 * H, 0.36 * H, 0.13 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker)
+    // The light leans and flickers with the flames.
+    this.lights.clear(this.W, H)
+    this.lights.pool(x + (noise1(this.time * 0.9, 5) - 0.5) * 0.05 * H, gy - 0.03 * H, 0.36 * H, 0.13 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker)
+    this.lights.apply(this.hdr)
     this.shape(fire.logs, { style: "rim", color: [1.4, 0.5, 0.1], x, y: gy - 0.03 * H })
     for (const flame of fire.flames) this.shape(flame, { style: "front", dir: [0, 0, 1] }, 0)
   }

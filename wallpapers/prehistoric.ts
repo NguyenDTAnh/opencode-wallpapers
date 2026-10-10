@@ -3,7 +3,7 @@ import { bob, body, chain, gait, limb, quadruped, stepGait, stride, type Gait } 
 import { eggWait } from "../src/egg"
 import { haze, mottle } from "../src/grade"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
-import { lightPool } from "../src/light"
+import { LightMap } from "../src/lightmap"
 import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeShadows, makeStars, makeStorm, paintClouds, paintShadows, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
@@ -206,6 +206,7 @@ class Prehistoric extends Canvas {
   // shows (none outside the water or under the plants in front of it).
   private pool = { y0: 0, y1: 0, rows: new Float32Array(0), amp: new Float32Array(0), gloss: new Float32Array(0) }
   private readonly weather: WeatherLayer
+  private lights = new LightMap()
   private storm = makeStorm()
   private birds: Flier[] = []
   // The easter egg: a time-travelling car. t counts scene seconds since it appeared at x0.
@@ -300,8 +301,18 @@ class Prehistoric extends Canvas {
     this.drawDust()
     this.drawRex()
     const A = this.A
-    // At night the lava lights the ground, the lake and anything walking near the volcano's foot.
-    if (this.night) lightPool(this.hdr, this.W, this.H, (A - VENT_X + 0.08) * this.H, 0.63 * this.H, 0.45 * this.H, 0.13 * this.H, [1, 0.36, 0.06], 2.4 + 0.4 * Math.sin(this.time * 0.6), 0.03)
+    // At night the lava lights the ground, the lake and anything walking near the volcano's foot, swelling as each
+    // pulse of heat reaches the bottom of the flows and reaching the lake a moment later.
+    this.lights.clear(this.W, this.H)
+    if (this.night) {
+      const pulse = (lag: number) => 0.5 + 0.5 * Math.sin(this.time * 0.6 - lag)
+      this.lights.pool((A - VENT_X + 0.08 + 0.02 * Math.sin(this.time * 0.25)) * this.H, 0.63 * this.H, 0.45 * this.H, 0.13 * this.H, [1, 0.36, 0.06], 2.1 + 0.7 * pulse(0), 0.03)
+      if (this.activity === "teeming") {
+        const [lx, ly, lrx, lry] = this.lake()
+        this.lights.pool((Math.max(lx, A - VENT_X - 0.05) + 0.03 * Math.sin(this.time * 0.3)) * this.H, ly * this.H, lrx * 0.7 * this.H, lry * 1.6 * this.H, [1, 0.3, 0.05], 1.6 * pulse(0.9), 0.02 * pulse(0.9))
+      }
+    }
+    this.lights.apply(this.hdr)
     for (const [i, x] of [0.01, 0.2, 0.76, 0.99].entries()) this.drawFern(x * A, 1.03, 0.17 + hash(i) * 0.04, i, true)
     if (this.activity === "teeming") for (const d of this.dragonflies) this.drawDragonfly(d)
     if (this.delorean.t >= 0) this.drawDelorean()

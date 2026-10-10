@@ -2,8 +2,8 @@ import { Canvas, cap, ell, type Lighting, type Part } from "../src/canvas"
 import { bob, body, chain, gait, quadruped, stepGait, stride, view, type Gait } from "../src/creature"
 import { eggWait } from "../src/egg"
 import { haze, mottle } from "../src/grade"
-import { lightPool } from "../src/light"
-import { TAU, clamp, fbm1, hash, lerp, rand, smoothstep, type RGB } from "../src/math"
+import { LightMap, firelight } from "../src/lightmap"
+import { TAU, clamp, fbm1, hash, lerp, noise1, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeShadows, makeStars, makeStorm, paintClouds, paintShadows, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
 import type { Activity, Settings, Time, Wallpaper } from "../src/wallpaper"
@@ -158,6 +158,7 @@ class Tundra extends Canvas {
   private readonly weather: WeatherLayer
   // The big pines framing the edges, painted once, bend a little as gusts pass.
   private pines = new SwayLayer()
+  private lights = new LightMap()
 
   constructor(settings: Settings) {
     super()
@@ -251,9 +252,17 @@ class Tundra extends Canvas {
     if (this.activity === "teeming") this.drawFisher()
     for (const p of [...this.penguins].sort((a, b) => a.y - b.y)) this.drawPenguin(p)
     if (this.fox) this.drawFox(this.fox)
-    // At night the igloo doors' warm light falls across the snow and anything passing them.
+    // The aurora's light ripples over the snow and ice below it, and at night the igloo doors' firelight flickers
+    // across the snow and anything passing them.
+    this.lights.clear(this.W, this.H)
+    if (this.look.aurora > 0 && !this.weather.covered) this.lightSnow()
     if (this.look.glow === 1)
-      for (const [x, base, R] of this.igloos()) lightPool(this.hdr, this.W, this.H, (x - R * 0.35) * this.H, (base + 0.01) * this.H, R * 3.2 * this.H, R * 1.1 * this.H, [1, 0.42, 0.08], 1, 0.03)
+      for (const [i, [x, base, R]] of this.igloos().entries()) {
+        const k = firelight(this.time, i)
+        const sway = (noise1(this.time * 0.9, i + 7) - 0.5) * 0.3 * R
+        this.lights.pool((x - R * 0.35 + sway) * this.H, (base + 0.01) * this.H, R * 3.2 * this.H, R * 1.1 * this.H, [1, 0.42, 0.08], 1.3 * k, 0.036 * k)
+      }
+    this.lights.apply(this.hdr)
     this.drawFlakes()
     this.weather.draw(this.hdr, this.W, this.H)
     this.finish()
@@ -500,7 +509,7 @@ class Tundra extends Canvas {
     for (let x = 0; x < W; x++) {
       const u = x / H
       const band = (0.17 + 0.05 * Math.sin(u * 1.7 + t * 0.07) + 0.03 * Math.sin(u * 4.1 - t * 0.05)) * H
-      const fold = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(u * 14 + Math.sin(u * 3 + t * 0.1) * 3 + t * 0.15), 2)
+      const fold = auroraFold(u, t)
       bottom = Math.max(bottom, band + 0.05 * H)
       for (let y = 0; y < Math.min(H, band + 0.05 * H); y++) {
         const above = band - y
@@ -514,6 +523,29 @@ class Tundra extends Canvas {
       }
     }
     this.touch(0, 0, W - 1, bottom)
+  }
+
+  // The aurora's green and violet light on the snowfield, strongest under its brightest folds and on the ice, rippling
+  // slowly as the curtains above fold and drift.
+  private lightSnow() {
+    const { H, A, lights } = this
+    const t = this.time
+    const igloos = this.igloos()
+    for (let i = 0; i < lights.cols; i++) {
+      const u = (i * lights.cell) / H
+      const fold = (auroraFold(u - 0.04, t) + auroraFold(u, t) + auroraFold(u + 0.04, t)) / 3
+      const violet = 0.75 * smoothstep(0.1, 0.9, Math.sin(u * 3.5 - t * 0.05 + 1))
+      const color: RGB = [lerp(0.05, 0.5, violet), lerp(0.8, 0.08, violet), lerp(0.3, 0.75, violet)]
+      for (let j = Math.floor((HORIZON * H) / lights.cell); j < lights.rows; j++) {
+        const v = (j * lights.cell) / H
+        const lake = 1 + 0.9 * smoothstep(1.2, 0.6, ((u - 0.5 * A) / 0.3) ** 2 + ((v - 0.745) / 0.045) ** 2)
+        const ripple = 0.65 + 0.35 * Math.sin(u * 6 + v * 38 - t * 0.25)
+        // Firelight wins around the igloo doors, so it stays warm rather than mixing toward white.
+        const fire = igloos.reduce((m, [x, base, R]) => Math.max(m, smoothstep(1, 0.2, ((u - x + R * 0.35) / (R * 3)) ** 2 + ((v - base) / (R * 1.4)) ** 2)), 0)
+        const k = fold * ripple * lake * (1 - 0.85 * fire) * smoothstep(HORIZON, 0.63, v) * (1 - 0.7 * smoothstep(0.66, 0.95, v)) * this.look.aurora
+        if (k > 0.01) lights.node(i, j, color, 0.9 * k, 0.009 * k)
+      }
+    }
   }
 
   private drawFlakes() {
@@ -761,6 +793,11 @@ class Tundra extends Canvas {
     this.shape(parts, this.lighting, 0.6)
     for (const s of [-1, 1]) this.add(...P(s * 0.007, -0.022), 1, 0.75, 0.1)
   }
+}
+
+// How bright the aurora's curtain is at u across the screen (screen heights) at scene time t, as it folds and drifts.
+function auroraFold(u: number, t: number) {
+  return 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(u * 14 + Math.sin(u * 3 + t * 0.1) * 3 + t * 0.15), 2)
 }
 
 function lerpRGB(a: RGB, b: RGB, t: number): RGB {

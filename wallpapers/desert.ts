@@ -3,9 +3,10 @@ import { chain } from "../src/creature"
 import { eggWait } from "../src/egg"
 import { haze, mottle } from "../src/grade"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
-import { TAU, clamp, fbm1, fbm2, hash, lerp, rand, smoothstep, type RGB } from "../src/math"
+import { TAU, clamp, fbm1, fbm2, hash, lerp, noise1, rand, smoothstep, type RGB } from "../src/math"
 import { groundShadow, sunShade, type Shade } from "../src/shadow"
-import { campfire, lightPool } from "../src/light"
+import { campfire } from "../src/light"
+import { LightMap } from "../src/lightmap"
 import { addOrb, onOrb } from "../src/orbs"
 import { driftClouds, makeClouds, makeStorm, paintClouds, paintStorm, type Cloud } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
@@ -281,6 +282,7 @@ class Desert extends Canvas {
   private readonly dusting: RGB
   private readonly weather: WeatherLayer
   private readonly shade: Shade
+  private lights = new LightMap()
 
   constructor(settings: Settings) {
     super()
@@ -660,7 +662,10 @@ class Desert extends Canvas {
     const x = 0.21 * this.A * H
     const gy = this.ground(0.21) + 0.01 * H
     const fire = campfire(x, gy, H, this.time)
-    lightPool(this.hdr, this.W, H, x, gy - 0.03 * H, 0.32 * H, 0.14 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker)
+    // The light leans and flickers with the flames.
+    this.lights.clear(this.W, H)
+    this.lights.pool(x + (noise1(this.time * 0.9, 5) - 0.5) * 0.05 * H, gy - 0.03 * H, 0.32 * H, 0.14 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker)
+    this.lights.apply(this.hdr)
     this.shape(fire.logs, { style: "rim", color: [1.4, 0.5, 0.1], x, y: gy - 0.03 * H })
     for (const flame of fire.flames) this.shape(flame, { style: "front", dir: [0, 0, 1] }, 0)
   }
