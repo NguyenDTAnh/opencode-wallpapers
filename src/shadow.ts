@@ -2,6 +2,7 @@
 // Scenes make one Shade per layout with sunShade() and call groundShadow() under each thing that stands on the ground,
 // before drawing it: static things in layout(), moving things each frame.
 import { clamp, type RGB } from "./math"
+import { touch } from "./touched"
 import type { Time } from "./wallpaper"
 
 // The ground is seen at a low angle, so a round footprint looks this much shallower than it is wide.
@@ -97,6 +98,7 @@ export function fillShadow(hdr: Float32Array, W: number, H: number, ax: number, 
   const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx) + R))
   const y0 = Math.max(0, Math.floor(Math.min(ay, by) - R * SQUASH))
   const y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by) + R * SQUASH))
+  touch(hdr, x0, y0, x1, y1)
   const dx = bx - ax
   const dy = (by - ay) / SQUASH
   const len2 = dx * dx + dy * dy

@@ -212,6 +212,7 @@ class Farm extends Canvas {
   // The back corn rows are painted once but still bend as gusts pass, and the open pasture lightens under them.
   private corn = new SwayLayer()
   private pasture = new Int32Array(0)
+  private pastureTop = 0
   private gusts = new Float32Array(0)
   private fan = 0
 
@@ -289,9 +290,17 @@ class Farm extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
-    for (let x = 0; x < this.W; x++) this.gusts[x] = gust(x / this.H, this.time)
+    this.restore()
+    let x0 = this.W
+    let x1 = -1
+    for (let x = 0; x < this.W; x++) {
+      this.gusts[x] = gust(x / this.H, this.time)
+      if (this.gusts[x] < 0.01) continue
+      x0 = Math.min(x0, x)
+      x1 = x
+    }
     lightenGrass(this.hdr, this.W, this.H, this.pasture, this.gusts)
+    if (x1 >= 0) this.touch(x0, this.pastureTop, x1, this.H - 1)
     this.corn.draw(this.hdr, this.W, this.H, this.time)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
@@ -421,6 +430,7 @@ class Farm extends Canvas {
         if (this.hdr[o] === field[o] && this.hdr[o + 1] === field[o + 1] && this.hdr[o + 2] === field[o + 2]) pasture.push(y * W + x)
       }
     this.pasture = Int32Array.from(pasture)
+    this.pastureTop = pasture.reduce((top, p) => Math.min(top, Math.floor(p / W)), H)
     this.gusts = new Float32Array(W)
   }
 

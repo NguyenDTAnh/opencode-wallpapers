@@ -1,4 +1,5 @@
 import { hash, smoothstep } from "./math"
+import { touch } from "./touched"
 
 // One wind for the whole scene, so everything that sways moves together. Now and then a gust rolls across the screen
 // from left to right and dies away; between gusts the air is calm. x is in screen heights from the left edge and t in
@@ -50,6 +51,8 @@ export class SwayLayer {
   private cover = new Uint8Array(0)
   private weight = new Float32Array(0)
   private shift = new Float32Array(0)
+  private top = new Int32Array(0)
+  private bottom = new Int32Array(0)
 
   // dir -1 sends the gusts the other way, right to left, for a scene whose breeze already blows that way.
   constructor(private readonly dir = 1) {}
@@ -132,12 +135,32 @@ export class SwayLayer {
       this.shift[x] = this.dir * g * this.reach * (0.64 + 0.19 * Math.sin(t * 2.3 + u * 9))
       if (g > 0) any = true
     }
-    if (any) shear(hdr, W, this.x0, this.y0, this.w, this.h, this.bare, this.layer, this.cover, this.weight, this.shift)
+    if (!any) return
+    if (this.top.length !== this.w) {
+      this.top = new Int32Array(this.w)
+      this.bottom = new Int32Array(this.w)
+    }
+    shear(hdr, W, this.x0, this.y0, this.w, this.h, this.bare, this.layer, this.cover, this.weight, this.shift, this.top, this.bottom)
+    // One touched box per run of columns that moved, so plants at both edges don't mark the whole width.
+    let run = -1
+    let y0 = 0
+    let y1 = 0
+    for (let x = 0; x <= this.w; x++) {
+      const moved = x < this.w && this.top[x] <= this.bottom[x]
+      if (moved && run < 0) ((run = x), (y0 = this.top[x]), (y1 = this.bottom[x]))
+      if (moved) ((y0 = Math.min(y0, this.top[x])), (y1 = Math.max(y1, this.bottom[x])))
+      if (moved || run < 0) continue
+      touch(hdr, this.x0 + run, this.y0 + y0, this.x0 + x - 1, this.y0 + y1)
+      run = -1
+    }
   }
 }
 
-// Redraws the layer's region with each pixel taken from `shift * weight` pixels upwind, over what lies behind it.
-function shear(hdr: Float32Array, W: number, x0: number, y0: number, w: number, h: number, bare: Float32Array, layer: Float32Array, cover: Uint8Array, weight: Float32Array, shift: Float32Array) {
+// Redraws the layer's region with each pixel taken from `shift * weight` pixels upwind, over what lies behind it, and
+// records the rows each column changed between, in top and bottom.
+function shear(hdr: Float32Array, W: number, x0: number, y0: number, w: number, h: number, bare: Float32Array, layer: Float32Array, cover: Uint8Array, weight: Float32Array, shift: Float32Array, top: Int32Array, bottom: Int32Array) {
+  top.fill(h)
+  bottom.fill(-1)
   for (let y = 0; y < h; y++) {
     const row = y * w
     for (let x = 0; x < w; x++) {
@@ -155,6 +178,8 @@ function shear(hdr: Float32Array, W: number, x0: number, y0: number, w: number, 
       const k = 1 - a - b
       const ia = (row + xa) * 3
       for (let c = 0; c < 3; c++) hdr[o + c] = bare[i * 3 + c] * k + (a ? layer[ia + c] * a : 0) + (b ? layer[ia + 3 + c] * b : 0)
+      if (y < top[x]) top[x] = y
+      bottom[x] = y
     }
   }
 }

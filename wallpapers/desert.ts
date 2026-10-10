@@ -332,9 +332,12 @@ class Desert extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore()
     // Heat haze over the sunlit floor, but not in winter or under cloud.
-    if (this.look.style === "front" && this.season !== "winter" && !this.weather.covered) shimmer(this.hdr, this.background, this.W, this.H, this.time)
+    if (this.look.style === "front" && this.season !== "winter" && !this.weather.covered) {
+      shimmer(this.hdr, this.background, this.W, this.H, this.time)
+      this.touch(0, Math.floor((HORIZON - 0.05) * this.H), this.W - 1, Math.ceil((HORIZON + 0.02) * this.H))
+    }
     if (!this.weather.covered) this.drawStars()
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.weather.covered ? undefined : this.look.orb)

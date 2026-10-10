@@ -215,7 +215,7 @@ class Space extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore()
     this.drawStars()
     this.drawMoon()
     this.drawPlanet()
@@ -368,6 +368,7 @@ class Space extends Canvas {
     const pad = 0.1 * R
     const lsx = Lx / (Math.hypot(Lx, Ly) || 1)
     const lsy = Ly / (Math.hypot(Lx, Ly) || 1)
+    this.touch(cx - R - pad - 1, cy - R - pad - 1, cx + R + pad + 1, H - 1)
     for (let y = Math.max(0, Math.floor(cy - R - pad)); y < H; y++)
       for (let x = Math.max(0, Math.floor(cx - R - pad)); x <= Math.min(W - 1, Math.ceil(cx + R + pad)); x++) {
         const dx = (x + 0.5 - cx) / R
@@ -423,6 +424,7 @@ class Space extends Canvas {
   private drawRingFront() {
     const [x0, y0, x1, y1] = this.ringBox
     const { W, ringFront } = this
+    this.touch(x0, y0, x1, y1)
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
         const o = y * W + x
@@ -443,6 +445,7 @@ class Space extends Canvas {
     // After an error the star dims, as if behind a passing dust cloud.
     const strength = (look.lighting === "front" ? 1 : 1.4) * (1 - smoothstep(0, 1, this.gloom) * 0.6)
     const reach = 0.45 * H
+    this.touch(sx - reach - 1, sy - reach - 1, sx + reach, sy + reach)
     for (let y = Math.max(0, Math.floor(sy - reach)); y < Math.min(H, sy + reach); y++)
       for (let x = Math.max(0, Math.floor(sx - reach)); x < Math.min(W, sx + reach); x++) {
         const dx = x + 0.5 - sx

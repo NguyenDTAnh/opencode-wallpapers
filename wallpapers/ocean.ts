@@ -298,6 +298,7 @@ class Ocean extends Canvas {
 
   render() {
     const night = this.timeOfDay === "night"
+    this.restore()
     this.drawWater()
     if (night) this.water.set(this.hdr)
     this.drawWhale()
@@ -656,6 +657,7 @@ class Ocean extends Canvas {
     const squash = this.cells ? 2 : 4
     // After an error the rays fade, as if clouds had covered the sun.
     const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.7
+    this.touch(0, 0, W - 1, H - 1)
     for (let y = 0; y < H; y++) {
       const rf = rayFade[y] * overcast
       const ry1 = y * 0.42 + t * 7

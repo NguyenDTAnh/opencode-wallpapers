@@ -236,12 +236,13 @@ class Jungle extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore()
     this.vines.draw(this.hdr, this.W, this.H, this.time)
     this.drawShafts()
     this.drawFalls()
     const mist = this.look.mist[1]
     driftMist(this.hdr, this.W, this.H, this.mist, mist[0], mist[1], mist[2], this.rainy ? 0.3 : 0.22)
+    this.touch(0, Math.floor(0.5 * this.H), this.W - 1, Math.ceil(0.96 * this.H))
     if (this.toucan.x > -5) this.drawToucan(this.toucan)
     if (this.sloth.t >= 0) this.drawSloth()
     if (this.activity !== "calm") this.drawMonkey()
@@ -428,6 +429,7 @@ class Jungle extends Canvas {
     const [lr, lg, lb] = look.light
     // After an error the shafts fade, as if clouds had covered the sun.
     const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.75
+    this.touch(0, 0, W - 1, H * 0.85)
     for (let y = 0; y < H * 0.85; y++) {
       const fade = Math.pow(1 - y / (H * 0.85), 1.4) * look.shafts * overcast
       for (let x = 0; x < W; x++) {
@@ -459,6 +461,7 @@ class Jungle extends Canvas {
       }
     const rx = f.half * 3
     const ry = 0.03 * H
+    this.touch(f.x - rx - 1, f.bottom - ry - 1, f.x + rx + 1, f.bottom + ry + 1)
     for (let y = Math.max(0, Math.floor(f.bottom - ry)); y < Math.min(H, f.bottom + ry); y++)
       for (let x = Math.max(0, Math.floor(f.x - rx)); x < Math.min(W, f.x + rx); x++) {
         const q = ((x + 0.5 - f.x) / rx) ** 2 + ((y + 0.5 - f.bottom) / ry) ** 2

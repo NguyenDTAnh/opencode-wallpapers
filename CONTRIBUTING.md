@@ -80,7 +80,7 @@ protected override layout() {
 }
 
 render() {
-  this.hdr.set(this.background)
+  this.restore()
   // …moving things…
   this.finish()
 }
@@ -103,6 +103,13 @@ city's river) can be made in the first pass, box-filtered with `this.shrink(buff
 the second pass to use. Scenes whose `layout()` paints nothing set `supersample = 1`. Smooth fills that cost a lot per
 pixel (space's nebula) can be worked out once per real pixel.
 
+The engine also refits only the terminal cells that can have changed since the last frame. `restore()` starts the
+frame's `touched` list of boxes, and every drawing method below adds the box it drew in. A scene that writes `hdr` in
+its own loop during `render()` must call `touch(x0, y0, x1, y1)` (pixels, inclusive) for that area; the shared helpers
+(sky, weather, shadows, light, water, wind) record their own. Anything left untouched keeps last frame's cells, so a missed loop
+shows as a smear; `bun dev/check.ts --verify-dirty <id>` catches it. A scene that never calls `restore()` is refitted
+in full every frame.
+
 ### Drawing
 
 `Canvas` methods, all in pixels, mixing over what's already there:
@@ -116,7 +123,8 @@ pixel (space's nebula) can be worked out once per real pixel.
 | `polygon(points, color, alpha?)` | An anti-aliased polygon in a flat color, for straight-edged things like buildings and boats |
 | `shape(parts, lighting, light?)` | Rounded parts joined into one lit form, for creatures, people and plants |
 
-For per-pixel effects such as water, sand or fog, loop over `hdr` directly. `reflect()` in `src/water.ts` mirrors
+For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and `touch()` the area during `render()`
+(see above). `reflect()` in `src/water.ts` mirrors
 other rows of the scene into water rows with drifting ripples, a tint and a per-pixel weight; call it each frame over
 only the water's rows (as the beach and the prehistoric lake do), or once in `layout()` for still water such as ice.
 
@@ -291,7 +299,8 @@ All optional, and all on `Scene`:
 
 ## Performance
 
-A typical wallpaper costs 8 to 12 ms per frame at 15 fps through the whole pipeline (`bun dev/check.ts`). Timings vary
+A typical wallpaper costs 3 to 10 ms per frame at 15 fps through the whole pipeline (`bun dev/check.ts`), most of it
+fitting the cells that changed: scenes that move everywhere (the ocean, the beach's sea) cost the most. Timings vary
 a lot with machine load, so compare against an existing wallpaper measured back to back.
 
 - Paint static things once in `layout()`.
@@ -314,6 +323,7 @@ a lot with machine load, so compare against an existing wallpaper measured back 
 ```sh
 bun run typecheck
 bun dev/check.ts [id...] [season] [weather]       # every activity and time: errors, ms/frame, flicker
+bun dev/check.ts --verify-dirty [id...]           # also checks that refitting only changed cells matches a full refit
 bun dev/snap.ts <id> [activity] [time] [season] [weather] [seconds...] # scene PNGs in dev/out/, and ms per render
 bun dev/preview.ts <id> [activity] [time] [season] [weather] [home|session] [WxH] [seconds] # terminal cells behind text, as a PNG
 bun dev/pixel-check.ts [id] [activity] [time]     # real-pixel mode against a mock kitty terminal
@@ -329,6 +339,8 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
   `--quiet` prints only failures, and it fails on flicker above `--max-flicker` (150) and, if given, on frames slower
   than `--max-ms`; CI runs `--quiet --max-ms=60`. Dev renders seed `Math.random`, so they are reproducible.
   Errors thrown in `step` or `render` show up here; inside OpenCode they are only logged to `WALLPAPER_DEBUG`.
+  `--verify-dirty` plays each combination twice, refitting every cell (`WALLPAPER_DIRTY=0`) and then only what
+  changed, with text edits, redraws, agent events and a crossfade mixed in, and fails on any cell that differs.
 - `snap.ts` renders the scene directly, before terminal conversion, for judging the art.
 - `preview.ts` shows what the terminal will show, scrim included. `home` and `session` lay the text out like OpenCode's
   home screen or a busy session, and a size such as `240x60` or `100x30` replaces 160x45.

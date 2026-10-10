@@ -1,5 +1,6 @@
 // Sky pieces shared by outdoor wallpapers: a depth-graded sky with a sun or moon, stars and drifting clouds.
 import { TAU, clamp, fbm1, fbm2, lerp, rand, smoothstep, type RGB } from "./math"
+import { touch } from "./touched"
 
 // The sun or moon: x as a fraction of the width, y and r as fractions of the height.
 export interface Orb {
@@ -76,6 +77,7 @@ export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[
     hdr[o] += k * s.tint[0]
     hdr[o + 1] += k * s.tint[1]
     hdr[o + 2] += k * s.tint[2]
+    touch(hdr, x, y, x, y)
   }
 }
 
@@ -361,6 +363,7 @@ function drawCloud(hdr: Float32Array, W: number, H: number, s: Sprite, x: number
   const f = px - X0
   const Y0 = Math.round(y) + s.y0
   const sw = s.w
+  touch(hdr, X0, Y0, X0 + sw, Y0 + s.h - 1)
   for (let j = Math.max(0, -Y0); j < Math.min(s.h, H - Y0); j++)
     for (let i = Math.max(0, -X0); i <= Math.min(sw, W - 1 - X0); i++) {
       const k = j * sw + i
@@ -386,6 +389,7 @@ function drawShadow(hdr: Float32Array, W: number, H: number, s: Sprite, x: numbe
   const Y0 = Math.round(y) + s.y0
   const sw = s.w
   const fade = H * 0.03
+  touch(hdr, X0, Math.max(Y0, Math.floor(ground)), X0 + sw, Y0 + s.h - 1)
   for (let j = Math.max(0, -Y0, Math.floor(ground) - Y0); j < Math.min(s.h, H - Y0); j++) {
     const row = clamp((Y0 + j - ground) / fade, 0, 1) * 0.38
     for (let i = Math.max(0, -X0); i <= Math.min(sw, W - 1 - X0); i++) {

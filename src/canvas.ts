@@ -1,6 +1,7 @@
 import type { AgentEvent, TextMap } from "./wallpaper"
 import { clamp, rand, smoothstep, type RGB } from "./math"
 import { clearShadows, keepShadows } from "./shadow"
+import { addBox, trackTouched } from "./touched"
 
 // Bloom is computed at 1/BLOOM resolution, then again at half that for the wide halo.
 const BLOOM = 4
@@ -56,6 +57,15 @@ export abstract class Canvas {
   protected cells = false
   hdr = new Float32Array(0)
   pixels = new Uint8Array(0)
+  // Boxes [x0, y0, x1, y1, ...] in pixels, inclusive, around what render() drew this frame over the cached background.
+  // restore() clears it; the drawing methods and the shared helpers (sky, weather, shadows, light, water, wind) add to
+  // it; scenes touch() what their own pixel loops write.
+  readonly touched: number[] = []
+  // Boxes around every pixel whose `pixels` value may differ from last frame's, for the engine to refit only the cells
+  // under them.
+  readonly changed: number[] = []
+  // Whether this frame started with restore(); a scene that never calls it can have drawn anywhere.
+  private restored = false
 
   private bw = 0
   private bh = 0
@@ -84,6 +94,8 @@ export abstract class Canvas {
   private stillPixels = new Uint8Array(0)
   private stillExposure = NaN
   private retone = new Uint8Array(0)
+  // The blocks tone-mapped last frame; the rest of pixels holds the still frame's.
+  private toned = new Uint8Array(0)
   private region = new Int32Array(4)
 
   // How overcast the scene is: eases to 1 after the agent fails and back to 0 with any other event (the engine sends
@@ -182,6 +194,7 @@ export abstract class Canvas {
     this.cells = cells
     this.A = W / H
     this.hdr = new Float32Array(W * H * 3)
+    trackTouched(this.hdr, this.touched)
     this.pixels = new Uint8Array(W * H * 4)
     this.bw = Math.ceil(W / BLOOM)
     this.bh = Math.ceil(H / BLOOM)
@@ -197,6 +210,7 @@ export abstract class Canvas {
     this.stillBloom = new Float32Array(this.bw * this.bh * 3)
     this.stillPixels = new Uint8Array(W * H * 4)
     this.retone = new Uint8Array(this.bw * this.bh)
+    this.toned = new Uint8Array(this.bw * this.bh)
     const invR = 1 / Math.hypot(W / 2, H / 2)
     this.vignette = new Float32Array(W * H)
     for (let y = 0; y < H; y++)
@@ -261,6 +275,19 @@ export abstract class Canvas {
     return this.cells ? Math.max(radius * this.H, min * this.px) : radius * this.H
   }
 
+  // Starts a frame: copies the background (or a buffer of the scene's own) into hdr and clears touched. A scene that
+  // draws every pixel each frame passes undefined.
+  protected restore(background: Float32Array | undefined = this.background) {
+    if (background) this.hdr.set(background)
+    this.touched.length = 0
+    this.restored = true
+  }
+
+  // Marks pixels a scene's own loop writes during render(), x0..x1 by y0..y1 inclusive.
+  protected touch(x0: number, y0: number, x1: number, y1: number) {
+    addBox(this.touched, x0, y0, x1, y1)
+  }
+
   // Adds light to one pixel.
   protected add(x: number, y: number, r: number, g: number, b: number) {
     const xi = x | 0
@@ -270,6 +297,7 @@ export abstract class Canvas {
     this.hdr[i] += r
     this.hdr[i + 1] += g
     this.hdr[i + 2] += b
+    this.touch(xi, yi, xi, yi)
   }
 
   // Mixes a color over the pixel at hdr index i by coverage a.
@@ -278,21 +306,37 @@ export abstract class Canvas {
     h[i] += (r - h[i]) * a
     h[i + 1] += (g - h[i + 1]) * a
     h[i + 2] += (b - h[i + 2]) * a
+    const y = Math.floor(i / 3 / this.W)
+    const x = i / 3 - y * this.W
+    this.touch(x, y, x, y)
   }
 
   // An anti-aliased filled circle, mixed over the scene.
   protected disc(cx: number, cy: number, rad: number, r: number, g: number, b: number, a: number) {
     fillDisc(this.hdr, this.W, this.H, cx, cy, rad, r, g, b, a)
+    this.touch(cx - rad - 2, cy - rad - 2, cx + rad + 2, cy + rad + 2)
   }
 
   // An anti-aliased filled ellipse, mixed over the scene; handy for parts that narrow as a creature turns edge-on.
   protected ellipse(cx: number, cy: number, rx: number, ry: number, r: number, g: number, b: number, a: number) {
     fillEllipse(this.hdr, this.W, this.H, cx, cy, rx, ry, r, g, b, a)
+    this.touch(cx - rx - 2, cy - ry - 2, cx + rx + 2, cy + ry + 2)
   }
 
   // An anti-aliased filled polygon in a flat color, for straight-edged things like buildings and machines.
   protected polygon(points: readonly (readonly [number, number])[], color: RGB, alpha = 1) {
     fillPolygon(this.hdr, this.W, this.H, points, color[0], color[1], color[2], alpha)
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const [x, y] of points) {
+      x0 = Math.min(x0, x)
+      y0 = Math.min(y0, y)
+      x1 = Math.max(x1, x)
+      y1 = Math.max(y1, y)
+    }
+    if (points.length) this.touch(x0 - 2, y0 - 2, x1 + 2, y1 + 2)
   }
 
   // Draws parts as one shape: each pixel takes the nearest part's color, so joints stay seamless. With rim lighting
@@ -300,30 +344,79 @@ export abstract class Canvas {
   // light scales the effect (0 draws flat color).
   protected shape(parts: Part[], lighting: Lighting, light = 1) {
     fillShape(this.hdr, this.W, this.H, parts, lighting, light, this.px)
+    for (const p of parts) {
+      const r = (p.kind === "capsule" ? Math.max(p.r0, p.r1) : Math.max(p.rx, p.ry)) + 2
+      if (p.kind === "capsule") this.touch(Math.min(p.ax, p.bx) - r, Math.min(p.ay, p.by) - r, Math.max(p.ax, p.bx) + r, Math.max(p.ay, p.by) + r)
+      else this.touch(p.cx - r, p.cy - r, p.cx + r, p.cy + r)
+    }
   }
 
-  // Bloom, vignette and ACES tone mapping from hdr into pixels.
+  // Bloom, vignette and ACES tone mapping from hdr into pixels. Only the blocks that differ from the still frame, or
+  // whose bloom does, are worked out again; the rest keep the still frame's pixels.
   protected finish(exposure = 1.25) {
     clearShadows(this.hdr)
-    if (exposure !== this.stillExposure) {
+    const { W, H, bw, bh, retone } = this
+    const fresh = exposure !== this.stillExposure
+    if (fresh) {
       // Without a still frame to compare with, bloomSource marks every block for tone-mapping.
-      bloomSource(this.still, this.W, this.H, this.bw, this.bh, this.stillSource, undefined, this.stillSource, this.retone, this.region)
+      bloomSource(this.still, W, H, bw, bh, this.stillSource, undefined, this.stillSource, retone, this.region)
       this.bloomA.set(this.stillSource)
       this.stillBloom.fill(0)
-      bloom(this.bw, this.bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.stillBloom, this.retone, 0, 0, this.bw - 1, this.bh - 1)
-      toneMap(this.still, this.stillPixels, this.W, this.H, this.bw, this.retone, this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
+      bloom(bw, bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.stillBloom, retone, 0, 0, bw - 1, bh - 1)
+      toneMap(this.still, this.stillPixels, W, H, bw, retone, this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
       this.stillExposure = exposure
+      this.pixels.set(this.stillPixels)
+      this.toned.fill(0)
     }
-    this.pixels.set(this.stillPixels)
-    bloomSource(this.hdr, this.W, this.H, this.bw, this.bh, this.bloomA, this.still, this.stillSource, this.retone, this.region)
+    // Only blocks under what this frame drew can differ from the still frame.
+    if (this.restored) markBlocks(retone, bw, bh, this.touched)
+    else retone.fill(1)
+    this.restored = false
+    bloomSource(this.hdr, W, H, bw, bh, this.bloomA, this.still, this.stillSource, retone, this.region)
     const region = this.region
-    if (region[2] < region[0]) {
-      toneMap(this.hdr, this.pixels, this.W, this.H, this.bw, this.retone, this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
-      return
+    const spread = region[2] >= region[0]
+    if (spread) {
+      this.bloomUp.set(this.stillBloom)
+      bloom(bw, bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp, retone, region[0], region[1], region[2], region[3])
     }
-    this.bloomUp.set(this.stillBloom)
-    bloom(this.bw, this.bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp, this.retone, region[0], region[1], region[2], region[3])
-    toneMap(this.hdr, this.pixels, this.W, this.H, this.bw, this.retone, this.bloomUp, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
+    settleBlocks(this.pixels, this.stillPixels, W, H, bw, bh, this.toned, retone, this.changed, fresh)
+    toneMap(this.hdr, this.pixels, W, H, bw, retone, spread ? this.bloomUp : this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
+  }
+}
+
+// Marks the blocks (BLOOM pixels square) that any box overlaps.
+function markBlocks(blocks: Uint8Array, bw: number, bh: number, boxes: readonly number[]) {
+  blocks.fill(0)
+  for (let b = 0; b < boxes.length; b += 4) {
+    const x0 = Math.max(0, Math.floor(boxes[b] / BLOOM))
+    const y0 = Math.max(0, Math.floor(boxes[b + 1] / BLOOM))
+    const x1 = Math.min(bw - 1, Math.floor(boxes[b + 2] / BLOOM))
+    const y1 = Math.min(bh - 1, Math.floor(boxes[b + 3] / BLOOM))
+    for (let y = y0; y <= y1; y++) if (x0 <= x1) blocks.fill(1, y * bw + x0, y * bw + x1 + 1)
+  }
+}
+
+// Puts the still frame's pixels back in blocks tone-mapped last frame but not this one, and lists in changed (as runs
+// of blocks, in pixels) every block whose pixels may differ from last frame's: those tone-mapped in either frame.
+function settleBlocks(pixels: Uint8Array, stillPixels: Uint8Array, W: number, H: number, bw: number, bh: number, toned: Uint8Array, retone: Uint8Array, changed: number[], fresh: boolean) {
+  changed.length = 0
+  if (fresh) changed.push(0, 0, W - 1, H - 1)
+  for (let by = 0; by < bh; by++) {
+    let run = -1
+    for (let bx = 0; bx <= bw; bx++) {
+      const b = by * bw + bx
+      const moved = bx < bw && (toned[b] === 1 || retone[b] === 1)
+      if (bx < bw && toned[b] && !retone[b])
+        for (let y = by * BLOOM; y < Math.min(H, by * BLOOM + BLOOM); y++) {
+          const o = (y * W + bx * BLOOM) * 4
+          pixels.set(stillPixels.subarray(o, (y * W + Math.min(W, bx * BLOOM + BLOOM)) * 4), o)
+        }
+      if (bx < bw) toned[b] = retone[b]
+      if (moved && run < 0) run = bx
+      if (moved || run < 0) continue
+      if (!fresh) changed.push(run * BLOOM, by * BLOOM, Math.min(W, bx * BLOOM) - 1, Math.min(H, by * BLOOM + BLOOM) - 1)
+      run = -1
+    }
   }
 }
 
@@ -542,8 +635,9 @@ function toneMap(hdr: Float32Array, pixels: Uint8Array, W: number, H: number, bw
   }
 }
 
-// Each bloom block's average light above the threshold, into source. Given the still frame, only blocks whose pixels
-// differ from it are worked out, as the change from stillSource, and marked in retone; the rest are zero. Sets
+// Each bloom block's average light above the threshold, into source. Given the still frame, only blocks marked in
+// retone whose pixels differ from it are worked out, as the change from stillSource, and stay marked; the rest are
+// zero. Sets
 // the box of blocks whose source changed, as region [x0, y0, x1, y1], empty when x1 < x0.
 function bloomSource(hdr: Float32Array, W: number, H: number, bw: number, bh: number, source: Float32Array, still: Float32Array | undefined, stillSource: Float32Array, retone: Uint8Array, region: Int32Array) {
   region[0] = bw
@@ -553,7 +647,7 @@ function bloomSource(hdr: Float32Array, W: number, H: number, bw: number, bh: nu
   for (let by = 0; by < bh; by++)
     for (let bx = 0; bx < bw; bx++) {
       const o = (by * bw + bx) * 3
-      const same = still !== undefined && sameBlock(hdr, still, W, H, bx, by)
+      const same = still !== undefined && (!retone[by * bw + bx] || sameBlock(hdr, still, W, H, bx, by))
       retone[by * bw + bx] = same ? 0 : 1
       if (same) {
         source[o] = source[o + 1] = source[o + 2] = 0

@@ -1,5 +1,6 @@
 import { cap, type Part } from "./canvas"
 import type { RGB } from "./math"
+import { touch } from "./touched"
 
 // A pool of light from a lantern, lava, a window or glowing plankton, falling off over an ellipse (pixels) around
 // (cx, cy). lift lights what is already there in the light's own color, in proportion to its brightest channel, so lit
@@ -9,6 +10,7 @@ export function lightPool(hdr: Float32Array, W: number, H: number, cx: number, c
   const x1 = Math.min(W - 1, Math.ceil(cx + rx))
   const y0 = Math.max(0, Math.floor(cy - ry))
   const y1 = Math.min(H - 1, Math.ceil(cy + ry))
+  touch(hdr, x0, y0, x1, y1)
   const lr = color[0] * lift
   const lg = color[1] * lift
   const lb = color[2] * lift

@@ -279,7 +279,7 @@ class Beach extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore()
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     const orb = this.weather.covered ? undefined : this.look.orb
@@ -404,6 +404,7 @@ class Beach extends Canvas {
     const ox = look.orb.x * W
     const roll = (t * 0.08) % 1
     const thin = H / 180
+    let bottom = 0
     sea.gloss.fill(0)
     for (let x = 0; x < W; x++) {
       const u = x / H
@@ -412,6 +413,7 @@ class Beach extends Canvas {
       const wave = lerp(0.62, edge / H - 0.005, roll) * H
       const broken = smoothstep(0.42, 0.6, fbm1(u * 6 + t * 0.1, 4))
       const bend = 1.4 * Math.sin(u * 2.7 + t * 0.05) + 0.7 * Math.sin(u * 7.3 - t * 0.08)
+      bottom = Math.max(bottom, reach + 2, look.night ? edge + 0.05 * H : 0)
       for (let y = sea.y0; y < Math.min(H, reach + 2); y++) {
         const o = (y * W + x) * 3
         const gi = (y - sea.y0) * W + x
@@ -473,6 +475,7 @@ class Beach extends Canvas {
           hdr[o + 2] += look.foam[2] * k
         }
     }
+    this.touch(0, sea.y0, W - 1, bottom)
   }
 
   // A bonfire on the sand at night, lighting the beach, the crab and the palm beside it.

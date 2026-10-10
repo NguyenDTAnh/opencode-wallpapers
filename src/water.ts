@@ -1,4 +1,5 @@
 import type { RGB } from "./math"
+import { touch } from "./touched"
 
 let wave = new Float32Array(0)
 
@@ -8,6 +9,7 @@ let wave = new Float32Array(0)
 // since are left alone, so whatever swims or stands in front of the water stays in front of its reflection.
 export function reflect(hdr: Float32Array, W: number, H: number, y0: number, y1: number, rows: Float32Array, amp: Float32Array, weight: Float32Array, tint: RGB, time: number, still?: Float32Array) {
   if (wave.length !== W) wave = new Float32Array(W)
+  touch(hdr, 0, y0, W - 1, y1 - 1)
   for (let x = 0; x < W; x++) wave[x] = 2.4 * Math.sin((x / H) * 9 + time * 0.35) + 1.2 * Math.sin((x / H) * 23 - time * 0.6)
   for (let y = Math.max(0, y0); y < Math.min(H, y1); y++) {
     const r = y - y0

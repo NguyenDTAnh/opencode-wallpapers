@@ -191,7 +191,7 @@ class Prehistoric extends Canvas {
   private shadows = makeShadows(3, HORIZON + 0.06, 0.95)
   private smoke = Array.from({ length: SMOKE_PUFFS }, (_, i) => ({ age: (i / SMOKE_PUFFS) * SMOKE_LIFE, seed: Math.random() * 100 }))
   // Lava pixels (hdr index, strength, height down the flow) that pulse each frame.
-  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0) }
+  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0), box: [0, 0, -1, -1] }
   private trees: [number, number] = [0, 0]
   // The far ferns and cycads, painted once, bend as the gusts pass.
   private plants = new SwayLayer()
@@ -270,11 +270,12 @@ class Prehistoric extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore()
     this.plants.draw(this.hdr, this.W, this.H, this.time)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
     const orange = this.look.lava[1]
     flowLava(this.hdr, this.lava.index, this.lava.k, this.lava.along, this.time, orange[0], orange[1], orange[2])
+    this.touch(this.lava.box[0], this.lava.box[1], this.lava.box[2], this.lava.box[3])
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     const orb = this.weather.covered ? undefined : this.look.orb
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb)
@@ -513,7 +514,8 @@ class Prehistoric extends Canvas {
       this.blend(i * 3, lerp(red[0], orange[0], h), lerp(red[1], orange[1], h), lerp(red[2], orange[2], h), core[i])
       index.push(i)
     }
-    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]) }
+    const box = index.length ? [index.reduce((m, i) => Math.min(m, i % W), W), Math.floor(index[0] / W), index.reduce((m, i) => Math.max(m, i % W), 0), Math.floor(index[index.length - 1] / W)] : [0, 0, -1, -1]
+    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]), box }
   }
 
   // A lake in front of the volcano with a muddy shore. Its water mirrors the forest, the volcano and the sky above it,
