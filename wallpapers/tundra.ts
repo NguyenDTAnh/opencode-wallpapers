@@ -543,7 +543,7 @@ class Tundra extends Canvas {
         // Firelight wins around the igloo doors, so it stays warm rather than mixing toward white.
         const fire = igloos.reduce((m, [x, base, R]) => Math.max(m, smoothstep(1, 0.2, ((u - x + R * 0.35) / (R * 3)) ** 2 + ((v - base) / (R * 1.4)) ** 2)), 0)
         const k = fold * ripple * lake * (1 - 0.85 * fire) * smoothstep(HORIZON, 0.63, v) * (1 - 0.7 * smoothstep(0.66, 0.95, v)) * this.look.aurora
-        if (k > 0.01) lights.node(i, j, color, 1.2 * k, 0.012 * k)
+        if (k > 0.01) lights.node(i, j, color, 0.9 * k, 0.009 * k)
       }
     }
   }
