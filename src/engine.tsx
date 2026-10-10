@@ -42,17 +42,18 @@ const LOWER_HALF = 0x2584
 const BLOCKS_START = 0x2580
 const BLOCKS_END = 0x259f
 const SPACE = 32
-// Scrim reach in cells horizontally and half-cells vertically.
-const SCRIM_X = 4
-const SCRIM_Y = 4
 // Share of the distance to white that light-theme scrims keep, so dark text sits on a pale tint of the scene.
 const LIGHT_SCRIM = 0.15
-// A click pokes the scene only where it shows through clearly: a blank surface cell with little scrim (mask value).
-const OPEN = 0.15
+// A click pokes the scene only where it shows through clearly: a blank surface cell with little scrim (strength).
+const OPEN = 0.45
+// Share of the full scrim that panels OpenCode draws with their own surface (dialogs, the sidebar, the prompt) keep
+// everywhere, so they read as panels rather than loose text over the scene.
+const PANEL = 0.5
 
 // Each brightness compresses the scene into a range that keeps text readable on top of it, after scaling it by gain,
-// and sets how far scrims cover the scene (scrim) and how fast sparse text saturates them (reach): brighter scenes
-// need firmer scrims. In a light theme the scene is instead lifted toward white, with black at wash.
+// and sets how far scrims cover the scene under text (scrim) and how far their halo reaches past it (reach, in
+// sub-pixels, which are square: half a cell wide, a quarter cell tall): brighter scenes need firmer, wider scrims. In
+// a light theme the scene is instead lifted toward white, with black at wash.
 function level(gain: number, wash: number, scrim: number, reach: number) {
   const dark = new Uint8Array(256)
   const light = new Uint8Array(256)
@@ -65,8 +66,8 @@ function level(gain: number, wash: number, scrim: number, reach: number) {
   return { dark, light, scrim, reach }
 }
 const LEVELS: Record<Brightness, ReturnType<typeof level>> = {
-  subtle: level(0.6, 0.65, 0.9, 3),
-  normal: level(1, 0.5, 0.93, 3.5),
+  subtle: level(0.6, 0.65, 0.9, 3.25),
+  normal: level(1, 0.5, 0.93, 3.75),
   vivid: level(1.6, 0.35, 0.96, 4.5),
 }
 // Night scenes keep their color: it is what separates them from light text.
@@ -79,29 +80,56 @@ function mix(a: Uint8Array, b: Uint8Array, out: Uint8Array, t: number) {
   for (let p = 0; p < out.length; p++) out[p] = a[p] + (b[p] - a[p]) * t
 }
 
-function blurRows(src: Float32Array, dst: Float32Array, w: number, h: number, r: number) {
-  const inv = 1 / (r * 2 + 1)
-  for (let y = 0; y < h; y++) {
-    const row = y * w
-    let sum = 0
-    for (let x = -r; x <= r; x++) sum += src[row + Math.min(w - 1, Math.max(0, x))]
-    for (let x = 0; x < w; x++) {
-      dst[row + x] = sum * inv
-      sum += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]
+// Writes the scrim strength for each octant sub-pixel from the cells' shapes (1 text, 2 panel): full cover under text,
+// falling off smoothly to nothing `reach` sub-pixels away, and at least PANEL of it across panels.
+function buildScrim(shapes: Uint8Array, out: Float32Array, W: number, H: number, cover: number, reach: number) {
+  const GW = W * 2
+  const GH = H * 4
+  for (let gy = 0; gy < GH; gy++) {
+    const row = (gy >> 2) * W
+    for (let gx = 0; gx < GW; gx++) out[gy * GW + gx] = shapes[row + (gx >> 1)] === 1 ? 0 : 1e9
+  }
+  distanceField(out, GW, GH)
+  const span = reach - 0.5
+  for (let gy = 0; gy < GH; gy++) {
+    const row = (gy >> 2) * W
+    for (let gx = 0; gx < GW; gx++) {
+      const g = gy * GW + gx
+      const t = Math.min(1, Math.max(0, (out[g] - 0.5) / span))
+      const halo = 1 - t * t * (3 - 2 * t)
+      out[g] = cover * (shapes[row + (gx >> 1)] === 2 && halo < PANEL ? PANEL : halo)
     }
   }
 }
 
-function blurColumns(src: Float32Array, dst: Float32Array, w: number, h: number, r: number) {
-  const inv = 1 / (r * 2 + 1)
-  for (let x = 0; x < w; x++) {
-    let sum = 0
-    for (let y = -r; y <= r; y++) sum += src[Math.min(h - 1, Math.max(0, y)) * w + x]
-    for (let y = 0; y < h; y++) {
-      dst[y * w + x] = sum * inv
-      sum += src[Math.min(h - 1, y + r + 1) * w + x] - src[Math.max(0, y - r) * w + x]
+// Turns a field of 0 (text) and large values into each sample's approximate distance to the nearest 0, in two
+// chamfer passes (steps of 1 straight and √2 diagonally).
+function distanceField(d: Float32Array, w: number, h: number) {
+  const D = Math.SQRT2
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      let v = d[i]
+      if (x > 0 && d[i - 1] + 1 < v) v = d[i - 1] + 1
+      if (y > 0) {
+        if (d[i - w] + 1 < v) v = d[i - w] + 1
+        if (x > 0 && d[i - w - 1] + D < v) v = d[i - w - 1] + D
+        if (x < w - 1 && d[i - w + 1] + D < v) v = d[i - w + 1] + D
+      }
+      d[i] = v
     }
-  }
+  for (let y = h - 1; y >= 0; y--)
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x
+      let v = d[i]
+      if (x < w - 1 && d[i + 1] + 1 < v) v = d[i + 1] + 1
+      if (y < h - 1) {
+        if (d[i + w] + 1 < v) v = d[i + w] + 1
+        if (x < w - 1 && d[i + w + 1] + D < v) v = d[i + w + 1] + D
+        if (x > 0 && d[i + w - 1] + D < v) v = d[i + w - 1] + D
+      }
+      d[i] = v
+    }
 }
 
 // Terminals that draw octant glyphs themselves; elsewhere fall back to quadrants, which every font has.
@@ -460,7 +488,8 @@ export function createEngine(
   const quad = new Float32Array(24)
   const order = new Uint8Array(8)
   const octants = process.env.WALLPAPER_OCTANTS !== "0" && (process.env.WALLPAPER_OCTANTS === "1" || OCTANT_TERMINALS.test(`${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`))
-  let scratch = new Float32Array(0)
+  let glyphs = new Uint8Array(0)
+  let scrimLook: (typeof LEVELS)[Brightness] | undefined
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
   let previousMask = new Int16Array(0)
@@ -571,30 +600,31 @@ export function createEngine(
   }
 
   // Builds the scene image with the text scrim and tints baked in, for the cells marked in imageCell.
-  const publishImage = (px: Uint8Array, PW: number, PH: number, W: number, H: number, MH: number, scrim: Scrim, look: (typeof LEVELS)[Brightness], curve: Uint8Array) => {
+  const publishImage = (px: Uint8Array, PW: number, PH: number, W: number, H: number, scrim: Scrim, curve: Uint8Array) => {
     if (imagePixels.length !== PW * PH * 4) imagePixels = new Uint8Array(PW * PH * 4)
     const img = imagePixels
+    const GW = W * 2
+    const GH = H * 4
     const cw = PW / W
     const chh = PH / H
     for (let iy = 0; iy < PH; iy++) {
       const row = Math.min(H - 1, Math.floor(iy / chh))
       const depth = row / Math.max(1, H - 1)
       const [deepR, deepG, deepB] = scrimAt(scrim, depth, light)
-      const my = clamp01((iy + 0.5) / (chh / 2) - 0.5, MH - 1)
+      const my = clamp01((iy + 0.5) / (chh / 4) - 0.5, GH - 1)
       const my0 = Math.floor(my)
-      const my1 = Math.min(MH - 1, my0 + 1)
+      const my1 = Math.min(GH - 1, my0 + 1)
       const fy = my - my0
       for (let ix = 0; ix < PW; ix++) {
         const col = Math.min(W - 1, Math.floor(ix / cw))
         const ci = row * W + col
-        const mx = clamp01((ix + 0.5) / cw - 0.5, W - 1)
+        const mx = clamp01((ix + 0.5) / (cw / 2) - 0.5, GW - 1)
         const mx0 = Math.floor(mx)
-        const mx1 = Math.min(W - 1, mx0 + 1)
+        const mx1 = Math.min(GW - 1, mx0 + 1)
         const fx = mx - mx0
-        const m =
-          (mask[my0 * W + mx0] * (1 - fx) + mask[my0 * W + mx1] * fx) * (1 - fy) +
-          (mask[my1 * W + mx0] * (1 - fx) + mask[my1 * W + mx1] * fx) * fy
-        const k = look.scrim * Math.min(1, m * look.reach)
+        const k =
+          (mask[my0 * GW + mx0] * (1 - fx) + mask[my0 * GW + mx1] * fx) * (1 - fy) +
+          (mask[my1 * GW + mx0] * (1 - fx) + mask[my1 * GW + mx1] * fx) * fy
         const p = (iy * PW + ix) * 4
         img[p] = curve[px[p]] * (1 - k) + deepR * k
         img[p + 1] = curve[px[p + 1]] * (1 - k) + deepG * k
@@ -795,35 +825,35 @@ export function createEngine(
     const look = LEVELS[settings!.brightness ?? "normal"]
     const curve = light ? look.light : look.dark
 
-    // Soft scrim: a blurred mask of where text is, at half-cell vertical resolution. The scene fades to
-    // near-black under and around text with no hard edge, so letters and the spaces between them match.
-    const MH = H * 2
-    if (mask.length < W * MH) {
-      mask = new Float32Array(W * MH)
-      scratch = new Float32Array(W * MH)
-      surface = new Uint8Array(W * H)
-      cellTint = new Int32Array(W * H)
+    // Scrim that hugs the text: full strength under each text cell and a halo that falls off within a cell or two of
+    // it, per octant sub-pixel, so the scene still shows between lines, after short lines and around words. It is
+    // only rebuilt when the set of text cells changes.
+    if (surface.length !== cells) {
+      surface = new Uint8Array(cells)
+      cellTint = new Int32Array(cells)
+      glyphs = new Uint8Array(cells)
+      mask = new Float32Array(GW * GH)
+      scrimLook = undefined
     }
     if (previousMask.length !== cells) previousMask = new Int16Array(cells).fill(-1)
-    mask.fill(0, 0, W * MH)
+    let reshaped = scrimLook !== look
     for (let i = 0; i < cells; i++) {
-      const tint = tintOf(key(bg, i * 4))
+      const k = key(bg, i * 4)
+      const tint = tintOf(k)
       const on = tint !== NO_TINT
       surface[i] = on ? 1 : 0
       cellTint[i] = tint
-      if (!on || char[i] === SPACE || (isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT)) continue
-      const x = i % W
-      const y = (i / W) | 0
-      mask[y * 2 * W + x] = 1
-      mask[(y * 2 + 1) * W + x] = 1
+      // 1 for text, 2 for a blank cell of a panel (a surface other than the base, such as a dialog), else 0.
+      const shape = !on ? 0 : char[i] !== SPACE && !(isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT) ? 1 : k !== base && tint === TINT_ZERO ? 2 : 0
+      if (glyphs[i] !== shape) ((glyphs[i] = shape), (reshaped = true))
     }
-    for (let pass = 0; pass < 2; pass++) {
-      blurRows(mask, scratch, W, MH, SCRIM_X)
-      blurColumns(scratch, mask, W, MH, SCRIM_Y)
+    if (reshaped) {
+      scrimLook = look
+      buildScrim(glyphs, mask, W, H, look.scrim, look.reach)
     }
     if (open.length !== cells) open = new Uint8Array(cells)
     openW = W
-    for (let i = 0; i < cells; i++) open[i] = surface[i] && char[i] === SPACE && mask[((i / W) | 0) * 2 * W + (i % W)] < OPEN ? 1 : 0
+    for (let i = 0; i < cells; i++) open[i] = surface[i] && char[i] === SPACE && mask[((i / W) | 0) * 4 * GW + (i % W) * 2] < OPEN ? 1 : 0
 
     const cursor = renderer.getCursorState()
     const cursorX = cursor.visible ? cursor.x - 1 : -1
@@ -844,11 +874,7 @@ export function createEngine(
     layerPlaced = false
 
     const q = quad
-    const cover = look.scrim
-    const reach = look.reach
     for (let y = 0; y < H; y++) {
-      const mTop = y * 2 * W
-      const mBottom = (y * 2 + 1) * W
       const [deepR, deepG, deepB] = scrimAt(scrim, y / Math.max(1, H - 1), light)
       for (let x = 0; x < W; x++) {
         const i = y * W + x
@@ -858,12 +884,11 @@ export function createEngine(
         const edgeTint = isBlock(ch) ? tintOf(fgKey(fg, o)) : NO_TINT
         const edge = edgeTint !== NO_TINT
         if (!surface[i] && !edge) continue
-        const st = cover * Math.min(1, mask[mTop + x] * reach)
-        const sb = cover * Math.min(1, mask[mBottom + x] * reach)
         // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order.
         for (let s = 0; s < 8; s++) {
-          const a = ((y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)) * 3
-          const k = s < 4 ? st : sb
+          const g = (y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)
+          const a = g * 3
+          const k = mask[g]
           q[s * 3] = curve[grid[a] | 0] * (1 - k) + deepR * k
           q[s * 3 + 1] = curve[grid[a + 1] | 0] * (1 - k) + deepG * k
           q[s * 3 + 2] = curve[grid[a + 2] | 0] * (1 - k) + deepB * k
@@ -902,7 +927,7 @@ export function createEngine(
 
     // Build next frame's image now; the back layer places it before OpenCode draws, so text lands on top.
     if (pixels && (advanced || !nextImage)) {
-      const image = publishImage(px, PW, PH, W, H, MH, scrim, look, curve)
+      const image = publishImage(px, PW, PH, W, H, scrim, curve)
       if (image) {
         nextImage?.dispose()
         nextImage = image
