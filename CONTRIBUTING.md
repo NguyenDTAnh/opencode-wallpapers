@@ -71,7 +71,7 @@ exposure, 1.25 by default.
 ### layout() for static backgrounds
 
 `layout()` runs after every resize, once the buffers match the new size. Paint whatever never moves there (sky,
-mountains, buildings, a tree), copy `hdr` into a field, and start each frame from that copy:
+mountains, buildings, a tree), copy `hdr` into a field, and start each frame from that copy with `restore()`:
 
 ```ts
 protected override layout() {
@@ -81,13 +81,17 @@ protected override layout() {
 }
 
 render() {
-  this.hdr.set(this.background)
+  this.restore(this.background)
   // …moving things…
   this.finish()
 }
 ```
 
 This is the biggest single saving: a full-screen gradient with noise costs more than every creature together.
+
+`restore()` also clears `touched`, the boxes around what this frame drew over the background, which the engine uses
+to let moving things glide across terminal cells while still scenery stays steady. The drawing methods below, the sky's
+stars and clouds and the weather record their boxes themselves.
 
 ### Drawing
 
@@ -102,7 +106,8 @@ This is the biggest single saving: a full-screen gradient with noise costs more 
 | `polygon(points, color, alpha?)` | An anti-aliased polygon in a flat color, for straight-edged things like buildings and boats |
 | `shape(parts, lighting, light?)` | Rounded parts joined into one lit form, for creatures, people and plants |
 
-For per-pixel effects such as water, sand or fog, loop over `hdr` directly.
+For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and call `touch(x0, y0, x1, y1)` with the
+loop's bounds in render.
 
 ### Shapes
 
