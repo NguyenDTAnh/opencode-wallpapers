@@ -1,10 +1,15 @@
 import { Canvas, cap, ell, type Lighting, type Part } from "../src/canvas"
+import { limb } from "../src/creature"
 import { eggWait } from "../src/egg"
+import { haze, mottle } from "../src/grade"
 import { bird, flyAway, startle, type Flier } from "../src/flock"
+import { fireflyLight, lightPool } from "../src/light"
 import { TAU, clamp, fbm1, hash, hash2, lerp, rand, smoothstep, type RGB } from "../src/math"
+import { groundShadow, sunShade, type Shade } from "../src/shadow"
 import { driftClouds, makeClouds, makeStars, makeStorm, paintClouds, paintSky, paintStars, paintStorm, type Cloud, type Orb, type Star } from "../src/sky"
 import type { Activity, Season, Settings, Time, Wallpaper } from "../src/wallpaper"
 import { WeatherLayer } from "../src/weather"
+import { SwayLayer, gust } from "../src/wind"
 
 // The scene runs slower than real time, which keeps it calm behind text.
 const TIME_SCALE = 0.35
@@ -24,7 +29,7 @@ interface Look {
   sky: [number, RGB][]
   orb: Orb
   stars: number
-  clouds: { puffy: boolean; top: RGB; bottom: RGB; alpha: number }
+  clouds: { top: RGB; bottom: RGB; alpha: number }
   hills: [far: RGB, near: RGB]
   snow: RGB
   mist: RGB
@@ -51,7 +56,7 @@ const LOOKS: Record<Time, Look> = {
     ],
     orb: { x: 0.4, y: 0.12, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
     stars: 0,
-    clouds: { puffy: true, top: [1.1, 1.1, 1.1], bottom: [0.6, 0.66, 0.78], alpha: 0.85 },
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.6, 0.66, 0.78], alpha: 0.85 },
     hills: [
       [0.42, 0.55, 0.72],
       [0.18, 0.36, 0.22],
@@ -59,7 +64,7 @@ const LOOKS: Record<Time, Look> = {
     snow: [1, 1.02, 1.08],
     mist: [0.72, 0.82, 0.9],
     moss: [0.2, 0.4, 0.12],
-    gravel: [0.8, 0.76, 0.66],
+    gravel: [0.72, 0.66, 0.55],
     water: [0.03, 0.14, 0.13],
     mirror: 0.55,
     glitter: 0.15,
@@ -71,50 +76,52 @@ const LOOKS: Record<Time, Look> = {
   },
   sunset: {
     style: "rim",
-    light: [1, 0.5, 0.2],
+    // Soft peach low down fading into lavender, with a mild sun and little contrast.
+    light: [1, 0.68, 0.5],
     sky: [
-      [0, [0.03, 0.02, 0.08]],
-      [0.25, [0.12, 0.04, 0.12]],
-      [0.4, [0.45, 0.14, 0.14]],
-      [HORIZON, [1, 0.5, 0.18]],
+      [0, [0.05, 0.055, 0.15]],
+      [0.16, [0.2, 0.18, 0.36]],
+      [0.3, [0.85, 0.48, 0.36]],
+      [HORIZON, [1, 0.62, 0.36]],
     ],
-    orb: { x: 0.52, y: 0.375, r: 0.05, core: [3.2, 1.7, 0.6], glow: [1, 0.42, 0.14], near: 0.5, wide: 0.25 },
-    stars: 25,
-    clouds: { puffy: false, top: [0.1, 0.035, 0.09], bottom: [0.8, 0.3, 0.2], alpha: 0.55 },
+    orb: { x: 0.52, y: 0.39, r: 0.045, core: [2.2, 1.35, 0.75], glow: [1, 0.58, 0.36], near: 0.38, wide: 0.22 },
+    stars: 10,
+    clouds: { top: [0.26, 0.18, 0.32], bottom: [1, 0.6, 0.45], alpha: 0.5 },
     hills: [
-      [0.38, 0.13, 0.16],
-      [0.1, 0.04, 0.05],
+      [0.56, 0.33, 0.36],
+      [0.17, 0.11, 0.16],
     ],
-    snow: [1, 0.48, 0.38],
-    mist: [0.85, 0.36, 0.22],
-    moss: [0.09, 0.05, 0.04],
-    gravel: [0.34, 0.19, 0.16],
-    water: [0.05, 0.025, 0.04],
+    snow: [1, 0.7, 0.55],
+    mist: [1, 0.58, 0.4],
+    moss: [0.1, 0.08, 0.1],
+    gravel: [0.32, 0.22, 0.22],
+    water: [0.06, 0.045, 0.08],
     mirror: 0.7,
-    glitter: 0.8,
-    ripple: [0.9, 0.42, 0.18],
-    petal: [0.95, 0.42, 0.48],
-    lamps: 0.5,
-    tint: [0.22, 0.13, 0.1],
+    glitter: 0.6,
+    ripple: [1, 0.66, 0.5],
+    petal: [0.95, 0.52, 0.6],
+    lamps: 0.45,
+    tint: [0.26, 0.17, 0.2],
     night: false,
   },
   night: {
     style: "rim",
-    light: [0.2, 0.45, 1],
+    light: [0.3, 0.62, 1.5],
     sky: [
       [0, [0.004, 0.008, 0.03]],
-      [0.3, [0.012, 0.02, 0.06]],
-      [HORIZON, [0.04, 0.06, 0.15]],
+      [0.3, [0.014, 0.024, 0.07]],
+      [0.42, [0.035, 0.055, 0.14]],
+      [HORIZON, [0.07, 0.1, 0.24]],
     ],
     orb: { x: 0.6, y: 0.16, r: 0.032, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
     stars: 130,
-    clouds: { puffy: false, top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.4 },
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.4 },
     hills: [
       [0.025, 0.04, 0.1],
       [0.008, 0.016, 0.035],
     ],
     snow: [0.07, 0.12, 0.3],
-    mist: [0.04, 0.07, 0.18],
+    mist: [0.05, 0.09, 0.22],
     moss: [0.01, 0.024, 0.035],
     gravel: [0.045, 0.07, 0.15],
     water: [0.014, 0.045, 0.12],
@@ -123,7 +130,7 @@ const LOOKS: Record<Time, Look> = {
     ripple: [0.06, 0.25, 0.55],
     petal: [0.45, 0.12, 0.35],
     lamps: 1,
-    tint: [0.025, 0.04, 0.09],
+    tint: [0.02, 0.032, 0.075],
     night: true,
   },
 }
@@ -196,7 +203,7 @@ class Zen extends Canvas {
   private readonly activity: Activity
   private readonly look: Look
   private lighting: Lighting = { style: "front", dir: DAYLIGHT }
-  private background = new Float32Array(0)
+  private readonly shade: Shade
   private stars: Star[]
   private clouds: Cloud[]
   private pond = { x: 1, y: 0.8, rx: 0.45, ry: 0.14 }
@@ -212,6 +219,8 @@ class Zen extends Canvas {
   // The still water's color, reflections included, which the ripples shift sideways.
   private mirror = new Float32Array(0)
   private wave = new Float32Array(0)
+  // The supersampled layout pass's sky, bank and front garden on black and on white, for the real-size pass.
+  private layers: Float32Array[] | undefined
   private pads: { x: number; y: number; r: number }[] = []
   private koi: Koi[] = []
   private rings: Ring[] = []
@@ -230,15 +239,20 @@ class Zen extends Canvas {
   private sparrows: Flier[] = []
   // The easter egg: a tanuki with a leaf on its head. t counts scene seconds since it appeared.
   private tanuki = { wait: eggWait() * TIME_SCALE, t: -1 }
+  // The maple and cherry crowns, painted once, bend in the gusts, which here blow from the right like the breeze that
+  // carries the petals.
+  private trees = new SwayLayer(-1)
 
   constructor(settings: Settings) {
     super()
     this.activity = settings.activity
     this.look = LOOKS[settings.time]
+    if (settings.time === "day") this.frame = 0.4
     this.season = settings.season ?? "spring"
     this.weather = new WeatherLayer(settings.weather ?? (this.season === "winter" ? "snow" : "clear"), settings.time, HORIZON, !settings.weather)
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered)
     this.stars = makeStars(this.look.stars, 0.45)
-    this.clouds = makeClouds(this.look.clouds.puffy ? 3 : 5, this.look.clouds.puffy, 0.06, 0.26)
+    this.clouds = makeClouds(4, "wisp", 0.06, 0.24)
     const count = { calm: 0, lively: 3, teeming: 6 }[settings.activity]
     this.koi = Array.from({ length: count }, (_, i) => ({ a: rand(0, TAU), r: 0.32 + (i % 3) * 0.16, dir: i === 4 ? -1 : 1, phase: rand(0, TAU), size: rand(0.85, 1.1), colors: KOI[i] }))
     const falling = this.season === "spring" || this.season === "autumn"
@@ -295,11 +309,12 @@ class Zen extends Canvas {
   }
 
   render() {
-    this.restore(this.background)
-    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3, this.touched)
+    this.restore()
+    this.trees.draw(this.hdr, this.W, this.H, this.time)
+    if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
-    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy, this.touched)
-    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom, this.touched)
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.weather.covered ? undefined : this.look.orb)
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
     this.drawWater()
     for (const r of this.rings) this.drawRing(r)
     for (const p of this.petals) if (p.state === 1) this.drawPetal(p)
@@ -319,8 +334,10 @@ class Zen extends Canvas {
     if (this.tanuki.t >= 0) this.drawTanuki()
     for (const p of this.petals) if (p.state !== 1) this.drawPetal(p)
     for (const b of this.sparrows) this.shape(bird(b, this.H, 0.02 * this.H, this.paint([0.45, 0.33, 0.22])), this.lighting, 0.4)
+    // At night the lanterns light the gravel, the bank and whatever stands near them.
+    if (this.look.night) for (const l of this.lanterns()) lightPool(this.hdr, this.W, this.H, l.x * this.H, l.base * this.H, l.scale * 1.6 * this.H, l.scale * 0.6 * this.H, [1, 0.5, 0.15], 2, 0.01)
     this.drawFireflies()
-    this.weather.draw(this.hdr, this.W, this.H, this.touched)
+    this.weather.draw(this.hdr, this.W, this.H)
     this.finish()
   }
 
@@ -342,14 +359,50 @@ class Zen extends Canvas {
     const rx = Math.min(0.25 * A, 0.56)
     this.pond = { x: Math.max(0.64 * A, 0.36 * A + rx + 0.06), y: 0.8, rx, ry: 0.14 }
     this.cherry = { x: A - 0.2, y: 0.27 }
-    paintSky(this.hdr, W, H, look.sky, look.orb)
+    // Lily pads, placed in pond coordinates (-1..1 across and down).
+    const p = this.pond
+    this.pads = [
+      [-0.15, -0.5, 0.045],
+      [0.3, -0.6, 0.035],
+      [0.55, 0.35, 0.05],
+      [0.08, 0.5, 0.05],
+      [-0.62, -0.15, 0.04],
+      [0.35, 0.02, 0.03],
+      [-0.3, 0.2, 0.028],
+    ].map(([u, v, r]) => ({ x: p.x + u * p.rx, y: p.y + v * p.ry, r }))
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px)
     this.weather.cover(this.hdr, W, H)
+    const clear = this.hdr.slice()
     this.drawHills()
+    if (look === LOOKS.day) haze(this.hdr, clear, W, H, HORIZON, GROUND, 0.15)
     const sky = this.hdr.slice()
     this.drawGround()
+    // By day, broad warm and cool patches of sun and shade lie over the raked gravel.
+    if (look === LOOKS.day) mottle(this.hdr, W, H, GROUND, 1, 0.5, [1.08, 1, 0.84], [0.76, 0.84, 0.96])
+    // Shadows of the trees, rocks and lanterns on the gravel; the pond's water is redrawn over any that reach it.
+    const ground = (x: number, y: number, w: number, h: number, tip?: number) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip)
+    ground(0.07 * A, 0.66, 0.1, 0.4, 1.6)
+    ground(this.cherry.x + 0.08, 0.66, 0.12, 0.38, 2)
+    for (const r of this.rocks()) ground(r.x + r.r * 0.2, r.y + r.r * 0.15, r.r * 2.2, r.r * 1.4, 0.8)
+    for (const [i, l] of this.lanterns().entries()) ground(l.x, l.base, l.scale * (i === 0 ? 0.45 : 1), l.scale * (i === 0 ? 1 : 0.8), i === 0 ? 0.9 : 0.8)
     this.drawBackGarden()
+    const bank = this.hdr.slice()
+    // The garden in front of the water, painted on black and on white, gives its color and coverage there. Every
+    // primitive mixes linearly over what's under it, so the garden over the bank is the black layer plus the white
+    // one's coverage of the bank.
+    const black = this.frontGardenOn(0)
+    const white = this.frontGardenOn(1)
+    const hdr = this.hdr
+    for (let i = 0; i < hdr.length; i++) hdr[i] = black[i] + (white[i] - black[i]) * hdr[i]
+    this.trees.seal(this.hdr, W)
+    // The supersampled pass hands these layers, box-filtered, to the real-size pass, which builds the water from them.
+    if (this.px > 1) {
+      this.layers = [sky, bank, black, white].map((layer) => this.shrink(layer))
+      return
+    }
+    const [skyLayer, bankLayer, onBlack, onWhite] = this.layers ?? [sky, bank, black, white]
+    this.layers = undefined
     // Find the water, note what lies under its edges, and work out its still color with the sky mirrored in it.
-    const p = this.pond
     const pool: number[] = []
     this.wet = new Float32Array(W * H)
     for (let y = Math.floor(0.56 * H); y < H; y++)
@@ -362,7 +415,7 @@ class Zen extends Canvas {
     this.pool = Int32Array.from(pool)
     this.poolBox = pool.length ? [pool.reduce((m, i) => Math.min(m, i % W), W), Math.floor(pool[0] / W), pool.reduce((m, i) => Math.max(m, i % W), 0), Math.floor(pool[pool.length - 1] / W)] : [0, 0, -1, -1]
     this.under = new Float32Array(pool.length * 3)
-    for (let k = 0; k < pool.length; k++) for (let c = 0; c < 3; c++) this.under[k * 3 + c] = this.hdr[pool[k] * 3 + c]
+    for (let k = 0; k < pool.length; k++) for (let c = 0; c < 3; c++) this.under[k * 3 + c] = bankLayer[pool[k] * 3 + c]
     this.mirror = new Float32Array(W * H * 3)
     this.wave = new Float32Array(W)
     const lamps = this.lanterns()
@@ -373,9 +426,9 @@ class Zen extends Canvas {
       for (let x = 0; x < W; x++) {
         const o = (y * W + x) * 3
         const s = (sy * W + x) * 3
-        let r = look.water[0] * (1 - m) + sky[s] * m
-        let g = look.water[1] * (1 - m) + sky[s + 1] * m
-        let b = look.water[2] * (1 - m) + sky[s + 2] * m
+        let r = look.water[0] * (1 - m) + skyLayer[s] * m
+        let g = look.water[1] * (1 - m) + skyLayer[s + 1] * m
+        let b = look.water[2] * (1 - m) + skyLayer[s + 2] * m
         // Lantern light streaks down the water below each lantern.
         for (const l of lamps) {
           const k = Math.exp(-(((x - l.x * H) / (0.012 * H)) ** 2) - ((y - (2 * l.base - l.light) * H) / (0.035 * H)) ** 2) * look.lamps * 0.7
@@ -388,34 +441,23 @@ class Zen extends Canvas {
         this.mirror[o + 2] = b
       }
     }
-    // Lily pads, placed in pond coordinates (-1..1 across and down).
-    this.pads = [
-      [-0.15, -0.5, 0.045],
-      [0.3, -0.6, 0.035],
-      [0.55, 0.35, 0.05],
-      [0.08, 0.5, 0.05],
-      [-0.62, -0.15, 0.04],
-      [0.35, 0.02, 0.03],
-      [-0.3, 0.2, 0.028],
-    ].map(([u, v, r]) => ({ x: p.x + u * p.rx, y: p.y + v * p.ry, r }))
-    // Paint the garden in front of the water on black and on white to find its color and coverage, then for real.
-    const real = this.hdr
-    this.hdr = new Float32Array(real.length)
-    this.drawFrontGarden()
-    const black = this.hdr
-    this.hdr = new Float32Array(real.length).fill(1)
-    this.drawFrontGarden()
-    const white = this.hdr
-    this.hdr = real
-    this.drawFrontGarden()
     this.front = new Float32Array(pool.length * 3)
     this.keep = new Float32Array(pool.length)
     for (let k = 0; k < pool.length; k++) {
       const i = pool[k] * 3
-      this.front.set([black[i], black[i + 1], black[i + 2]], k * 3)
-      this.keep[k] = white[i] - black[i]
+      this.front.set([onBlack[i], onBlack[i + 1], onBlack[i + 2]], k * 3)
+      this.keep[k] = onWhite[i] - onBlack[i]
     }
-    this.background = this.hdr.slice()
+  }
+
+  // The garden in front of the water, painted alone over a plain `fill`.
+  private frontGardenOn(fill: number) {
+    const real = this.hdr
+    this.hdr = new Float32Array(real.length).fill(fill)
+    this.drawFrontGarden()
+    const out = this.hdr
+    this.hdr = real
+    return out
   }
 
   private paint(c: RGB): RGB {
@@ -461,29 +503,31 @@ class Zen extends Canvas {
     const [far, near] = look.hills
     const peak = 0.42 * A
     const fuji = (u: number) => 0.255 + 0.24 * (1 - Math.exp(-Math.max(0, Math.abs(u - peak) - 0.012) / 0.17))
+    // The hills stop where the garden's ground covers them.
+    const bottom = Math.min(H, Math.ceil((GROUND + 0.004) * H))
     for (let x = 0; x < W; x++) {
       const u = x / H
       const range = 0.41 - 0.035 * fbm1(u * 1.3, 3) - 0.015 * Math.sin(u * 2.5 + 1)
       const top = Math.min(range, fuji(u)) * H
       const snowline = (0.3 + 0.012 * Math.sin(u * 140) * Math.sin(u * 37) - 0.01 * Math.abs(Math.sin(u * 61))) * H
-      for (let y = Math.max(0, Math.floor(top)); y < H; y++) {
+      for (let y = Math.max(0, Math.floor(top)); y < bottom; y++) {
         const c = this.rim(fuji(u) <= range && y < snowline ? look.snow : far, x, y + 0.5 - top, 1.5)
         this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top, 0, 1))
       }
     }
     for (let y = Math.floor(0.36 * H); y < Math.min(H, GROUND * H); y++) {
       const k = smoothstep(0.36, HORIZON, y / H) * 0.55
-      for (let x = 0; x < W; x++) this.blend((y * W + x) * 3, look.mist[0], look.mist[1], look.mist[2], k * (0.8 + 0.2 * Math.sin((x / H) * 6 + y * 0.1)))
+      for (let x = 0; x < W; x++) this.blend((y * W + x) * 3, look.mist[0], look.mist[1], look.mist[2], k * (0.8 + 0.2 * Math.sin((x / H) * 6 + (y / this.px) * 0.1)))
     }
     for (let x = 0; x < W; x++) {
       const u = x / H
       const top = (0.485 - 0.012 * fbm1(u * 7, 5) - 0.01 * Math.sin(u * 2 + 2)) * H
-      for (let y = Math.max(0, Math.floor(top)); y < H; y++) {
+      for (let y = Math.max(0, Math.floor(top)); y < bottom; y++) {
         const c = this.rim(near, x, y + 0.5 - top, 2)
         this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top, 0, 1))
       }
     }
-    this.drawPagoda(0.71 * A, 0.482)
+    this.drawPagoda(A - 0.4, 0.482)
   }
 
   // A three-tiered pagoda on the far ridge, hazed by distance.
@@ -503,11 +547,11 @@ class Zen extends Canvas {
     this.polygon([P(-0.001, -0.09), P(0.001, -0.09), P(0.001, -0.115), P(-0.001, -0.115)], roof)
   }
 
-  // At sunset and night, the top edge of a hill catches the light.
+  // At sunset and night, the top edge of a hill catches the light, over about width real pixels.
   private rim(base: RGB, x: number, depth: number, width: number): RGB {
     if (this.look.style === "front") return base
     const glow = 0.35 + 0.65 * Math.exp(-Math.abs(x - this.look.orb.x * this.W) / (0.45 * this.H))
-    const k = Math.exp(-depth / width) * glow * 0.35
+    const k = Math.exp(-depth / (width * this.px)) * glow * 0.35
     return [base[0] + this.look.light[0] * k, base[1] + this.look.light[1] * k, base[2] + this.look.light[2] * k]
   }
 
@@ -520,14 +564,15 @@ class Zen extends Canvas {
     const k = (0.03 - s0) / (1 - GROUND)
     // Lines stay at least 8 pixels apart (two terminal cells), so they read as lines rather than moiré. Nearer than
     // where the perspective spacing passes that, they widen as before.
-    const least = this.cells ? Math.max(s0, 8 / H) : s0
+    const px = this.px
+    const least = this.cells ? Math.max(s0, (8 * px) / H) : s0
     const near = GROUND + (least - s0) / k
     for (let y = Math.floor(GROUND * H); y < H; y++) {
       const v = (y + 0.5) / H
       const perspective = s0 + k * (v - GROUND)
       const spacing = Math.max(least, perspective)
       // Rings are squashed to 0.42 of their width, so they sit farther apart to stay clear of each other down the screen.
-      const ring = this.cells ? Math.max(perspective, 6 / (0.42 * H)) : perspective
+      const ring = this.cells ? Math.max(perspective, (6 * px) / (0.42 * H)) : perspective
       const lines = v < near ? (v - GROUND) / least : (near - GROUND) / least + Math.log(spacing / least) / k
       for (let x = 0; x < W; x++) {
         const u = (x + 0.5) / H
@@ -543,10 +588,10 @@ class Zen extends Canvas {
           if (d < r.r + 4.4 * perspective + ring) groove = Math.sin(((d - r.r) / ring) * TAU)
           moss += smoothstep(r.r * 1.12, r.r * 0.95, d)
         }
-        const grain = (hash2(x, y) - 0.5) * 0.08
+        const grain = (hash2(Math.floor(x / px), Math.floor(y / px)) - 0.5) * 0.08
         const g = 0.93 + 0.1 * groove + grain
         const m = clamp(moss, 0, 1)
-        const mt = 0.85 + 0.25 * hash2(x >> 1, y >> 1) + 0.1 * Math.sin(u * 40 + v * 30)
+        const mt = 0.85 + 0.25 * hash2(Math.floor(x / px) >> 1, Math.floor(y / px) >> 1) + 0.1 * Math.sin(u * 40 + v * 30)
         const o = (y * W + x) * 3
         const cov = clamp((v - top) * H + 0.5, 0, 1)
         this.blend(o, lerp(look.gravel[0] * g, look.moss[0] * mt, m), lerp(look.gravel[1] * g, look.moss[1] * mt, m), lerp(look.gravel[2] * g, look.moss[2] * mt, m), cov)
@@ -583,8 +628,10 @@ class Zen extends Canvas {
       const c = this.paint(ROCK)
       this.shape([ell(r.x * H, (r.y - r.r * 0.55) * H, r.r * H, r.r * 0.75 * H, -0.15, c), ell((r.x + r.r * 0.75) * H, (r.y - r.r * 0.25) * H, r.r * 0.55 * H, r.r * 0.45 * H, 0.2, this.paint([0.4, 0.38, 0.35]))], this.lighting, 0.8)
     }
+    this.trees.begin(this.hdr)
     this.drawMaple()
     this.drawCherry()
+    this.trees.end(this.hdr, this.W, H, 0.012 * H, (_x, y) => clamp((0.56 * H - y) / (0.3 * H), 0, 1))
   }
 
   // A Japanese maple with red leaves in layered tiers, leaning in from the left.
@@ -734,14 +781,14 @@ class Zen extends Canvas {
     const red = this.paint(VERMILION)
     const shadow = this.paint([0.4, 0.08, 0.04])
     const posts: Part[] = []
-    for (const s of [-0.45, 0.45]) posts.push(cap((bx + s * span) * H, deck(s) * H, (bx + s * span) * H, (by + 0.03) * H, 0.004 * H, 0.004 * H, this.paint([0.2, 0.1, 0.08])))
+    for (const s of [-0.45, 0.45]) posts.push(cap((bx + s * span) * H, deck(s) * H, (bx + s * span) * H, (by + 0.03) * H, this.thick(0.004, 0.95), this.thick(0.004, 0.95), this.paint([0.2, 0.1, 0.08])))
     this.shape(posts, this.lighting, 0.4)
     const S = Array.from({ length: 25 }, (_, i) => -1.05 + (i / 24) * 2.1)
     this.polygon([...S.map((s) => [(bx + s * span) * H, (deck(s) - 0.004) * H] as const), ...S.toReversed().map((s) => [(bx + s * span) * H, deck(s) * H] as const)], this.paint([0.42, 0.3, 0.2]))
     this.polygon([...S.map((s) => [(bx + s * span) * H, deck(s) * H] as const), ...S.toReversed().map((s) => [(bx + s * span) * H, (deck(s) + 0.012) * H] as const)], red)
     this.polygon([...S.map((s) => [(bx + s * span) * H, (deck(s) + 0.012) * H] as const), ...S.toReversed().map((s) => [(bx + s * span) * H, (deck(s) + 0.016) * H] as const)], shadow)
     const rail: Part[] = []
-    const r = 0.0022 * H
+    const r = this.thick(0.0022, 0.55)
     for (let i = 0; i < 9; i++) {
       const s = -0.95 + (i / 8) * 1.9
       rail.push(cap((bx + s * span) * H, deck(s) * H, (bx + s * span) * H, (deck(s) - 0.026) * H, r, r, red))
@@ -884,7 +931,7 @@ class Zen extends Canvas {
     if (p.age < 0) return
     if (p.state === 0) {
       p.spin += dt * 2
-      p.x += (p.vx + 0.012 * Math.sin(this.time * 0.8 + p.spin * 0.3)) * dt
+      p.x += (p.vx + 0.012 * Math.sin(this.time * 0.8 + p.spin * 0.3) - 0.09 * gust(this.A - p.x, this.time)) * dt
       p.y += p.vy * dt
       if (p.x < -0.05) Object.assign(p, this.newPetal(false))
       if (p.y < p.land) return
@@ -1013,11 +1060,16 @@ class Zen extends Canvas {
         : h.phase === "in"
           ? [lerp(-0.25, sx, 1 - (1 - p) ** 2), lerp(0.22, sy, 1 - (1 - p) ** 2), clamp((1 - p) / 0.25, 0, 1)]
           : [lerp(sx, this.A + 0.3, p * p), lerp(sy, 0.18, p * p), clamp(p / 0.12, 0, 1)]
-    const S = 0.2 * H
+    const S = 0.16 * H
     const P = (u: number, v: number): [number, number] => [x * H + u * S, y * H + v * S]
     const L = (a: [number, number], b: [number, number]): [number, number] => [lerp(a[0], b[0], fly), lerp(a[1], b[1], fly)]
-    const hunt = h.phase === "stand" ? smoothstep(0.2, 0.9, 0.5 - 0.5 * Math.cos(h.t * 0.45)) : 0
+    const huntAt = (t: number) => (h.phase === "stand" ? smoothstep(0.2, 0.9, 0.5 - 0.5 * Math.cos(t * 0.45)) : 0)
+    const hunt = huntAt(h.t)
+    // The crest plume trails the head as it leans out and back.
+    const sweep = (huntAt(h.t - 0.5) - hunt) * 0.6
+    // The wingtips beat a moment behind the arm.
     const flap = Math.sin(this.time * 2.6)
+    const lag = Math.sin(this.time * 2.6 - 0.7)
     const body = this.paint([0.62, 0.66, 0.72])
     const neck = this.paint([0.82, 0.82, 0.84])
     const wing = this.paint([0.38, 0.42, 0.5])
@@ -1027,13 +1079,20 @@ class Zen extends Canvas {
     const n2 = L([lerp(0.09, 0.3, hunt), lerp(-0.7, -0.56, hunt)], [0.16, -0.49])
     const head = L([lerp(0.14, 0.38, hunt), lerp(-0.8, -0.52, hunt)], [0.22, -0.47])
     const beak = L([lerp(0.15, 0.1, hunt), lerp(0.01, 0.11, hunt)], [0.15, 0.015])
-    const wingTip: [number, number] = [-0.08, -0.45 - 0.42 * flap]
+    const wingTip: [number, number] = [-0.08, -0.45 - 0.42 * lag]
     const wingMid: [number, number] = [-0.03, -0.45 - 0.22 * flap]
+    // Wading, it now and then lifts a foot and sets it down a little further on; the ankles bend back.
+    const wade = (side: number) => (h.phase === "stand" ? Math.max(0, Math.sin(h.t * 0.3 + side * 1.6)) ** 10 : 0)
+    const leg = (side: number): Part[] => {
+      const hip = L([side * 0.015, -0.33], [-0.1, -0.4 + side * 0.01])
+      const foot = L([side * 0.025 + wade(side) * 0.04, -wade(side) * 0.09], [-0.4, -0.37 + side * 0.02])
+      return [...limb(P, ...hip, ...foot, 0.17, 0.17, 1, 0.012 * S, 0.01 * S, 0.008 * S, legs), cap(...P(...foot), ...P(foot[0] + L([0.06, 0], [-0.04, 0])[0], foot[1]), 0.006 * S, 0.004 * S, legs)]
+    }
     if (fly > 0.3) this.shape([cap(...P(0.03, -0.45), ...P(wingMid[0] + 0.04, wingMid[1] + 0.02), 0.07 * S, 0.05 * S, this.paint([0.28, 0.31, 0.38])), cap(...P(wingMid[0] + 0.04, wingMid[1] + 0.02), ...P(wingTip[0] + 0.05, wingTip[1] + 0.03), 0.05 * S, 0.02 * S, this.paint([0.28, 0.31, 0.38]))], this.lighting, 0.4)
     this.shape(
       [
-        cap(...P(...L([-0.02, 0], [-0.4, -0.37])), ...P(...L([-0.01, -0.32], [-0.1, -0.4])), 0.011 * S, 0.012 * S, legs),
-        cap(...P(...L([0.03, 0], [-0.42, -0.4])), ...P(...L([0.01, -0.32], [-0.1, -0.41])), 0.011 * S, 0.012 * S, legs),
+        ...leg(-1),
+        ...leg(1),
         ell(...P(0, L([0, -0.41], [0, -0.42])[1]), 0.17 * S, 0.075 * S, -0.4 * (1 - fly), body),
         cap(...P(-0.12, L([-0.34, -0.33], [-0.42, -0.42])[1]), ...P(-0.2, L([-0.3, -0.3], [-0.42, -0.42])[1]), 0.04 * S, 0.02 * S, wing),
         cap(...P(...shoulder), ...P(...n1), 0.042 * S, 0.032 * S, neck),
@@ -1041,12 +1100,12 @@ class Zen extends Canvas {
         cap(...P(...n2), ...P(...head), 0.026 * S, 0.03 * S, neck),
         ell(...P(...head), 0.042 * S, 0.032 * S, 0, neck),
         cap(...P(...head), ...P(head[0] + beak[0], head[1] + beak[1]), 0.016 * S, 0.003 * S, this.paint([0.9, 0.72, 0.2])),
-        cap(...P(head[0] - 0.01, head[1] - 0.02), ...P(head[0] - 0.12, head[1] - 0.01), 0.009 * S, 0.003 * S, this.paint([0.08, 0.08, 0.1])),
+        cap(...P(head[0] - 0.01, head[1] - 0.02), ...P(head[0] - 0.12 - sweep * 0.3, head[1] - 0.01 - sweep * 0.15), 0.009 * S, 0.003 * S, this.paint([0.08, 0.08, 0.1])),
       ],
       this.lighting,
       0.6,
     )
-    if (fly > 0.3) this.shape([cap(...P(0.03, -0.44), ...P(...wingMid), 0.08 * S, 0.06 * S, wing), cap(...P(...wingMid), ...P(...wingTip), 0.06 * S, 0.025 * S, wing), cap(...P(...wingTip), ...P(wingTip[0] - 0.08, wingTip[1] + 0.02), 0.03 * S, 0.012 * S, this.paint([0.15, 0.16, 0.2]))], this.lighting, 0.6)
+    if (fly > 0.3) this.shape([cap(...P(0.03, -0.44), ...P(...wingMid), 0.08 * S, 0.06 * S, wing), cap(...P(...wingMid), ...P(...wingTip), 0.06 * S, 0.025 * S, wing), cap(...P(...wingTip), ...P(wingTip[0] - 0.08, wingTip[1] + 0.02 + (lag - flap) * 0.1), 0.03 * S, 0.012 * S, this.paint([0.15, 0.16, 0.2]))], this.lighting, 0.6)
     if (fly === 0) this.add(...P(head[0] + 0.02, head[1] - 0.005), 0.25, 0.2, 0.02)
   }
 
@@ -1072,6 +1131,7 @@ class Zen extends Canvas {
     const sitting = t >= TANUKI.arrive && t < TANUKI.leave
     const u0 = t < TANUKI.arrive ? lerp(-0.12, seat, t / TANUKI.arrive) : sitting ? seat : lerp(seat, A + 0.12, (t - TANUKI.leave) / (TANUKI.gone - TANUKI.leave))
     const S = 0.12 * H
+    groundShadow(this.hdr, this.W, H, this.shade, u0 * H, 0.965 * H, (sitting ? 0.4 : 0.65) * S, (sitting ? 0.6 : 0.4) * S)
     const P = (u: number, v: number): [number, number] => [u0 * H + u * S, 0.965 * H + v * S]
     const fur = this.paint([0.5, 0.4, 0.28])
     const dark = this.paint([0.14, 0.11, 0.09])
@@ -1172,6 +1232,7 @@ class Zen extends Canvas {
     const S = 0.04 * H
     const x = pad.x * H
     const y = (pad.y + 0.003) * H
+    groundShadow(this.hdr, this.W, H, this.shade, x, y, 0.6 * S, 0.6 * S)
     const P = (u: number, v: number): [number, number] => [x + u * S, y + v * S]
     const green = this.paint([0.3, 0.58, 0.15])
     const sac = this.frog.croak >= 0 ? Math.max(0, Math.sin(this.frog.croak * Math.PI * 2)) : 0
@@ -1204,8 +1265,7 @@ class Zen extends Canvas {
     const l = Math.hypot(dx, dy)
     if (l < 0.004) {
       d.rest = rand(2, 5)
-      d.tx = this.pond.x + rand(-0.9, 0.9) * this.pond.rx
-      d.ty = rand(0.6, 0.82)
+      ;[d.tx, d.ty] = this.openSpot(this.pond.x - 0.9 * this.pond.rx, this.pond.x + 0.9 * this.pond.rx, 0.6, 0.82)
       return
     }
     if (Math.abs(dx) > 0.002) d.face = Math.sign(dx)
@@ -1231,6 +1291,7 @@ class Zen extends Canvas {
     for (const f of this.fireflies) {
       const k = Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6)
       if (k < 0.02) continue
+      fireflyLight(this.hdr, this.W, H, f.x * H, f.y * H, k)
       this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6)
       this.add(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k)
     }
@@ -1253,9 +1314,9 @@ export const zen: Wallpaper = {
       [30, 34, 26],
     ],
     sunset: [
-      [30, 14, 26],
-      [36, 16, 18],
-      [14, 8, 8],
+      [20, 14, 32],
+      [38, 24, 26],
+      [16, 11, 13],
     ],
     night: [
       [4, 6, 16],

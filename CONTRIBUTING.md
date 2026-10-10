@@ -71,29 +71,42 @@ exposure, 1.25 by default.
 ### layout() for static backgrounds
 
 `layout()` runs after every resize, once the buffers match the new size. Paint whatever never moves there (sky,
-mountains, buildings, a tree), copy `hdr` into a field, and start each frame from that copy with `restore()`:
+mountains, buildings, a tree); `Canvas` keeps the result in `this.background`, and each frame starts from it:
 
 ```ts
 protected override layout() {
-  paintSky(this.hdr, this.W, this.H, this.look.sky, this.look.orb)
+  paintSky(this.hdr, this.W, this.H, this.look.sky, this.look.orb, this.px)
   // …hills, a tree…
-  this.background = this.hdr.slice()
 }
 
 render() {
-  this.restore(this.background)
+  this.restore()
   // …moving things…
   this.finish()
 }
 ```
 
-This is the biggest single saving: a full-screen gradient with noise costs more than every creature together.
+This is the biggest single saving: a full-screen gradient with noise costs more than every creature together. It
+also makes `finish()` cheaper: it blooms and tone-maps whatever `layout()` leaves in `hdr` once, then each frame only
+redoes the 4x4 blocks that differ from it and the bloom they change. So leave `hdr` holding the background at the end
+of `layout()`, and avoid full-screen per-frame passes where a static one will do.
+
+The background is supersampled, so every static edge is anti-aliased: `layout()` first runs with `W`, `H` and `hdr`
+twice the size, and that painting is box-filtered down into `background`; then it runs again at the real size, for
+whatever `render()` reads (positions, ground heights, masks), and that pass's painting is dropped. (Big canvases, such
+as snaps, skip the first pass.) Each run must start from scratch, as it already must for resizes. Everything in screen
+heights just works. Anything in pixels takes `this.px`, the size of a real pixel in the current pass's pixels: rim
+widths (`Math.exp(-depth / (1.5 * this.px))`), offsets (`+ 2 * this.px`), and per-pixel textures, which should stay
+on real pixels (`hash2(Math.floor(x / px), Math.floor(y / px))`, `fbm1((x / px) * 0.3)`). `thick()` minimums are
+already in real pixels. A per-pixel layer that `render()` draws over the scene (zen's front garden, space's near rings,
+city's river) can be made in the first pass, box-filtered with `this.shrink(buffer, channels)`, and kept in a field for
+the second pass to use. Scenes whose `layout()` paints nothing set `supersample = 1`. Smooth fills that cost a lot per
+pixel (space's nebula) can be worked out once per real pixel.
 
 The engine also refits only the terminal cells that can have changed since the last frame. `restore()` starts the
 frame's `touched` list of boxes, and every drawing method below adds the box it drew in. A scene that writes `hdr` in
-its own loop during `render()` must call `touch(x0, y0, x1, y1)` (pixels, inclusive) for that area, and pass
-`this.touched` to `paintStars`, `paintClouds`, `paintStorm` and `WeatherLayer.draw`. A scene that draws everything
-each frame calls `restore()` with no background. Anything left untouched keeps last frame's cells, so a missed loop
+its own loop during `render()` must call `touch(x0, y0, x1, y1)` (pixels, inclusive) for that area; the shared helpers
+(sky, weather, shadows, light, water, wind) record their own. Anything left untouched keeps last frame's cells, so a missed loop
 shows as a smear; `bun dev/check.ts --verify-dirty <id>` catches it. A scene that never calls `restore()` is refitted
 in full every frame.
 
@@ -110,7 +123,10 @@ in full every frame.
 | `polygon(points, color, alpha?)` | An anti-aliased polygon in a flat color, for straight-edged things like buildings and boats |
 | `shape(parts, lighting, light?)` | Rounded parts joined into one lit form, for creatures, people and plants |
 
-For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and `touch()` the area (see above).
+For per-pixel effects such as water, sand or fog, loop over `hdr` directly, and `touch()` the area during `render()`
+(see above). `reflect()` in `src/water.ts` mirrors
+other rows of the scene into water rows with drifting ripples, a tint and a per-pixel weight; call it each frame over
+only the water's rows (as the beach and the prehistoric lake do), or once in `layout()` for still water such as ice.
 
 ### Shapes
 
@@ -143,13 +159,43 @@ details), and values in between soften it.
 - `paintSky(hdr, W, H, stops, orb)` fills the canvas with a vertical gradient through `[fraction of height, color]`
   stops, a glow around the sun or moon, and the orb itself. An `Orb` has x (fraction of width), y and r (fractions
   of height), `core` and `glow` colors, `near` and `wide` glow strengths, and `moon: true` for a cratered moon.
-- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness, touched)` draw slowly twinkling stars that
+- `makeStars(count, top)` and `paintStars(hdr, W, H, stars, time, top, brightness)` draw slowly twinkling stars that
   fade toward `top`. Stars are tinted from `STAR_TINTS`, never white.
-- `makeClouds(count, puffy, y0, y1)`, `driftClouds(clouds, A, dt)` and `paintClouds(hdr, W, H, clouds, top, bottom,
-  alpha, puffy, touched)` give puffy cumulus or thin streaks, shaded from `top` to `bottom`.
+- `makeClouds(count, kind, y0, y1)`, `driftClouds(clouds, A, dt)` and `paintClouds(hdr, W, H, clouds, top, bottom,
+  alpha, orb)` give clouds of one kind: `cumulus`, `towering` (standing on y, for a horizon), `cirrus`, `wisp`,
+  `stratus` or `ash`. They are lit from the orb: the brighter of `top` and `bottom` faces it, and clouds near it are
+  backlit with glowing edges. Pass no orb under an overcast deck to light them evenly from above. Each cloud's shape
+  is built once per screen size, so drawing them each frame is cheap. Heaped kinds read best by day and at night;
+  thin streaks (`cirrus`, `stratus`) catch a low sunset sun better.
+- `makeShadows(count, y0, y1)` and `paintShadows(hdr, W, H, shadows, ground, orb)` drift soft cloud shadows across
+  the ground below `ground` under a high sun; `paintHaze(hdr, W, H, y0, y1, color, alpha)` paints a static haze band.
+
+`src/grade.ts` gives daytime depth in `layout()`: `haze(hdr, sky, W, H, y0, y1, far, near?, top?)` fades what was
+painted toward a copy of the sky taken right after `paintSky` (call it after each layer so farther ones fade more), and
+`mottle(hdr, W, H, horizon, bottom, size, warm, cool)` lays broad warm and cool patches over the ground in perspective.
+Setting `this.frame` (0 to 1) in the constructor darkens the bottom corners to frame a bright foreground.
 
 `src/math.ts` has `TAU`, `lerp`, `clamp`, `smoothstep`, `rand`, stable hashes (`hash`, `hash2`, `hashString`), smooth
 noise (`noise1`, `noise2`, `fbm1`, `fbm2`), `hsv` and the `RGB` type.
+
+### Shadows
+
+`src/shadow.ts` grounds things standing on the ground. Make one `Shade` with `sunShade(time, look.orb,
+weather.covered)`, then call `groundShadow(hdr, W, H, shade, x, y, w, h, tip?, lift?)` with the ground point under a
+thing, its width and height in pixels, before drawing it: static things in `layout()`, moving ones each frame. It draws a
+soft contact shadow and a cast shadow away from the light: short by day, long and spreading from the low sun at sunset,
+faint at night, contact only under cloud. `lift` (pixels off the ground) fades the contact shadow and slides the cast one
+away, for hops and lifts. Shadows multiply the ground toward a sky-tinted color, so they never gray it, and where
+they overlap the ground darkens only as much as the deepest of them, not stacking into dark patches.
+
+### Creatures
+
+`src/creature.ts` animates walkers. Pose a creature in body coordinates with `body(x, y, S, turn)` (u forward, v
+down, w across), and keep a `Gait` per walker: `stepGait(g, distance / stride, dt, face)` advances the step cycle with
+the distance walked, so planted feet don't slide, eases between standing and walking, turns through a three-quarter
+view instead of flipping, and rings a springy `lag` for tails and ears to trail. `quadruped()` draws four jointed
+legs in diagonal pairs, `limb()` any two-segment limb with a bending joint, `stride()` and `bob()` one foot's step and
+the body's rise, and `chain()` a tapered tail or neck along a curve.
 
 ## Time of day
 
@@ -171,6 +217,12 @@ sunset scenes by about a fifth and night scenes barely, so night keeps its color
 Night must not use white or gray highlights, because OpenCode's text is white. Use saturated, tinted colors instead:
 cobalt and teal moonlight, a gold moon, amber lamps and windows, tinted stars, glowing plankton or fireflies.
 
+Give night clear light structure so things stay readable: a lighter band at the horizon (or, underwater, toward the
+surface) for silhouettes to stand against, a strong rim `light` from the moon's side, and a few local pools of warm or
+glowing light. `lightPool()` in `src/light.ts` lights an ellipse in the light's own color, so ground and creatures
+passing through it pick it up; draw it each frame after the creatures it should light. `campfire()` and
+`fireflyLight()` there are ready-made pools. Keep the area behind text no brighter or busier than before.
+
 ## Seasons and weather
 
 `settings.season` is spring, summer, autumn or winter, or missing for the classic look. Change what the season would
@@ -178,9 +230,18 @@ really change (blossom, leaves, snow, crowds) and nothing for indoor or timeless
 
 `settings.weather` is clear, overcast, rain, snow or fog, or missing for the wallpaper's own weather. Outdoor scenes
 make one `WeatherLayer` (from `src/weather.ts`) with the weather, time of day and horizon, and call its `cover()` in
-`layout()` right after painting the sky, `step(dt)` in `step`, and `draw(hdr, W, H, touched)` at the end of `render()` before `finish()`.
+`layout()` right after painting the sky, `step(dt)` in `step`, and `draw()` at the end of `render()` before `finish()`.
 Skip stars when `covered` is set, and color clouds with `scud` when it is. Passing `light` as the last argument gives a
 seasonal shower or flurry without the cloud deck, as the farm does in winter. `wallpapers/farm.ts` shows all of it.
+
+## Wind
+
+Every outdoor scene shares one wind from `src/wind.ts`, so a gust rolls across the whole screen from left to right
+every minute or so and then dies away. `gust(x, t)` is how hard it blows at x (screen heights) and scene time t, from 0
+to 1: add it to anything that drifts, such as petals, snow or dust. `sway(x, t, phase, rate)` replaces a plant's own
+`Math.sin(t * rate + phase)`: the same rocking in calm air, plus a lean downwind as a gust passes. For plants painted
+once in `layout()`, a `SwayLayer` bends them without redrawing: call `begin()` before painting them, `end()` after
+with how far their tips move and a weight from roots to tips, and `draw()` right after copying the background.
 
 ## Scrim
 
@@ -188,6 +249,20 @@ Text gets a soft scrim that fades the scene toward a dark color around it. `scri
 each time of day at the top, middle and bottom of the screen. Darker, more saturated versions of the scene's own colors
 at those depths read better than black: dark sky blue at the top and dark green over grass by day, deep navy at night.
 Check that text stays readable with `bun dev/preview.ts` at every time of day.
+
+## Composition
+
+OpenCode's text sits in the middle of the screen: the home screen has a centered logo and a 76-column prompt across
+the middle third of the height, and a session has a column of messages, a prompt at the bottom and, from 120 columns,
+a sidebar on the right. Put the things people should see (a barn, a volcano, a waterfall) toward the left and right
+edges, in the top band or along the bottom, measured in screen heights from the nearest edge (`A - 0.3`, not `0.8 * A`)
+so they stay clear on wide and narrow terminals alike. Keep the middle band to calm scenery such as sky, water or open
+field. `bun dev/preview.ts <id> home 100x30` shows a real layout at any size.
+
+The engine also tells scenes where text actually is, about once a second. `this.openSpot(x0, x1, y0, y1)` picks a
+random point in a box, the least covered of a few tries, for a creature's next stop or a visitor's spot, and
+`this.openRow(y0, y1)` picks a height for something crossing the whole screen. Both are plain random picks until the
+engine has sent its map, and in `dev/snap.ts`.
 
 ## Activity
 
@@ -237,6 +312,9 @@ a lot with machine load, so compare against an existing wallpaper measured back 
 - Bound per-pixel loops to the area you're drawing, not the whole screen. The `Canvas` helpers already do.
 - Precompute noise and textures into typed arrays in the constructor or `layout()` instead of calling `fbm` per pixel
   per frame.
+- Every cell that changes is sent to the terminal. The engine holds back a cell's color change until it reaches 3
+  levels of 255 in some channel (a new glyph always sends), so slow light such as an aurora or twinkling stars costs
+  little output; flickering glyphs still cost a lot.
 - `shape()` costs about the area of the shape's bounding box times its parts. Draw a sprawling thing (a tree, a
   palm's fronds) as several smaller calls, and skip things that are off screen.
 
@@ -247,7 +325,7 @@ bun run typecheck
 bun dev/check.ts [id...] [season] [weather]       # every activity and time: errors, ms/frame, flicker
 bun dev/check.ts --verify-dirty [id...]           # also checks that refitting only changed cells matches a full refit
 bun dev/snap.ts <id> [activity] [time] [season] [weather] [seconds...] # scene PNGs in dev/out/, and ms per render
-bun dev/preview.ts <id> [activity] [time] [season] [weather] [seconds] # terminal cells behind text, as a PNG
+bun dev/preview.ts <id> [activity] [time] [season] [weather] [home|session] [WxH] [seconds] # terminal cells behind text, as a PNG
 bun dev/pixel-check.ts [id] [activity] [time]     # real-pixel mode against a mock kitty terminal
 bun dev/poke.ts <id> [activity] [time] <fx> <fy> [seconds...] # click at a point (fractions of the screen)
 bun dev/fade.ts <id>:day <id>:night 50            # a frame halfway through a crossfade, and its cost
@@ -264,7 +342,8 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
   `--verify-dirty` plays each combination twice, refitting every cell (`WALLPAPER_DIRTY=0`) and then only what
   changed, with text edits, redraws, agent events and a crossfade mixed in, and fails on any cell that differs.
 - `snap.ts` renders the scene directly, before terminal conversion, for judging the art.
-- `preview.ts` shows what the terminal will show, scrim included.
+- `preview.ts` shows what the terminal will show, scrim included. `home` and `session` lay the text out like OpenCode's
+  home screen or a busy session, and a size such as `240x60` or `100x30` replaces 160x45.
 - `dev/pty.ts [seconds] [keys...]` runs a real OpenCode in a pseudo-terminal and types each key argument, pausing
   1.5 s after each; `\r` is Enter and `\e` is Escape. `dev/pty-kitty.ts [id] [seconds]` does the same as a kitty
   terminal in pixel mode. Run them with a throwaway profile (fresh `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
@@ -289,9 +368,10 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
 
 ## Your own package
 
-A wallpaper package imports the API from `opencode-wallpapers/api`, which has `Canvas`, `cap`, `ell`, the sky,
-weather, flock, egg and math helpers, and the `Wallpaper` types, with no OpenCode or OpenTUI dependency. It isn't on
-npm yet, so build a clone of this repository and depend on it by path:
+A wallpaper package imports the API from `opencode-wallpapers/api`, which has `Canvas`, `cap`, `ell`, `blade`, the
+sky, grade, shadow, light, water, creature, wind, weather, flock, egg and math helpers, and the `Wallpaper` types,
+with no OpenCode or OpenTUI dependency. It isn't on npm yet, so build a clone of this repository and depend on it by
+path:
 
 ```sh
 (cd ~/code/opencode-wallpapers && bun install && bun run build)
