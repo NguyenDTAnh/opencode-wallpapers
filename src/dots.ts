@@ -12,8 +12,8 @@ const FLAT = 400
 const SCRIM = 0.5
 // A gliding point fades into the next cell over the outer sixth or so of its cell on either side.
 const GLIDE = 0.15
-// A dot covers far less of its cell than the block a lone sub-pixel turns into, so it is drawn brighter.
-const GAIN = 1.8
+// A dot covers less of its cell than the block a lone sub-pixel turns into, so smaller dots are drawn brighter.
+const GAINS = [2, 1.5, 1.1]
 // The unsharp mask lifts a lone bright sub-pixel by about this much; painted points get the same lift.
 const SHARPENED = 1.5
 // previousMask value for a cell showing a dot.
@@ -93,7 +93,7 @@ export function placeDot(dots: Dots, i: number, x: number, y: number, q: Float32
   let err = 0
   for (let s = 0; s < 8; s++) err += (q[s * 3] - r) ** 2 + (q[s * 3 + 1] - g) ** 2 + (q[s * 3 + 2] - b) ** 2
   if (err > (held ? FLAT * 2 : FLAT)) return false
-  const k = (1 - (st + sb) / 2) * GAIN
+  const k = (1 - (st + sb) / 2) * GAINS[dots.size[i] - 1]
   char[i] = GLYPHS[dots.size[i] - 1]
   bg[o] = r
   bg[o + 1] = g
