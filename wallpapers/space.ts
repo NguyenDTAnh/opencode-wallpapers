@@ -209,7 +209,7 @@ class Space extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     this.drawStars()
     this.drawMoon()
     this.drawPlanet()
@@ -334,6 +334,7 @@ class Space extends Canvas {
     const pad = 0.1 * R
     const lsx = Lx / (Math.hypot(Lx, Ly) || 1)
     const lsy = Ly / (Math.hypot(Lx, Ly) || 1)
+    this.touch(cx - R - pad - 1, cy - R - pad - 1, cx + R + pad + 2, H)
     for (let y = Math.max(0, Math.floor(cy - R - pad)); y < H; y++)
       for (let x = Math.max(0, Math.floor(cx - R - pad)); x <= Math.min(W - 1, Math.ceil(cx + R + pad)); x++) {
         const dx = (x + 0.5 - cx) / R
@@ -388,6 +389,7 @@ class Space extends Canvas {
   private drawRingFront() {
     const [x0, y0, x1, y1] = this.ringBox
     const { W, ringFront } = this
+    this.touch(x0, y0, x1 + 1, y1 + 1)
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
         const o = y * W + x
@@ -404,6 +406,7 @@ class Space extends Canvas {
     // After an error the star dims, as if behind a passing dust cloud.
     const strength = (look.lighting === "front" ? 1 : 1.4) * (1 - smoothstep(0, 1, this.gloom) * 0.6)
     const reach = 0.45 * H
+    this.touch(sx - reach - 1, sy - reach - 1, sx + reach + 1, sy + reach + 1)
     for (let y = Math.max(0, Math.floor(sy - reach)); y < Math.min(H, sy + reach); y++)
       for (let x = Math.max(0, Math.floor(sx - reach)); x < Math.min(W, sx + reach); x++) {
         const dx = x + 0.5 - sx
@@ -425,6 +428,7 @@ class Space extends Canvas {
     const cx = (0.24 * this.A + 0.06 * Math.cos(a)) * H
     const cy = (0.36 + 0.025 * Math.sin(a)) * H
     const R = 0.035 * H
+    this.touch(cx - R - 1, cy - R - 1, cx + R + 2, cy + R + 2)
     for (let y = Math.max(0, Math.floor(cy - R - 1)); y <= Math.min(H - 1, cy + R + 1); y++)
       for (let x = Math.max(0, Math.floor(cx - R - 1)); x <= Math.min(W - 1, cx + R + 1); x++) {
         const dx = (x + 0.5 - cx) / R
@@ -583,6 +587,7 @@ class Space extends Canvas {
     const cx = r.x * H
     const cy = r.y * H
     const R = r.r * H
+    this.touch(cx - R * 1.3, cy - R * 1.3, cx + R * 1.3 + 1, cy + R * 1.3 + 1)
     for (let y = Math.max(0, Math.floor(cy - R * 1.3)); y <= Math.min(H - 1, cy + R * 1.3); y++)
       for (let x = Math.max(0, Math.floor(cx - R * 1.3)); x <= Math.min(W - 1, cx + R * 1.3); x++) {
         const dx = (x + 0.5 - cx) / R

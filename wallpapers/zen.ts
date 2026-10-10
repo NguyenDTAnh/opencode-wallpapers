@@ -204,6 +204,7 @@ class Zen extends Canvas {
   // Water pixels: their hdr index, how much of each is water, the bank under its edge, and the garden in front of it
   // (bridge, lanterns, stones, lily pads) as a premultiplied color plus how much water shows through.
   private pool = new Int32Array(0)
+  private poolBox = [0, 0, 0, 0]
   private wet = new Float32Array(0)
   private under = new Float32Array(0)
   private front = new Float32Array(0)
@@ -294,7 +295,7 @@ class Zen extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
@@ -359,6 +360,7 @@ class Zen extends Canvas {
         pool.push(y * W + x)
       }
     this.pool = Int32Array.from(pool)
+    this.poolBox = pool.reduce((b, i) => [Math.min(b[0], i % W), Math.min(b[1], Math.floor(i / W)), Math.max(b[2], (i % W) + 1), Math.max(b[3], Math.floor(i / W) + 1)], [W, H, 0, 0])
     this.under = new Float32Array(pool.length * 3)
     for (let k = 0; k < pool.length; k++) for (let c = 0; c < 3; c++) this.under[k * 3 + c] = this.hdr[pool[k] * 3 + c]
     this.mirror = new Float32Array(W * H * 3)
@@ -810,6 +812,7 @@ class Zen extends Canvas {
     const amp = 0.004 * H
     const ox = look.orb.x * W
     const tick = Math.floor(t * 3) * 131
+    this.touch(this.poolBox[0], this.poolBox[1], this.poolBox[2], this.poolBox[3])
     for (let k = 0; k < pool.length; k++) {
       const i = pool[k]
       const y = (i / W) | 0
@@ -844,6 +847,7 @@ class Zen extends Canvas {
     const fade = (1 - ring.age / ring.life) ** 1.5 * ring.strength
     const cx = ring.x * H
     const cy = ring.y * H
+    this.touch(cx - R - 2, cy - R * 0.32 - 2, cx + R + 3, cy + R * 0.32 + 3)
     for (let y = Math.max(0, Math.floor(cy - R * 0.32 - 2)); y <= Math.min(H - 1, Math.ceil(cy + R * 0.32 + 2)); y++)
       for (let x = Math.max(0, Math.floor(cx - R - 2)); x <= Math.min(W - 1, Math.ceil(cx + R + 2)); x++) {
         const i = y * W + x

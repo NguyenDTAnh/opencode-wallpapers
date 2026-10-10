@@ -5,6 +5,29 @@ import { clamp, type RGB } from "./math"
 const BLOOM = 4
 const BLOOM_THRESHOLD = 0.82
 const BLUR = [1, 6, 15, 20, 15, 6, 1]
+// Pixels beyond a touched box where a change's bloom has faded under about 1% of its peak (the wide halo's blur).
+export const BLOOM_REACH = BLOOM * 10
+
+// The touched list of the canvas that owns hdr, for helpers that draw into a scene's buffer without the scene.
+const owners = new WeakMap<Float32Array, number[]>()
+export function touchedBy(hdr: Float32Array) {
+  return owners.get(hdr)
+}
+
+// Adds a box to a touched list. A box within a pixel of the last one grows that one instead, so per-pixel loops leave
+// one box rather than thousands.
+export function addBox(list: number[] | undefined, x0: number, y0: number, x1: number, y1: number) {
+  if (!list) return
+  const n = list.length
+  if (n && x0 >= list[n - 4] - 1 && y0 >= list[n - 3] - 1 && x1 <= list[n - 2] + 1 && y1 <= list[n - 1] + 1) {
+    list[n - 4] = Math.min(list[n - 4], x0)
+    list[n - 3] = Math.min(list[n - 3], y0)
+    list[n - 2] = Math.max(list[n - 2], x1)
+    list[n - 1] = Math.max(list[n - 1], y1)
+    return
+  }
+  list.push(x0, y0, x1, y1)
+}
 
 export type Part =
   | { kind: "capsule"; ax: number; ay: number; bx: number; by: number; r0: number; r1: number; color: RGB; ribs: number }
@@ -48,6 +71,12 @@ export abstract class Canvas {
   protected cells = false
   hdr = new Float32Array(0)
   pixels = new Uint8Array(0)
+  // Boxes [x0, y0, x1, y1, ...] in pixels around everything render drew this frame over the cached background, so the
+  // engine can tell moving cells from static ones. restore() clears it; the drawing methods, the sky's stars and
+  // clouds and the weather add to it; scenes call touch() around their own per-pixel loops. A frame that never called
+  // restore counts as touched everywhere. Bloom spreads light up to BLOOM_REACH pixels beyond a box.
+  readonly touched: number[] = []
+  private restored = false
 
   private bw = 0
   private bh = 0
@@ -99,6 +128,7 @@ export abstract class Canvas {
     this.cells = cells
     this.A = W / H
     this.hdr = new Float32Array(W * H * 3)
+    owners.set(this.hdr, this.touched)
     this.pixels = new Uint8Array(W * H * 4)
     this.bw = Math.ceil(W / BLOOM)
     this.bh = Math.ceil(H / BLOOM)
@@ -147,11 +177,24 @@ export abstract class Canvas {
     return this.cells ? Math.max(radius * this.H, min) : radius * this.H
   }
 
+  // Starts a frame: copies the cached background into hdr and forgets last frame's touched boxes.
+  protected restore(background: Float32Array) {
+    this.hdr.set(background)
+    this.touched.length = 0
+    this.restored = true
+  }
+
+  // Marks a box (pixels, x1 and y1 exclusive) that render changed with its own per-pixel loop.
+  protected touch(x0: number, y0: number, x1: number, y1: number) {
+    addBox(this.touched, x0, y0, x1, y1)
+  }
+
   // Adds light to one pixel.
   protected add(x: number, y: number, r: number, g: number, b: number) {
     const xi = x | 0
     const yi = y | 0
     if (xi < 0 || yi < 0 || xi >= this.W || yi >= this.H) return
+    addBox(this.touched, xi, yi, xi + 1, yi + 1)
     const i = (yi * this.W + xi) * 3
     this.hdr[i] += r
     this.hdr[i + 1] += g
@@ -161,6 +204,10 @@ export abstract class Canvas {
   // Mixes a color over the pixel at hdr index i by coverage a.
   protected blend(i: number, r: number, g: number, b: number, a: number) {
     const h = this.hdr
+    const p = i / 3
+    const x = p % this.W
+    const y = (p - x) / this.W
+    addBox(this.touched, x, y, x + 1, y + 1)
     h[i] += (r - h[i]) * a
     h[i + 1] += (g - h[i + 1]) * a
     h[i + 2] += (b - h[i + 2]) * a
@@ -168,28 +215,35 @@ export abstract class Canvas {
 
   // An anti-aliased filled circle, mixed over the scene.
   protected disc(cx: number, cy: number, rad: number, r: number, g: number, b: number, a: number) {
+    addBox(this.touched, cx - rad - 1, cy - rad - 1, cx + rad + 1, cy + rad + 1)
     fillDisc(this.hdr, this.W, this.H, cx, cy, rad, r, g, b, a)
   }
 
   // An anti-aliased filled ellipse, mixed over the scene; handy for parts that narrow as a creature turns edge-on.
   protected ellipse(cx: number, cy: number, rx: number, ry: number, r: number, g: number, b: number, a: number) {
+    addBox(this.touched, cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1)
     fillEllipse(this.hdr, this.W, this.H, cx, cy, rx, ry, r, g, b, a)
   }
 
   // An anti-aliased filled polygon in a flat color, for straight-edged things like buildings and machines.
   protected polygon(points: readonly (readonly [number, number])[], color: RGB, alpha = 1) {
-    fillPolygon(this.hdr, this.W, this.H, points, color[0], color[1], color[2], alpha)
+    fillPolygon(this.hdr, this.W, this.H, points, color[0], color[1], color[2], alpha, this.touched)
   }
 
   // Draws parts as one shape: each pixel takes the nearest part's color, so joints stay seamless. With rim lighting
   // only the outline facing the light catches it; with front lighting each part is shaded as a rounded form.
   // light scales the effect (0 draws flat color).
   protected shape(parts: Part[], lighting: Lighting, light = 1) {
-    fillShape(this.hdr, this.W, this.H, parts, lighting, light)
+    fillShape(this.hdr, this.W, this.H, parts, lighting, light, this.touched)
   }
 
   // Bloom, vignette and ACES tone mapping from hdr into pixels.
   protected finish(exposure = 1.25) {
+    if (!this.restored) {
+      this.touched.length = 0
+      this.touched.push(0, 0, this.W, this.H)
+    }
+    this.restored = false
     bloom(this.hdr, this.W, this.H, this.bw, this.bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp)
     toneMap(this.hdr, this.pixels, this.W, this.H, this.bloomUp, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure)
   }
@@ -270,7 +324,7 @@ function fillEllipse(hdr: Float32Array, W: number, H: number, cx: number, cy: nu
   }
 }
 
-function fillShape(hdr: Float32Array, W: number, H: number, parts: Part[], lighting: Lighting, light: number) {
+function fillShape(hdr: Float32Array, W: number, H: number, parts: Part[], lighting: Lighting, light: number, touched: number[]) {
   if (!parts.length) return
   // The shape's overall extent: the pixels it can cover, and the direction its rim light comes from.
   let cx0 = Infinity
@@ -294,6 +348,7 @@ function fillShape(hdr: Float32Array, W: number, H: number, parts: Part[], light
     boxes[j * 4 + 2] = Math.max(ax, bx) + pad
     boxes[j * 4 + 3] = Math.max(ay, by) + pad
   }
+  addBox(touched, cx0, cy0, cx1 + 1, cy1 + 1)
   const lx0 = lighting.style === "rim" ? lighting.x : 0
   const ly0 = lighting.style === "rim" ? lighting.y : 0
   const sl = Math.hypot(lx0 - (cx0 + cx1) / 2, ly0 - (cy0 + cy1) / 2) || 1
@@ -469,7 +524,7 @@ function bloom(hdr: Float32Array, W: number, H: number, bw: number, bh: number, 
   }
 }
 
-function fillPolygon(hdr: Float32Array, W: number, H: number, pts: readonly (readonly [number, number])[], r: number, g: number, b: number, a: number) {
+function fillPolygon(hdr: Float32Array, W: number, H: number, pts: readonly (readonly [number, number])[], r: number, g: number, b: number, a: number, touched: number[]) {
   let x0 = Infinity
   let y0 = Infinity
   let x1 = -Infinity
@@ -480,6 +535,7 @@ function fillPolygon(hdr: Float32Array, W: number, H: number, pts: readonly (rea
     x1 = Math.max(x1, x)
     y1 = Math.max(y1, y)
   }
+  addBox(touched, x0 - 1, y0 - 1, x1 + 2, y1 + 2)
   const n = pts.length
   for (let y = Math.max(0, Math.floor(y0 - 1)); y <= Math.min(H - 1, Math.ceil(y1 + 1)); y++)
     for (let x = Math.max(0, Math.floor(x0 - 1)); x <= Math.min(W - 1, Math.ceil(x1 + 1)); x++) {

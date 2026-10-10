@@ -338,7 +338,7 @@ class Desert extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) this.drawStars()
     this.drawClouds()
     paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom)
@@ -550,6 +550,7 @@ class Desert extends Canvas {
     const cx = x - length * 0.55
     const rx = length * 0.7
     const ry = Math.max(1.5, length * 0.12)
+    this.touch(cx - rx, gy - ry, cx + rx + 1, gy + ry + 1)
     for (let y = Math.max(0, Math.floor(gy - ry)); y <= Math.min(H - 1, Math.ceil(gy + ry)); y++)
       for (let px = Math.max(0, Math.floor(cx - rx)); px <= Math.min(W - 1, Math.ceil(cx + rx)); px++) {
         const q = ((px + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - gy) / ry) ** 2
@@ -744,6 +745,7 @@ class Desert extends Canvas {
         const rx = p.rx * H
         const ry = p.ry * H
         const warm = puffy ? 1 : 0.6 + 0.6 * Math.exp(-Math.abs(cx - this.orbX) / (0.5 * H))
+        this.touch(cx - rx, cy - ry, cx + rx + 1, cy + ry + 1)
         for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
           for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, Math.ceil(cx + rx)); x++) {
             const dx = (x + 0.5 - cx) / rx

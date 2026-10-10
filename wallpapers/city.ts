@@ -293,7 +293,7 @@ class City extends Canvas {
 
   render() {
     const { W, H, look } = this
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4)
     const [top, bottom] = this.weather.scud ?? [look.clouds.top, look.clouds.bottom]
     paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, look.clouds.puffy)
@@ -391,6 +391,7 @@ class City extends Canvas {
   // Adds a soft elliptical glow to buf, which is hdr or the river.
   private glow(buf: Float32Array, cx: number, cy: number, rx: number, ry: number, c: RGB, k: number) {
     const { W, H } = this
+    if (buf === this.hdr) this.touch(cx - rx, cy - ry, cx + rx + 1, cy + ry + 1)
     for (let y = Math.max(0, Math.floor(cy - ry)); y < Math.min(H, Math.ceil(cy + ry)); y++)
       for (let x = Math.max(0, Math.floor(cx - rx)); x < Math.min(W, Math.ceil(cx + rx)); x++) {
         const d = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry)
@@ -713,6 +714,7 @@ class City extends Canvas {
     const { W, H, hdr, river, water } = this
     const r0 = Math.floor(BANK * H)
     const r1 = Math.min(H, Math.ceil(QUAY * H))
+    this.touch(0, r0, W, r1)
     for (let y = r0; y < r1; y++) {
       const amp = (0.25 + ((y - r0) / (r1 - r0)) * 0.9) * (H / 200)
       const s = Math.sin(y * 0.45 + this.time * 1.3) * amp + Math.sin(y * 0.17 - this.time * 0.7) * amp * 0.6

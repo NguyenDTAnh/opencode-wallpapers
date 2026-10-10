@@ -247,7 +247,7 @@ class Beach extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3)
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
@@ -331,6 +331,7 @@ class Beach extends Canvas {
     const [, wet] = look.sand
     const ox = look.orb.x * W
     const roll = (t * 0.08) % 1
+    this.touch(0, Math.floor(HORIZON * H), W, Math.min(H, 0.79 * H))
     for (let x = 0; x < W; x++) {
       const u = x / H
       const edge = this.shore(u) * H

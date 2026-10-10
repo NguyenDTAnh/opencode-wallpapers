@@ -8,6 +8,9 @@ export interface Scene {
   readonly W: number
   readonly H: number
   readonly pixels: Uint8Array
+  // Optional: boxes [x0, y0, x1, y1, ...] in pixels around what the last render drew over its static background
+  // (Canvas provides it). Without it every cell keeps the steady fit.
+  readonly touched?: readonly number[]
   resize(W: number, H: number, cells?: boolean): void
   step(dt: number): void
   render(): void

@@ -1,4 +1,5 @@
 // Sky pieces shared by outdoor wallpapers: a depth-graded sky with a sun or moon, stars and drifting clouds.
+import { addBox, touchedBy } from "./canvas"
 import { TAU, fbm1, lerp, smoothstep, type RGB } from "./math"
 
 // The sun or moon: x as a fraction of the width, y and r as fractions of the height.
@@ -74,11 +75,13 @@ export function makeStars(count: number, top: number): Star[] {
 
 // Stars twinkling slowly, fading toward the horizon at `top`.
 export function paintStars(hdr: Float32Array, W: number, H: number, stars: Star[], time: number, top: number, brightness: number) {
+  const touched = touchedBy(hdr)
   for (const s of stars) {
     const x = (s.x * W) | 0
     const y = (s.y * H) | 0
     if (x < 0 || y < 0 || x >= W || y >= H) continue
     const k = s.b * Math.max(0, 1 - s.y / top) * (0.7 + 0.3 * Math.sin(time * 0.8 + s.phase)) * brightness
+    addBox(touched, x, y, x + 1, y + 1)
     const o = (y * W + x) * 3
     hdr[o] += k * s.tint[0]
     hdr[o + 1] += k * s.tint[1]
@@ -118,12 +121,14 @@ export function paintStorm(hdr: Float32Array, W: number, H: number, clouds: Clou
 
 // Clouds shaded from top to bottom; puffy ones are nearly opaque, streaks are thin and soft.
 export function paintClouds(hdr: Float32Array, W: number, H: number, clouds: Cloud[], top: RGB, bottom: RGB, alpha: number, puffy: boolean) {
+  const touched = touchedBy(hdr)
   for (const c of clouds)
     for (const p of c.puffs) {
       const cx = (c.x + p.dx) * H
       const cy = (c.y + p.dy) * H
       const rx = p.rx * H
       const ry = p.ry * H
+      addBox(touched, cx - rx, cy - ry, cx + rx + 1, cy + ry + 1)
       for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
         for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, Math.ceil(cx + rx)); x++) {
           const dx = (x + 0.5 - cx) / rx

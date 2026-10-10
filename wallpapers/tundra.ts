@@ -220,7 +220,7 @@ class Tundra extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
     if (this.look.aurora > 0 && !this.weather.covered) this.drawAurora()
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
@@ -413,6 +413,7 @@ class Tundra extends Canvas {
   private drawAurora() {
     const { W, H, hdr, look } = this
     const t = this.time
+    this.touch(0, 0, W, 0.3 * H)
     for (let x = 0; x < W; x++) {
       const u = x / H
       const band = (0.17 + 0.05 * Math.sin(u * 1.7 + t * 0.07) + 0.03 * Math.sin(u * 4.1 - t * 0.05)) * H

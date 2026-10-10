@@ -173,7 +173,7 @@ class Prehistoric extends Canvas {
   private clouds: Cloud[]
   private smoke = Array.from({ length: SMOKE_PUFFS }, (_, i) => ({ age: (i / SMOKE_PUFFS) * SMOKE_LIFE, seed: Math.random() * 100 }))
   // Lava pixels (hdr index, strength, height down the flow) that pulse each frame.
-  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0) }
+  private lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0), box: [0, 0, 0, 0] }
   private trees: [number, number] = [0, 0]
   private rex = { x: -9, dir: 1, next: 2, phase: 0 }
   private dust: { x: number; y: number; vx: number; age: number }[] = []
@@ -234,9 +234,10 @@ class Prehistoric extends Canvas {
   }
 
   render() {
-    this.hdr.set(this.background)
+    this.restore(this.background)
     if (!this.weather.covered) paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3)
     const orange = this.look.lava[1]
+    this.touch(this.lava.box[0], this.lava.box[1], this.lava.box[2], this.lava.box[3])
     flowLava(this.hdr, this.lava.index, this.lava.k, this.lava.along, this.time, orange[0], orange[1], orange[2])
     const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom]
     paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.look.clouds.puffy)
@@ -418,7 +419,9 @@ class Prehistoric extends Canvas {
       this.blend(i * 3, lerp(red[0], orange[0], h), lerp(red[1], orange[1], h), lerp(red[2], orange[2], h), core[i])
       index.push(i)
     }
-    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]) }
+    // The streams' bounds, which render touches as their pulses flow.
+    const box = index.reduce((b, i) => [Math.min(b[0], i % W), Math.min(b[1], Math.floor(i / W)), Math.max(b[2], (i % W) + 1), Math.max(b[3], Math.floor(i / W) + 1)], [W, H, 0, 0])
+    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along[i]), box }
   }
 
   // A still lake in front of the volcano, mirroring it and the sky, with a muddy shore.
