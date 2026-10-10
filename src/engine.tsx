@@ -177,9 +177,11 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, older
   let bestMask = 0
   let bestErr = Infinity
   let mask = 255
+  let flatErr = 0
   for (let k = 0; k < 8; k++) {
     if (k > 0) mask &= ~(1 << order[k - 1])
     evalMask(q, k === 0 ? 0 : mask)
+    if (k === 0) flatErr = split.err
     if (split.err < bestErr - 0.5) {
       bestErr = split.err
       bestMask = k === 0 ? 0 : mask
@@ -207,8 +209,9 @@ function writeOctant(q: Float32Array, order: Uint8Array, previous: number, older
       }
     }
   }
-  let chosen = bestMask
-  if (previous >= 0 && previous !== bestMask) {
+  const band = bandSplit(q, 4, previous, flatErr, bestErr)
+  let chosen = band < 0 ? bestMask : band
+  if (band < 0 && previous >= 0 && previous !== bestMask) {
     evalMask(q, previous)
     if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS)) chosen = previous
   }
@@ -282,15 +285,18 @@ function writeQuadrant(q8: Float32Array, previous: number, older: number, moving
   }
   let bestMask = 0
   let bestErr = Infinity
+  let flatErr = 0
   for (let m = 0; m < 8; m++) {
     evalQuad(q, m)
+    if (m === 0) flatErr = split.err
     if (split.err < bestErr - 0.5) {
       bestErr = split.err
       bestMask = m
     }
   }
-  let chosen = bestMask
-  if (previous >= 0 && previous !== bestMask) {
+  const band = bandSplit(q, 2, previous, flatErr, bestErr)
+  let chosen = band < 0 ? bestMask : band
+  if (band < 0 && previous >= 0 && previous !== bestMask) {
     evalQuad(q, previous)
     if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS / 2)) chosen = previous
   }
@@ -404,6 +410,82 @@ function holdColor(colors: Uint16Array, input: Uint16Array, shown: Uint16Array, 
   if (colors[o] === input[o] && colors[o + 1] === input[o + 1] && colors[o + 2] === input[o + 2] && colors[o + 3] === input[o + 3]) return
   for (let c = o; c < o + 4; c++) if (Math.abs(colors[c] - shown[c]) >= QUIET) return
   for (let c = o; c < o + 4; c++) colors[c] = shown[c]
+}
+
+// Soft light (glows, haze, sky gradients) reads best as bands across its gradient: a cell's left and right halves, or
+// a run of its rows against the rest (with octants, the top quarter, half or three quarters, or a stripe across the
+// middle where a glow peaks). That gives a gradient two steps per cell instead of a flat block or a speckle of
+// near-equal colors.
+// Cells with more flat error than this (squared, summed over eight sub-pixels' channels) are edges, not soft light.
+const SOFT = 1500
+// How much more squared error than the free split a band may have and still be preferred: enough to absorb the
+// speckle of a level or so that soft light picks up, not enough to flatten real texture such as sand ripples.
+const BAND_TOLERANCE = 8
+// A flat cell takes a band once that band's two colors would differ by about two levels (as squared error saved),
+// so a gentle gradient doesn't stay a flat block; band cells never go flat again while they stay soft. Any other
+// split, a band or say a snowflake that has since moved on, is kept while it fits nearly as well as the best band,
+// so slow motion doesn't flip glyphs between near-equal bands or change them twice as a snowflake passes.
+const FLAT_HYSTERESIS = 8
+const BAND_HYSTERESIS = 100
+// Channel sums of the rows above each row of the cell, and of the whole cell at the end.
+const above = new Float64Array(15)
+
+// The band a soft cell should use, or last frame's split while it still fits; -1 leaves the cell to the free split.
+// q holds rows of two sub-pixels; error thresholds scale with the cell's share of eight sub-pixels.
+function bandSplit(q: Float32Array, rows: number, previous: number, flatErr: number, freeErr: number) {
+  const scale = rows / 4
+  if (flatErr > SOFT * scale) return -1
+  const n = rows * 2
+  const full = (1 << n) - 1
+  // Sums over the cell's left column and last frame's foreground, and the sum of squares.
+  let lr = 0
+  let lg = 0
+  let lb = 0
+  let pr = 0
+  let pg = 0
+  let pb = 0
+  let pn = 0
+  let sq = 0
+  above.fill(0)
+  for (let s = 0; s < n; s++) {
+    const o = ((s >> 1) + 1) * 3
+    const r = q[s * 3]
+    const g = q[s * 3 + 1]
+    const b = q[s * 3 + 2]
+    sq += r * r + g * g + b * b
+    above[o] += r
+    above[o + 1] += g
+    above[o + 2] += b
+    if (!(s & 1)) ((lr += r), (lg += g), (lb += b))
+    if (previous > 0 && previous & (1 << s)) ((pr += r), (pg += g), (pb += b), pn++)
+  }
+  for (let o = 3; o < (rows + 1) * 3; o++) above[o] += above[o - 3]
+  const t = rows * 3
+  cell.sq = sq
+  cell.r = above[t]
+  cell.g = above[t + 1]
+  cell.b = above[t + 2]
+  cell.n = n
+  cell.flat = flatErr
+  let best = full & 0x55
+  let bestErr = splitErr(lr, lg, lb, rows)
+  // Rows a to b - 1; runs that reach the bottom row are the complements of those from the top.
+  for (let a = 0; a < rows - 1; a++)
+    for (let b = a + 1; b < rows; b++) {
+      const err = splitErr(above[b * 3] - above[a * 3], above[b * 3 + 1] - above[a * 3 + 1], above[b * 3 + 2] - above[a * 3 + 2], (b - a) * 2)
+      if (err < bestErr) ((bestErr = err), (best = ((1 << (b * 2)) - 1) ^ ((1 << (a * 2)) - 1)))
+    }
+  if (bestErr > freeErr + BAND_TOLERANCE * scale) return -1
+  const kept = Math.max(0, previous)
+  if (kept === 0 || kept === full) return flatErr <= bestErr + FLAT_HYSTERESIS * scale ? kept : best
+  return splitErr(pr, pg, pb, pn) <= bestErr * 1.35 + BAND_HYSTERESIS * scale ? kept : best
+}
+
+// A split's error from its foreground's channel sums and size: the cell's sum of squares less what each side's mean explains.
+const cell = { sq: 0, r: 0, g: 0, b: 0, n: 0, flat: 0 }
+function splitErr(r: number, g: number, b: number, n: number) {
+  if (n === 0 || n === cell.n) return cell.flat
+  return cell.sq - (r * r + g * g + b * b) / n - ((cell.r - r) ** 2 + (cell.g - g) ** 2 + (cell.b - b) ** 2) / (cell.n - n)
 }
 
 function isBlock(char: number) {

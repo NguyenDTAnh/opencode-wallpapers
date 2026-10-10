@@ -47,7 +47,9 @@ In character mode each cell shows only two colors, so anything thinner than abou
 than a cell, turns into speckle and shimmers as it moves. `Canvas` sets `this.cells` then (not in snaps or pixel mode),
 so a scene can draw bolder there: `thick(radius, min)` gives a stroke radius in pixels that never drops below `min` on
 cells, `blade(spine, widths, color)` draws a frond's leaflets as one scalloped blade, and textures can coarsen or drop
-out. Judge it with `bun dev/preview.ts`, and with `WALLPAPER_OCTANTS=0` for quadrant terminals.
+out. Soft light needs none of this: in low-contrast cells the engine draws gradients as bands across the cell (halves,
+quarters or a middle stripe), so glows, haze and sky gradients stay smooth. Judge it with `bun dev/preview.ts`, and
+with `WALLPAPER_OCTANTS=0` for quadrant terminals.
 
 ### step and render
 
