@@ -109,24 +109,26 @@ let GW = 0
 let GH = 0
 let curve: Uint8Array = new Uint8Array(256)
 let seen: Float32Array = new Float32Array(0)
+let scrim: Float32Array = new Float32Array(0)
 
-// The frame's sub-pixel grid (2x4 per cell, RGB) and tone curve, which refineEdge reads around each cell, and the
-// engine's record of each cell's sub-pixels when its glyph was last chosen here (24 values per cell, -1 to start):
-// most edges hold still, and keep their glyph cheaply.
-export function prepareEdges(frame: Float32Array, width: number, height: number, tone: Uint8Array, record: Float32Array) {
+// The frame's sub-pixel grid (2x4 per cell, RGB), tone curve and text scrim (one strength per sub-pixel), which
+// refineEdge reads around each cell, and the engine's record of each cell's sub-pixels when its glyph was last chosen
+// here (24 values per cell, -1 to start): most edges hold still, and keep their glyph cheaply.
+export function prepareEdges(frame: Float32Array, width: number, height: number, tone: Uint8Array, record: Float32Array, cover: Float32Array) {
   grid = frame
   GW = width
   GH = height
   curve = tone
   seen = record
+  scrim = cover
 }
 
 // Given the octant writeOctant chose for cell (x, y) from its sub-pixels q, looks for a smooth glyph that fits the
 // cell better and writes it instead. Glyphs are compared on a 4x8 grid interpolated from the sub-pixels and their
-// neighbors (toned and scrimmed like q, with the cell's scrim), where a slanted edge is a slanted line rather than
+// neighbors (toned and scrimmed like q), where a slanted edge is a slanted line rather than
 // octants' staircase. Keeps last frame's glyph unless the new one is clearly better. Returns the glyph id used;
 // writeOctant must have been given previous only if it was an octant.
-export function refineEdge(q: Float32Array, previous: number, octant: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number, x: number, y: number, deepR: number, deepG: number, deepB: number, st: number, sb: number) {
+export function refineEdge(q: Float32Array, previous: number, octant: number, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, i: number, o: number, x: number, y: number, deepR: number, deepG: number, deepB: number) {
   if (octant === 0 || octant === 255) return octant
   let range = 0
   for (let c = 0; c < 3; c++) {
@@ -146,9 +148,10 @@ export function refineEdge(q: Float32Array, previous: number, octant: number, ch
   seen.set(q, i * 24)
   for (let ny = 0; ny < 6; ny++) {
     const row = Math.min(GH - 1, Math.max(0, y * 4 - 1 + ny)) * GW
-    const k = ny < 3 ? st : sb
     for (let nx = 0; nx < 4; nx++) {
-      const a = (row + Math.min(GW - 1, Math.max(0, x * 2 - 1 + nx))) * 3
+      const g = row + Math.min(GW - 1, Math.max(0, x * 2 - 1 + nx))
+      const a = g * 3
+      const k = scrim[g]
       const n = (ny * 4 + nx) * 3
       near[n] = curve[grid[a] | 0] * (1 - k) + deepR * k
       near[n + 1] = curve[grid[a + 1] | 0] * (1 - k) + deepG * k

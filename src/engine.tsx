@@ -45,18 +45,19 @@ const LOWER_HALF = 0x2584
 const BLOCKS_START = 0x2580
 const BLOCKS_END = 0x259f
 const SPACE = 32
-// Scrim reach in cells horizontally and half-cells vertically.
-const SCRIM_X = 4
-const SCRIM_Y = 4
 // Share of the distance to white that light-theme scrims keep, so dark text sits on a pale tint of the scene.
 const LIGHT_SCRIM = 0.15
-// A click pokes the scene only where it shows through clearly: a blank surface cell with little scrim (mask value).
-const OPEN = 0.15
+// A click pokes the scene only where it shows through clearly: a blank surface cell away from text (see buildNearText).
+const OPEN = 0.5
+// How near text the panels OpenCode draws with their own surface (dialogs, the sidebar, the prompt) count, at least.
+const PANEL = 0.5
+// How far past text, in sub-pixels (half a cell wide, a quarter cell tall), the scene counts as near it.
+const REACH = 7
 
 // Each brightness compresses the scene into a range that keeps text readable on top of it, after scaling it by gain,
-// and sets how far scrims cover the scene (scrim) and how fast sparse text saturates them (reach): brighter scenes
-// need firmer scrims. In a light theme the scene is instead lifted toward white, with black at wash.
-function level(gain: number, wash: number, scrim: number, reach: number) {
+// and sets how far the whole scene fades toward the scrim color (scrim): brighter scenes need a firmer scrim. In a
+// light theme the scene is instead lifted toward white, with black at wash.
+function level(gain: number, wash: number, scrim: number) {
   const dark = new Uint8Array(256)
   const light = new Uint8Array(256)
   for (let v = 0; v < 256; v++) {
@@ -65,12 +66,12 @@ function level(gain: number, wash: number, scrim: number, reach: number) {
     dark[v] = Math.round(soft * 255)
     light[v] = Math.round((wash + (1 - wash) * Math.min(1, soft * 1.9)) * 255)
   }
-  return { dark, light, scrim, reach }
+  return { dark, light, scrim }
 }
 const LEVELS: Record<Brightness, ReturnType<typeof level>> = {
-  subtle: level(0.6, 0.65, 0.9, 3),
-  normal: level(1, 0.5, 0.93, 3.5),
-  vivid: level(1.6, 0.35, 0.96, 4.5),
+  subtle: level(0.6, 0.65, 0.6),
+  normal: level(1, 0.5, 0.65),
+  vivid: level(1.6, 0.35, 0.7),
 }
 // Night scenes keep their color: it is what separates them from light text.
 const DESATURATE = { day: 0.22, sunset: 0.22, night: 0.04 }
@@ -86,29 +87,56 @@ function mix(a: Uint8Array, b: Uint8Array, out: Uint8Array, t: number) {
   for (let p = 0; p < out.length; p++) out[p] = a[p] + (b[p] - a[p]) * t
 }
 
-function blurRows(src: Float32Array, dst: Float32Array, w: number, h: number, r: number) {
-  const inv = 1 / (r * 2 + 1)
-  for (let y = 0; y < h; y++) {
-    const row = y * w
-    let sum = 0
-    for (let x = -r; x <= r; x++) sum += src[row + Math.min(w - 1, Math.max(0, x))]
-    for (let x = 0; x < w; x++) {
-      dst[row + x] = sum * inv
-      sum += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]
+// Writes how near text each octant sub-pixel is from the cells' shapes (1 text, 2 panel): 1 under text, falling off
+// smoothly to 0 REACH sub-pixels away, and at least PANEL across panels. Clicks and the text map use it.
+function buildNearText(shapes: Uint8Array, out: Float32Array, W: number, H: number) {
+  const GW = W * 2
+  const GH = H * 4
+  for (let gy = 0; gy < GH; gy++) {
+    const row = (gy >> 2) * W
+    for (let gx = 0; gx < GW; gx++) out[gy * GW + gx] = shapes[row + (gx >> 1)] === 1 ? 0 : 1e9
+  }
+  distanceField(out, GW, GH)
+  const span = REACH - 0.5
+  for (let gy = 0; gy < GH; gy++) {
+    const row = (gy >> 2) * W
+    for (let gx = 0; gx < GW; gx++) {
+      const g = gy * GW + gx
+      const t = Math.min(1, Math.max(0, (out[g] - 0.5) / span))
+      const near = 1 - t * t * (3 - 2 * t)
+      out[g] = shapes[row + (gx >> 1)] === 2 && near < PANEL ? PANEL : near
     }
   }
 }
 
-function blurColumns(src: Float32Array, dst: Float32Array, w: number, h: number, r: number) {
-  const inv = 1 / (r * 2 + 1)
-  for (let x = 0; x < w; x++) {
-    let sum = 0
-    for (let y = -r; y <= r; y++) sum += src[Math.min(h - 1, Math.max(0, y)) * w + x]
-    for (let y = 0; y < h; y++) {
-      dst[y * w + x] = sum * inv
-      sum += src[Math.min(h - 1, y + r + 1) * w + x] - src[Math.max(0, y - r) * w + x]
+// Turns a field of 0 (text) and large values into each sample's approximate distance to the nearest 0, in two
+// chamfer passes (steps of 1 straight and √2 diagonally).
+function distanceField(d: Float32Array, w: number, h: number) {
+  const D = Math.SQRT2
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      let v = d[i]
+      if (x > 0 && d[i - 1] + 1 < v) v = d[i - 1] + 1
+      if (y > 0) {
+        if (d[i - w] + 1 < v) v = d[i - w] + 1
+        if (x > 0 && d[i - w - 1] + D < v) v = d[i - w - 1] + D
+        if (x < w - 1 && d[i - w + 1] + D < v) v = d[i - w + 1] + D
+      }
+      d[i] = v
     }
-  }
+  for (let y = h - 1; y >= 0; y--)
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x
+      let v = d[i]
+      if (x < w - 1 && d[i + 1] + 1 < v) v = d[i + 1] + 1
+      if (y < h - 1) {
+        if (d[i + w] + 1 < v) v = d[i + w] + 1
+        if (x < w - 1 && d[i + w + 1] + D < v) v = d[i + w + 1] + D
+        if (x > 0 && d[i + w - 1] + D < v) v = d[i + w - 1] + D
+      }
+      d[i] = v
+    }
 }
 
 // Terminals that draw octant glyphs themselves; elsewhere fall back to quadrants, which every font has.
@@ -511,10 +539,6 @@ function isBlock(char: number) {
   return char >= BLOCKS_START && char <= BLOCKS_END
 }
 
-function clamp01(value: number, max: number) {
-  return value < 0 ? 0 : value > max ? max : value
-}
-
 function applyTint(colors: Uint16Array | Uint8Array, o: number, tint: number) {
   if (tint === NO_TINT || tint === TINT_ZERO) return
   const dr = ((tint >> 20) & 1023) - 256
@@ -706,7 +730,8 @@ export interface Engine {
 }
 
 // Post-processes OpenCode's final frame: cells painted with neutral OpenCode theme surfaces are replaced by the scene, drawn
-// as octant or quadrant blocks (or, opt-in, a real kitty image behind the text), with a soft scrim around text.
+// as octant or quadrant blocks (or, opt-in, a real kitty image behind the text), dimmed evenly toward a scrim color so
+// text reads on top.
 export function createEngine(
   context: Context,
   options: {
@@ -745,7 +770,7 @@ export function createEngine(
   const octants = process.env.WALLPAPER_OCTANTS !== "0" && (process.env.WALLPAPER_OCTANTS === "1" || OCTANT_TERMINALS.test(`${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`))
   // Octant terminals also draw the smooth mosaics and eighth blocks themselves, for smoother edges.
   const smooth = octants && process.env.WALLPAPER_SMOOTH !== "0"
-  let scratch = new Float32Array(0)
+  let shapes = new Uint8Array(0)
   let surface = new Uint8Array(0)
   let cellTint = new Int32Array(0)
   let previousMask = new Int16Array(0)
@@ -778,7 +803,7 @@ export function createEngine(
   let mapFresh = false
   // Refitting only what changed (see settle and regrid). blended is the history-blended scene the grid is built from;
   // per cell, stale marks pixels to blend again, moved the cells whose blended pixels changed and refit those whose grid
-  // did. fitted marks cells whose last fit (fitChar, fitFg, fitBg, under scrim fitTop and fitBottom) still holds.
+  // did. fitted marks cells whose last fit (fitChar, fitFg, fitBg) still holds.
   let dirty = true
   let blended = new Uint8Array(0)
   let stale = new Uint8Array(0)
@@ -788,8 +813,6 @@ export function createEngine(
   let fitChar = new Uint32Array(0)
   let fitFg = new Uint16Array(0)
   let fitBg = new Uint16Array(0)
-  let fitTop = new Float64Array(0)
-  let fitBottom = new Float64Array(0)
   let colStart = new Int32Array(0)
   let rowStart = new Int32Array(0)
   let cellX = new Int32Array(0)
@@ -847,8 +870,8 @@ export function createEngine(
     return setting === "1" && renderer.capabilities?.kitty_graphics === true
   }
 
-  // Builds the scene image with the text scrim and tints baked in, for the cells marked in imageCell.
-  const publishImage = (px: Uint8Array, PW: number, PH: number, W: number, H: number, MH: number, scrim: Scrim, look: (typeof LEVELS)[Brightness], curve: Uint8Array) => {
+  // Builds the scene image with the scrim (k of the way toward it) and tints baked in, for the cells marked in imageCell.
+  const publishImage = (px: Uint8Array, PW: number, PH: number, W: number, H: number, scrim: Scrim, curve: Uint8Array, k: number) => {
     if (imagePixels.length !== PW * PH * 4) imagePixels = new Uint8Array(PW * PH * 4)
     const img = imagePixels
     const cw = PW / W
@@ -857,21 +880,8 @@ export function createEngine(
       const row = Math.min(H - 1, Math.floor(iy / chh))
       const depth = row / Math.max(1, H - 1)
       const [deepR, deepG, deepB] = scrimAt(scrim, depth, light)
-      const my = clamp01((iy + 0.5) / (chh / 2) - 0.5, MH - 1)
-      const my0 = Math.floor(my)
-      const my1 = Math.min(MH - 1, my0 + 1)
-      const fy = my - my0
       for (let ix = 0; ix < PW; ix++) {
-        const col = Math.min(W - 1, Math.floor(ix / cw))
-        const ci = row * W + col
-        const mx = clamp01((ix + 0.5) / cw - 0.5, W - 1)
-        const mx0 = Math.floor(mx)
-        const mx1 = Math.min(W - 1, mx0 + 1)
-        const fx = mx - mx0
-        const m =
-          (mask[my0 * W + mx0] * (1 - fx) + mask[my0 * W + mx1] * fx) * (1 - fy) +
-          (mask[my1 * W + mx0] * (1 - fx) + mask[my1 * W + mx1] * fx) * fy
-        const k = look.scrim * Math.min(1, m * look.reach)
+        const ci = row * W + Math.min(W - 1, Math.floor(ix / cw))
         const p = (iy * PW + ix) * 4
         img[p] = curve[px[p]] * (1 - k) + deepR * k
         img[p + 1] = curve[px[p + 1]] * (1 - k) + deepG * k
@@ -1006,7 +1016,7 @@ export function createEngine(
         mix(from.scene.pixels, scene.pixels, mixed, smoothstep(0, 1, fade))
       }
     }
-    // Mid-fade the text scrim and desaturation blend from the old look to the new one along with the scene.
+    // Mid-fade the scrim and desaturation blend from the old look to the new one along with the scene.
     const t = from ? smoothstep(0, 1, fade) : 1
     const was = from ?? { wallpaper: wallpaper!, settings: settings! }
     const scrim = blendScrim(was.wallpaper.scrim[was.settings.time], wallpaper!.scrim[settings!.time], t)
@@ -1065,8 +1075,6 @@ export function createEngine(
       fitChar = new Uint32Array(cells)
       fitFg = new Uint16Array(cells * 3)
       fitBg = new Uint16Array(cells * 3)
-      fitTop = new Float64Array(cells)
-      fitBottom = new Float64Array(cells)
       // Pixel columns and rows of each cell, and the cell of each pixel column and row.
       colStart = Int32Array.from({ length: W + 1 }, (_, x) => Math.floor((x * PW) / W))
       rowStart = Int32Array.from({ length: H + 1 }, (_, y) => Math.floor((y * PH) / H))
@@ -1115,43 +1123,37 @@ export function createEngine(
     lastScrim = scrim
     lastCurve = curve
 
-    // Soft scrim: a blurred mask of where text is, at half-cell vertical resolution. The scene fades to
-    // near-black under and around text with no hard edge, so letters and the spaces between them match.
-    const MH = H * 2
-    if (mask.length < W * MH) {
-      mask = new Float32Array(W * MH)
-      scratch = new Float32Array(W * MH)
-      surface = new Uint8Array(W * H)
-      cellTint = new Int32Array(W * H)
+    // How near text each sub-pixel is, rebuilt only when the set of text cells changes.
+    let reshaped = surface.length !== cells
+    if (reshaped) {
+      surface = new Uint8Array(cells)
+      cellTint = new Int32Array(cells)
+      shapes = new Uint8Array(cells)
+      mask = new Float32Array(GW * GH)
     }
     if (previousMask.length !== cells) previousMask = new Int16Array(cells).fill(-1)
     if (olderMask.length !== cells) olderMask = new Int16Array(cells).fill(-1)
-    mask.fill(0, 0, W * MH)
     for (let i = 0; i < cells; i++) {
-      const tint = tintOf(key(bg, i * 4))
+      const k = key(bg, i * 4)
+      const tint = tintOf(k)
       const on = tint !== NO_TINT
       surface[i] = on ? 1 : 0
       cellTint[i] = tint
-      if (!on || char[i] === SPACE || (isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT)) continue
-      const x = i % W
-      const y = (i / W) | 0
-      mask[y * 2 * W + x] = 1
-      mask[(y * 2 + 1) * W + x] = 1
+      // 1 for text, 2 for a blank cell of a panel (a surface other than the base, such as a dialog), else 0.
+      const shape = !on ? 0 : char[i] !== SPACE && !(isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT) ? 1 : k !== base && tint === TINT_ZERO ? 2 : 0
+      if (shapes[i] !== shape) ((shapes[i] = shape), (reshaped = true))
     }
-    for (let pass = 0; pass < 2; pass++) {
-      blurRows(mask, scratch, W, MH, SCRIM_X)
-      blurColumns(scratch, mask, W, MH, SCRIM_Y)
-    }
+    if (reshaped) buildNearText(shapes, mask, W, H)
     if (open.length !== cells) open = new Uint8Array(cells)
     openW = W
-    for (let i = 0; i < cells; i++) open[i] = surface[i] && char[i] === SPACE && mask[((i / W) | 0) * 2 * W + (i % W)] < OPEN ? 1 : 0
+    for (let i = 0; i < cells; i++) open[i] = surface[i] && char[i] === SPACE && mask[((i / W) | 0) * 4 * GW + (i % W) * 2] < OPEN ? 1 : 0
     if (frames % MAP_EVERY === 1) {
       const cover = textMap.cover
       cover.fill(0)
       mapCount.fill(0)
       for (let i = 0; i < cells; i++) {
         const g = Math.floor((((i / W) | 0) * MAP_ROWS) / H) * MAP_COLS + Math.floor(((i % W) * MAP_COLS) / W)
-        cover[g] += surface[i] ? Math.min(1, mask[((i / W) | 0) * 2 * W + (i % W)] * look.reach) : 1
+        cover[g] += surface[i] ? mask[((i / W) | 0) * 4 * GW + (i % W) * 2] : 1
         mapCount[g]++
       }
       for (let g = 0; g < cover.length; g++) cover[g] /= Math.max(1, mapCount[g])
@@ -1187,12 +1189,8 @@ export function createEngine(
     inputFg.set(fg)
     inputBg.set(bg)
     const q = quad
-    if (smooth) prepareEdges(grid, GW, GH, curve, edgeSeen)
-    const cover = look.scrim
-    const reach = look.reach
+    if (smooth) prepareEdges(grid, GW, GH, curve, edgeSeen, mask)
     for (let y = 0; y < H; y++) {
-      const mTop = y * 2 * W
-      const mBottom = (y * 2 + 1) * W
       const [deepR, deepG, deepB] = scrimAt(scrim, y / Math.max(1, H - 1), light)
       for (let x = 0; x < W; x++) {
         const i = y * W + x
@@ -1205,21 +1203,21 @@ export function createEngine(
         const edgeTint = isBlock(ch) ? tintOf(fgKey(fg, o)) : NO_TINT
         const edge = edgeTint !== NO_TINT
         if (!surface[i] && !edge) continue
-        const st = cover * Math.min(1, mask[mTop + x] * reach)
-        const sb = cover * Math.min(1, mask[mBottom + x] * reach)
         const fits = !edge && ch === SPACE && !atCursor(x, y)
-        // Same grid and scrim as when this cell was last fitted, and fitting is idempotent under hysteresis: reuse it.
-        if (fits && reusable && st === fitTop[i] && sb === fitBottom[i]) {
+        // Same grid as when this cell was last fitted, and fitting is idempotent under hysteresis: reuse it.
+        if (fits && reusable) {
           reuseFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
           fitted[i] = 1
           applyTint(bg, o, cellTint[i])
           if (char[i] !== SPACE) applyTint(fg, o, cellTint[i])
           continue
         }
-        // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order.
+        // Eight square sub-pixels per cell, 2 wide by 4 tall, in row-major order. The scrim darkens the whole scene
+        // evenly, so text needs no backing of its own.
+        const k = look.scrim
         for (let s = 0; s < 8; s++) {
-          const a = ((y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)) * 3
-          const k = s < 4 ? st : sb
+          const g = (y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)
+          const a = g * 3
           q[s * 3] = curve[grid[a] | 0] * (1 - k) + deepR * k
           q[s * 3 + 1] = curve[grid[a + 1] | 0] * (1 - k) + deepG * k
           q[s * 3 + 2] = curve[grid[a + 2] | 0] * (1 - k) + deepB * k
@@ -1247,23 +1245,21 @@ export function createEngine(
           const was = previousMask[i]
           // A dot glyph where a still point of light falls on an otherwise flat cell; a cell with a point is fitted
           // afresh every frame, and once more after, since the point isn't part of the grid.
-          if (dots.size[i] && placeDot(dots, i, x, y, q, grid, GW, st, sb, curve, was === DOT, char, fg, bg, o)) {
+          if (dots.size[i] && placeDot(dots, i, x, y, q, grid, mask, GW, curve, was === DOT, char, fg, bg, o)) {
             previousMask[i] = DOT
             applyTint(bg, o, cellTint[i])
             applyTint(fg, o, cellTint[i])
             continue
           }
-          if (dots.size[i]) lightDot(dots, i, x, y, q, grid, GW, st, sb, curve)
+          if (dots.size[i]) lightDot(dots, i, x, y, q, grid, mask, GW, curve)
           if (octants) {
             const octant = writeOctant(q, order, was >= 0 && was < FIRST ? was : -1, olderMask[i], moving[i], char, fg, bg, i, o)
             // Soft cells keep their gradient band; still edges may take a smooth glyph instead of the octant, but not
             // where something moves (it would flip between wedge and octant as it glides) or over the sun and moon.
-            previousMask[i] = smooth && !softFit && !round[i] && !moving[i] ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB, st, sb) : octant
+            previousMask[i] = smooth && !softFit && !round[i] && !moving[i] ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB) : octant
           } else previousMask[i] = writeQuadrant(q, was, olderMask[i], moving[i], char, fg, bg, i, o)
           if (previousMask[i] !== was) olderMask[i] = was
           rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg)
-          fitTop[i] = st
-          fitBottom[i] = sb
           // A fit made with a point lit in, or while something moved (see tolerance), isn't reused next frame.
           fitted[i] = dots.size[i] || moving[i] ? 0 : 1
           applyTint(bg, o, cellTint[i])
@@ -1279,7 +1275,7 @@ export function createEngine(
 
     // Build next frame's image now; the back layer places it before OpenCode draws, so text lands on top.
     if (pixels && (advanced || !nextImage)) {
-      const image = publishImage(blended, PW, PH, W, H, MH, scrim, look, curve)
+      const image = publishImage(blended, PW, PH, W, H, scrim, curve, look.scrim)
       if (image) {
         nextImage?.dispose()
         nextImage = image
