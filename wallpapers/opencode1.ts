@@ -375,14 +375,15 @@ class OpenCodeMark extends Canvas {
     return { x: i * s, y: j * s, size, kind, phase: rand(0, TAU), vx: 0, far: 0, age: 0, life: BUILT + rand(32, 48), poked: false, kick: 0 }
   }
 
-  // Teeming: a mark assembles out of falling blocks somewhere open, away from the middle where text sits.
+  // Teeming: a mark assembles out of falling blocks somewhere open, away from the middle where text sits and, where
+  // there is room, between the drifting lanes.
   private build() {
     const s = this.square / this.H
     const w = COLS * 2 * s
     const h = ROWS * 2 * s
     const A = this.A
-    for (let n = 0; n < 12; n++) {
-      const [x, y] = this.openSpot(0.03, A - w - 0.03, 0.03, 0.97 - h)
+    for (let n = 0; n < 16; n++) {
+      const [x, y] = n < 10 ? this.openSpot(0.03, A - w - 0.03, 0.29, 0.81 - h) : this.openSpot(0.03, A - w - 0.03, 0.03, 0.97 - h)
       if (x + w > A / 2 - 0.45 && x < A / 2 + 0.45 && y + h > 0.3 && y < 0.7) continue
       const m = this.newMark(x, y, 2)
       if (!m) continue
