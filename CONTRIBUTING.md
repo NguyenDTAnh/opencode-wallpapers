@@ -262,8 +262,8 @@ with how far their tips move and a weight from roots to tips, and `draw()` right
 
 ## Scrim
 
-Text gets a scrim that fades the scene toward a dark color under and just around each character. `scrim` gives that color (0 to 255) for
-each time of day at the top, middle and bottom of the screen. Darker, more saturated versions of the scene's own colors
+The whole scene fades part of the way toward a dark color, so text reads on top of it. `scrim` gives that color (0 to
+255) for each time of day at the top, middle and bottom of the screen. Darker, more saturated versions of the scene's own colors
 at those depths read better than black: dark sky blue at the top and dark green over grass by day, deep navy at night.
 Check that text stays readable with `bun dev/preview.ts` at every time of day.
 
