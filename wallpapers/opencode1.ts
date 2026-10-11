@@ -57,7 +57,7 @@ const LOOKS: Record<Time, Look> = {
       [0.6, 0.6, 0.595],
       [0.555, 0.555, 0.55],
     ],
-    pool: { x: 0.62, y: 0.25, reach: 0.75, color: [0.08, 0.08, 0.078] },
+    pool: { x: 0.6, y: 0.2, reach: 0.8, color: [0.11, 0.11, 0.105] },
     shadow: [0.8, 0.8, 0.82],
     cast: [1 / 3, 1 / 3],
     marks: [
@@ -110,10 +110,10 @@ const LOOKS: Record<Time, Look> = {
   // A deep navy checker; the marks glow cobalt, violet and teal, with liquid light inside, and light the floor.
   night: {
     floor: [
-      [0.011, 0.015, 0.038],
-      [0.007, 0.01, 0.028],
+      [0.017, 0.024, 0.058],
+      [0.011, 0.016, 0.042],
     ],
-    pool: { x: 0.5, y: -0.1, reach: 0.9, color: [0.004, 0.01, 0.03] },
+    pool: { x: 0.45, y: -0.15, reach: 0.95, color: [0.006, 0.016, 0.045] },
     shadow: [1, 1, 1],
     cast: [0, 0],
     marks: [
@@ -416,7 +416,7 @@ class OpenCodeMark extends Canvas {
           if (egg > 0) {
             const c = Math.floor((i - ei) / eb)
             const rr = Math.floor((j - ej) / eb)
-            if (c >= 0 && c < COLS && rr >= 0 && rr < ROWS && (rr !== 1 || c === 0 || c === COLS - 1)) k += egg * (rr >= 2 && rr <= 3 && c > 0 && c < COLS - 1 ? 0.5 : 1)
+            if (c >= 0 && c < COLS && rr >= 0 && rr < ROWS && (rr !== 1 || c === 0 || c === COLS - 1)) k += 0.6 * egg * (rr >= 2 && rr <= 3 && c > 0 && c < COLS - 1 ? 0.5 : 1)
           }
           glow[(j * cols + i) * 2 + 1] = k
         }
