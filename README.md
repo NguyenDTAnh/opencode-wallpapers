@@ -47,7 +47,9 @@ With a light OpenCode theme the scene is washed out toward white instead of dimm
 | `beach` | Waves washing up a sandy beach between swaying palms, with a sailboat on the horizon now and then. |
 | `city` | A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then. |
 | `zen` | A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then. |
-| `prehistoric` | A smoking volcano over ferns and cycads, with a T. rex stomping by now and then. |
+| `prehistoric` | A smoking volcano over a lake, a winding river and lush ferns, cycads and tree ferns, with a T. rex stomping by now and then. |
+| `rider` | A red capsule bike on pale cracked concrete, its rider walking up to it, with another of the gang speeding by now and then. |
+| `megacity` | A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light. |
 | `dome` | A vast black energy dome over a ruined city, its foot blazing with light under a ring of clouds, with a gunship crossing now and then. |
 
 ### Activity
@@ -65,7 +67,9 @@ Every wallpaper has three activity levels, which set how much is going on behind
 | `beach` | Sea, waves, sand and palm trees | Adds leaping dolphins and seagulls | Adds a crab, a surfer, an umbrella and a sandcastle |
 | `city` | Skyline, river and light traffic on the highway | Adds a train crossing the bridge and more traffic | Adds neon signs, boats on the river, people on the street, and rain at night |
 | `zen` | Garden, pond ripples, petals and a bamboo fountain | Adds koi circling under the lily pads | Adds more koi, a frog on a lily pad and dragonflies |
-| `prehistoric` | Volcano, smoke, ferns and cycads | Adds a browsing sauropod and circling pterosaurs | Adds a triceratops herd, dragonflies and a lake with something in it |
+| `prehistoric` | Volcano, smoke, lake, river and plants | Adds a browsing sauropod and circling pterosaurs | Adds a triceratops herd, dragonflies and something in the lake |
+| `rider` | The bike, the rider standing by it, and drifting dust | He walks slowly up to the bike and back, and paper and pebbles skitter in the gusts | He rides off in a red tail-light streak and slides back in sideways |
+| `megacity` | The glowing city, windows coming and going, and a distant bike now and then | Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky | Adds a biker gang streaming through, a sideways slide now and then, and an airship overhead |
 | `dome` | The dome, its slowly breathing light and the creeping cloud ring | Light pulses out along the streets, rubble floats up and the sky's ripples spread | The dome swells and recedes, shockwaves roll through the clouds, rubble swirls up and lightning flickers |
 
 ### Time of day
@@ -95,6 +99,11 @@ menu to keep it fixed.
 - **Prehistoric:** a hazy blue sky over glowing lava by day, dinosaurs under an ashy red sky with the sun dimmed by
   smoke at sunset, and a moonlit night where red and orange lava runs down the volcano, lights its smoke and shimmers
   on the lake.
+- **Rider:** pale cool concrete by day, warm amber ground and long shadows at sunset, and dark blue asphalt at
+  night, where the bike's amber headlamp and red tail lamp glow and the pill on the rider's back turns cobalt.
+- **Megacity:** a hazy steel-blue city under a pale smoggy sky by day, an orange and magenta sun glaring down
+  the avenue between the towers at sunset, and at night deep blue towers full of cyan and gold windows over a
+  green-teal haze, with red-orange light trails on the road.
 - **Dome:** a smoky pale sky over a gray-green ruin with the dome's light dimmed by day, warm-lit clouds under an
   orange-red sky and a green-gold blaze at sunset, and at night a near-black sky over deep blue clouds with the city
   lit green and teal from the dome's foot.
@@ -113,7 +122,7 @@ it fixed.
   winter.
 - **Zen garden:** cherry blossom in spring, green leaves in summer, red and gold leaves falling in autumn, and bare
   branches under a light snowfall in winter.
-- **Ocean, space, tundra, city, prehistoric and Dome** look the same all year.
+- **Ocean, space, tundra, city, prehistoric, rider, megacity and dome** look the same all year.
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -138,9 +147,10 @@ Wallpapers quietly follow what the agent is doing:
 - **Working:** the scene moves a little faster while any session runs, barely at all when calm.
 - **Done:** when the last running session finishes, the wallpaper's visitor shows up: the whale, a tumbleweed, a
   toucan (fireflies flashing together at night), a comet, the tractor, a snowy owl, a sailboat, the blimp, the heron,
-  the T. rex or the gunship.
+  the T. rex, another rider of the gang, a biker gang or the gunship.
 - **Error:** after a failed run, dark clouds roll in (in the ocean and jungle the light shafts fade, in space the star
-  dims, and in Dome the blaze sinks) and the scene darkens slightly. It clears when the agent works again, or after a couple of minutes.
+  dims, on the rider's concrete their shadows drift by, and over the dome its blaze sinks) and the scene darkens
+  slightly. It clears when the agent works again, or after a couple of minutes.
 
 ## Clicks and surprises
 
@@ -159,6 +169,8 @@ every click; dialogs, popups and text are never pokes.
 | `city` | Pigeons burst up off the street | A caped superhero flies over the towers |
 | `zen` | A ripple on the pond, or sparrows up out of the garden | A tanuki with a leaf on its head sits by the pond |
 | `prehistoric` | Little feathered dinosaurs flap up out of the ferns | A time machine arrives in a flash and leaves trails of fire |
+| `rider` | The pavement cracks a little and pebbles scatter | Chunks of pavement float up around a crater, then drop back |
+| `megacity` | A bike rides up the avenue from the road, or a burst of windows lights up on the towers | A dome of light swells up silently at the far end of the avenue |
 | `dome` | A ripple through the clouds, a shockwave from the dome, or rubble kicked up off the city | A red motorbike tears across the city in a streak of tail light |
 
 Click reactions that involve animals need the lively or teeming level. The rare events come along about once every
@@ -211,6 +223,7 @@ At teeming, played back at 3x speed:
 | ![Farm in motion](screenshots/farm.gif) | ![Tundra in motion](screenshots/tundra.gif) |
 | ![Beach in motion](screenshots/beach.gif) | ![City in motion](screenshots/city.gif) |
 | ![Zen garden in motion](screenshots/zen.gif) | ![Prehistoric in motion](screenshots/prehistoric.gif) |
+| ![Rider in motion](screenshots/rider.gif) | ![Megacity in motion](screenshots/megacity.gif) |
 | ![Dome in motion](screenshots/dome.gif) | |
 
 | | Day | Sunset | Night |
@@ -225,6 +238,8 @@ At teeming, played back at 3x speed:
 | City | ![City by day](screenshots/city.png) | ![City at sunset](screenshots/city-sunset.png) | ![City at night](screenshots/city-night.png) |
 | Zen garden | ![Zen garden by day](screenshots/zen.png) | ![Zen garden at sunset](screenshots/zen-sunset.png) | ![Zen garden at night](screenshots/zen-night.png) |
 | Prehistoric | ![Prehistoric by day](screenshots/prehistoric.png) | ![Prehistoric at sunset](screenshots/prehistoric-sunset.png) | ![Prehistoric at night](screenshots/prehistoric-night.png) |
+| Rider | ![Rider by day](screenshots/rider.png) | ![Rider at sunset](screenshots/rider-sunset.png) | ![Rider at night](screenshots/rider-night.png) |
+| Megacity | ![Megacity by day](screenshots/megacity.png) | ![Megacity at sunset](screenshots/megacity-sunset.png) | ![Megacity at night](screenshots/megacity-night.png) |
 | Dome | ![Dome by day](screenshots/dome.png) | ![Dome at sunset](screenshots/dome-sunset.png) | ![Dome at night](screenshots/dome-night.png) |
 
 ## License
