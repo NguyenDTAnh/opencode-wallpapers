@@ -3,10 +3,11 @@ import { city } from "./city"
 import { desert } from "./desert"
 import { farm } from "./farm"
 import { jungle } from "./jungle"
+import { megacity } from "./megacity"
 import { ocean } from "./ocean"
 import { prehistoric } from "./prehistoric"
 import { space } from "./space"
 import { tundra } from "./tundra"
 import { zen } from "./zen"
 
-export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric]
+export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, megacity]

@@ -48,6 +48,7 @@ With a light OpenCode theme the scene is washed out toward white instead of dimm
 | `city` | A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then. |
 | `zen` | A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then. |
 | `prehistoric` | A smoking volcano over ferns and cycads, with a T. rex stomping by now and then. |
+| `megacity` | A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light. |
 
 ### Activity
 
@@ -65,6 +66,7 @@ Every wallpaper has three activity levels, which set how much is going on behind
 | `city` | Skyline, river and light traffic on the highway | Adds a train crossing the bridge and more traffic | Adds neon signs, boats on the river, people on the street, and rain at night |
 | `zen` | Garden, pond ripples, petals and a bamboo fountain | Adds koi circling under the lily pads | Adds more koi, a frog on a lily pad and dragonflies |
 | `prehistoric` | Volcano, smoke, ferns and cycads | Adds a browsing sauropod and circling pterosaurs | Adds a triceratops herd, dragonflies and a lake with something in it |
+| `megacity` | The glowing city, windows coming and going, and a distant bike now and then | Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky | Adds a biker gang streaming through, a sideways slide now and then, and an airship overhead |
 
 ### Time of day
 
@@ -93,6 +95,9 @@ menu to keep it fixed.
 - **Prehistoric:** a hazy blue sky over glowing lava by day, dinosaurs under an ashy red sky with the sun dimmed by
   smoke at sunset, and a moonlit night where red and orange lava runs down the volcano, lights its smoke and shimmers
   on the lake.
+- **Megacity:** a hazy steel-blue city under a pale smoggy sky by day, an orange and magenta sun glaring down
+  the avenue between the towers at sunset, and at night deep blue towers full of cyan and gold windows over a
+  green-teal haze, with red-orange light trails on the road.
 
 ## Seasons and weather
 
@@ -108,7 +113,7 @@ it fixed.
   winter.
 - **Zen garden:** cherry blossom in spring, green leaves in summer, red and gold leaves falling in autumn, and bare
   branches under a light snowfall in winter.
-- **Ocean, space, tundra, city and prehistoric** look the same all year.
+- **Ocean, space, tundra, city, prehistoric and Megacity** look the same all year.
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -132,8 +137,8 @@ Wallpapers quietly follow what the agent is doing:
 
 - **Working:** the scene moves a little faster while any session runs, barely at all when calm.
 - **Done:** when the last running session finishes, the wallpaper's visitor shows up: the whale, a tumbleweed, a
-  toucan (fireflies flashing together at night), a comet, the tractor, a snowy owl, a sailboat, the blimp, the heron or
-  the T. rex.
+  toucan (fireflies flashing together at night), a comet, the tractor, a snowy owl, a sailboat, the blimp, the heron, the
+  T. rex or a biker gang.
 - **Error:** after a failed run, dark clouds roll in (in the ocean and jungle the light shafts fade, in space the star
   dims) and the scene darkens slightly. It clears when the agent works again, or after a couple of minutes.
 
@@ -154,6 +159,7 @@ every click; dialogs, popups and text are never pokes.
 | `city` | Pigeons burst up off the street | A caped superhero flies over the towers |
 | `zen` | A ripple on the pond, or sparrows up out of the garden | A tanuki with a leaf on its head sits by the pond |
 | `prehistoric` | Little feathered dinosaurs flap up out of the ferns | A time machine arrives in a flash and leaves trails of fire |
+| `megacity` | A bike rides up the avenue from the road, or a burst of windows lights up on the towers | A dome of light swells up silently at the far end of the avenue |
 
 Click reactions that involve animals need the lively or teeming level. The rare events come along about once every
 hour or two of watching, never sooner than half an hour apart, and changing settings doesn't reset the wait.
@@ -205,6 +211,7 @@ At teeming, played back at 3x speed:
 | ![Farm in motion](screenshots/farm.gif) | ![Tundra in motion](screenshots/tundra.gif) |
 | ![Beach in motion](screenshots/beach.gif) | ![City in motion](screenshots/city.gif) |
 | ![Zen garden in motion](screenshots/zen.gif) | ![Prehistoric in motion](screenshots/prehistoric.gif) |
+| ![Megacity in motion](screenshots/megacity.gif) | |
 
 | | Day | Sunset | Night |
 | --- | --- | --- | --- |
@@ -218,6 +225,7 @@ At teeming, played back at 3x speed:
 | City | ![City by day](screenshots/city.png) | ![City at sunset](screenshots/city-sunset.png) | ![City at night](screenshots/city-night.png) |
 | Zen garden | ![Zen garden by day](screenshots/zen.png) | ![Zen garden at sunset](screenshots/zen-sunset.png) | ![Zen garden at night](screenshots/zen-night.png) |
 | Prehistoric | ![Prehistoric by day](screenshots/prehistoric.png) | ![Prehistoric at sunset](screenshots/prehistoric-sunset.png) | ![Prehistoric at night](screenshots/prehistoric-night.png) |
+| Megacity | ![Megacity by day](screenshots/megacity.png) | ![Megacity at sunset](screenshots/megacity-sunset.png) | ![Megacity at night](screenshots/megacity-night.png) |
 
 ## License
 
