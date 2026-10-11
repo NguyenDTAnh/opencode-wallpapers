@@ -15,14 +15,14 @@ import { gust } from "../src/wind"
 const TIME_SCALE = 0.35
 // The zombie, ghoul, ghosts, bats and witch move at a quarter of scene speed.
 const CREATURE_SPEED = 0.25
-// The far ridge meets the sky at HORIZON; the graveyard's back fence stands on FENCE and the zombie shuffles between
+// The far ridge meets the sky at HORIZON; the graveyard's fence stands on FENCE, in front of the house, and the zombie shuffles between
 // WALK0 and WALK1, in screen heights from the top.
 const HORIZON = 0.62
-const FENCE = 0.745
-const WALK0 = 0.84
-const WALK1 = 0.9
+const FENCE = 0.8
+const WALK0 = 0.88
+const WALK1 = 0.94
 // The zombie's height and stride, in screen heights.
-const ZOMBIE = 0.12
+const ZOMBIE = 0.16
 const ZOMBIE_STRIDE = 0.05
 // Teeming: scene seconds between the witch's crossings, and how long the light takes to pass from room to room.
 const WITCH_GAP: [number, number] = [70, 140]
@@ -37,7 +37,7 @@ interface Look {
   style: "front" | "rim"
   light: RGB
   sky: [number, RGB][]
-  // The sun or moon, its x in screen heights from the house's middle.
+  // The sun or moon, its x from the house's middle in house units (see HauntedHouse.S).
   orb: Orb
   stars: number
   clouds: [top: RGB, bottom: RGB]
@@ -72,7 +72,7 @@ const LOOKS: Record<Time, Look> = {
       [0.35, [0.47, 0.52, 0.45]],
       [HORIZON, [0.66, 0.7, 0.56]],
     ],
-    orb: { x: -0.08, y: 0.2, r: 0.05, core: [1.05, 1.1, 0.88], glow: [0.4, 0.45, 0.32], near: 0.22, wide: 0.12 },
+    orb: { x: -0.32, y: 0.15, r: 0.055, core: [1.05, 1.1, 0.88], glow: [0.4, 0.45, 0.32], near: 0.22, wide: 0.12 },
     stars: 0,
     clouds: [
       [0.62, 0.66, 0.56],
@@ -110,7 +110,7 @@ const LOOKS: Record<Time, Look> = {
       [0.45, [0.85, 0.18, 0.1]],
       [HORIZON, [1.3, 0.42, 0.1]],
     ],
-    orb: { x: -0.29, y: 0.52, r: 0.09, core: [2.6, 0.55, 0.12], glow: [1, 0.26, 0.07], near: 0.55, wide: 0.35 },
+    orb: { x: -0.42, y: 0.5, r: 0.11, core: [2.6, 0.55, 0.12], glow: [1, 0.26, 0.07], near: 0.55, wide: 0.35 },
     stars: 10,
     clouds: [
       [0.08, 0.02, 0.08],
@@ -147,7 +147,7 @@ const LOOKS: Record<Time, Look> = {
       [0.3, [0.04, 0.018, 0.12]],
       [HORIZON, [0.12, 0.05, 0.24]],
     ],
-    orb: { x: -0.04, y: 0.22, r: 0.13, core: [1.7, 0.66, 0.15], glow: [0.75, 0.26, 0.06], near: 0.4, wide: 0.2, moon: true },
+    orb: { x: -0.2, y: 0.2, r: 0.14, core: [1.7, 0.66, 0.15], glow: [0.75, 0.26, 0.06], near: 0.4, wide: 0.2, moon: true },
     stars: 90,
     clouds: [
       [0.02, 0.012, 0.06],
@@ -267,8 +267,10 @@ class HauntedHouse extends Canvas {
   private shown: Star[] = []
   private clouds: Cloud[]
   private storm = makeStorm()
-  // Scale for narrow screens, the house's middle and the ground it stands on, and the orb, in screen heights.
+  // Scale for narrow screens, the house's size (screen heights per house unit), its middle and the ground it stands
+  // on, and the orb, in screen heights.
   private k = 1
+  private S = 1.48
   private hx = 1.4
   private hy = 0.6
   private orb: Orb
@@ -309,7 +311,7 @@ class HauntedHouse extends Canvas {
     const n = { calm: 6, lively: 9, teeming: 12 }[settings.activity]
     this.leaves = Array.from({ length: n }, () => this.leaf(Math.random() * 2, rand(0.05, 0.95)))
     const bats = { calm: 2, lively: 4, teeming: 6 }[settings.activity]
-    this.bats = Array.from({ length: bats }, (_, i) => ({ ax: 0, ay: 0, rx: rand(0.05, 0.1), ry: rand(0.02, 0.05), w: rand(0.9, 1.4), phase: rand(0, TAU), size: rand(0.018, 0.026) + (i === 0 ? 0.006 : 0) }))
+    this.bats = Array.from({ length: bats }, (_, i) => ({ ax: 0, ay: 0, rx: rand(0.05, 0.1), ry: rand(0.02, 0.05), w: rand(0.9, 1.4), phase: rand(0, TAU), size: rand(0.024, 0.034) + (i === 0 ? 0.008 : 0) }))
     this.flash.wait = rand(2, 6)
     if (settings.activity === "calm") return
     const ghosts = settings.activity === "teeming" ? 2 : 1
@@ -350,7 +352,7 @@ class HauntedHouse extends Canvas {
     this.unsky(0, 0, W - 1, Math.ceil(HORIZON * H))
     if (this.witch.t >= 0) this.drawWitch()
     for (const b of this.bats) this.drawBatAt(b)
-    for (const b of this.stream) this.drawBat(b.x, b.y, 0.016, b.phase, Math.sign(b.vx))
+    for (const b of this.stream) this.drawBat(b.x, b.y, 0.022, b.phase, Math.sign(b.vx))
     this.lights.clear(W, H)
     this.drawWindows()
     for (const g of this.ghosts) this.drawGhost(g)
@@ -364,7 +366,7 @@ class HauntedHouse extends Canvas {
     if (this.dance.t >= 0) this.drawDance()
     this.lights.apply(hdr)
     this.drawLeaves()
-    for (const b of this.burst) this.drawBat(b.x, b.y, 0.02, b.phase, Math.sign(b.vx))
+    for (const b of this.burst) this.drawBat(b.x, b.y, 0.026, b.phase, Math.sign(b.vx))
     this.weather.draw(hdr, W, H)
     this.finish()
   }
@@ -396,9 +398,10 @@ class HauntedHouse extends Canvas {
   protected override layout() {
     const { W, H, A, look, hdr } = this
     const k = (this.k = clamp(A / 1.7, 0.58, 1))
-    this.hx = A - 0.3 * k
+    this.S = Math.min(1.48, A / 0.64)
+    this.hx = A / 2 + 0.01
     this.hy = this.riseY(this.hx)
-    this.orb = { ...look.orb, x: (this.hx + look.orb.x * k) / A }
+    this.orb = { ...look.orb, x: Math.max(0.12, this.hx + look.orb.x * this.S) / A }
     // Under a cloud deck the hidden sun or moon only faintly rims things.
     const veil = this.weather.covered ? 0.3 : 1
     this.light = [look.light[0] * veil, look.light[1] * veil, look.light[2] * veil]
@@ -448,10 +451,9 @@ class HauntedHouse extends Canvas {
     return [c[0] * t[0] * k, c[1] * t[1] * k, c[2] * t[2] * k]
   }
 
-  // The rise the house stands on, its top at x, in screen heights.
+  // The ground the house's knoll and the graveyard spread over, its top at x, in screen heights.
   private riseY(x: number) {
-    const k = this.k
-    return HORIZON + 0.06 - 0.1 * Math.exp(-(((x - (this.A - 0.26 * k)) / (0.42 * k)) ** 2)) + (fbm1(x * 3, 7) - 0.5) * 0.012
+    return 0.725 - 0.03 * Math.exp(-(((x - this.hx) / (0.45 * this.S)) ** 2)) + (fbm1(x * 3, 7) - 0.5) * 0.012
   }
 
   // The far ridge with a few dead trees, the rise under the house, and the graveyard's rough grass.
@@ -467,7 +469,8 @@ class HauntedHouse extends Canvas {
         const o = (y * W + x) * 3
         const a1 = clamp(((v - r1) * H) / px + 0.5, 0, 1)
         const a2 = clamp(((v - rise) * H) / px + 0.5, 0, 1)
-        if (a1 > 0) for (let c = 0; c < 3; c++) hdr[o + c] += (far[c] - hdr[o + c]) * a1
+        const fade = smoothstep(r1, rise, v)
+        if (a1 > 0) for (let c = 0; c < 3; c++) hdr[o + c] += (lerp(far[c], near[c], fade) - hdr[o + c]) * a1
         if (a2 <= 0) continue
         // Grass darkening toward the viewer, with bare patches of dirt and a lit edge along the rise's crest.
         const depth = smoothstep(rise, 1, v)
@@ -482,7 +485,7 @@ class HauntedHouse extends Canvas {
     }
     // Bare trees on the far ridge, away from the middle.
     const k = this.k
-    for (const [i, x] of [0.5 * k, 0.62 * k, this.A - 0.86 * k].entries()) {
+    for (const [i, x] of [0.36 * k, this.A - 0.34 * k, this.A - 0.16 * k].entries()) {
       const y = HORIZON - 0.03 - (fbm1(x * 2.2, 11) - 0.5) * 0.06 + 0.004
       const h = 0.04 + 0.015 * hash(i * 3.1)
       const c: RGB = [far[0] * 0.75, far[1] * 0.75, far[2] * 0.8]
@@ -497,108 +500,166 @@ class HauntedHouse extends Canvas {
     }
   }
 
-  // The haunted house: a crooked Victorian pile on the rise, its turret on the left, a front gable over a bay, a
-  // sagging main roof with a leaning chimney, a creaky porch with jack-o'-lanterns, and windows boarded, broken,
-  // dark or glowing.
+  // The haunted house, the scene's centerpiece: a crooked Victorian pile on the knoll, its turret on the left under
+  // a tall cone, a front gable over a bay, a sagging shingled roof with a hole in it and a leaning brick chimney,
+  // clapboard siding split by cracks, a creaky porch on bracketed posts with a broken railing and jack-o'-lanterns,
+  // and windows boarded, broken, shuttered, dark or glowing.
   private paintHouse() {
     const { H, look } = this
-    const k = this.k
+    const S = this.S
     const hx = this.hx
-    const gy = this.hy + 0.012
-    const X = (u: number) => (hx + u * k) * H
-    const Y = (v: number) => (gy - v) * H
+    const gy = this.hy + 0.006
+    const X = (u: number) => (hx + u * S) * H
+    const Y = (v: number) => (gy - v * S) * H
     // Everything leans a little to the right the higher it goes.
-    const L = (u: number, v: number): Point => [X(u) + v * 0.035 * H, Y(v)]
+    const L = (u: number, v: number): Point => [X(u) + v * 0.035 * S * H, Y(v)]
+    const T = (u: number, v: number): Point => [X(-0.15 + u) + v * 0.02 * S * H, Y(v)]
     const walls = look.walls
     const side: RGB = [walls[0] * 0.62, walls[1] * 0.62, walls[2] * 0.66]
+    const seam: RGB = [walls[0] * 0.78, walls[1] * 0.78, walls[2] * 0.8]
+    const crack: RGB = [walls[0] * 0.4, walls[1] * 0.38, walls[2] * 0.42]
     const roof = look.roof
+    const tile: RGB = [roof[0] * 1.7 + 0.01, roof[1] * 1.7 + 0.01, roof[2] * 1.6 + 0.01]
     const trim = look.trim
+    const line = (pts: Point[], r: number, color: RGB) => {
+      const w = this.thick(r * S, 0.5)
+      this.shape(pts.slice(1).map((p, i) => cap(...pts[i], ...p, w, w, color)), this.lighting, 0)
+    }
     // The main block's receding side wall and roof.
     this.polygon([L(0.16, 0), L(0.22, 0.02), L(0.22, 0.2), L(0.16, 0.19)], side)
+    for (let v = 0.016; v < 0.19; v += 0.016) line([L(0.16, v), L(0.22, v + 0.02 * (1 - v / 0.2))], 0.0005, [side[0] * 0.8, side[1] * 0.8, side[2] * 0.8])
     this.polygon([L(0.1, 0.3), L(0.17, 0.32), L(0.235, 0.2), L(0.17, 0.185)], roof)
-    // A leaning chimney with a broken cap.
-    this.polygon([L(0.115, 0.26), L(0.145, 0.26), L(0.16, 0.38), L(0.13, 0.385)], [walls[0] * 0.5, walls[1] * 0.42, walls[2] * 0.42])
-    this.polygon([L(0.122, 0.38), L(0.168, 0.375), L(0.168, 0.395), L(0.125, 0.4)], roof)
-    // The front wall, two storeys, and the main roof sagging in the middle.
+    // A leaning brick chimney with a broken cap.
+    const brick: RGB = [walls[0] * 0.55, walls[1] * 0.42, walls[2] * 0.4]
+    this.polygon([L(0.115, 0.25), L(0.145, 0.25), L(0.16, 0.38), L(0.13, 0.385)], brick)
+    for (let v = 0.27; v < 0.37; v += 0.018) line([L(0.117 + (v - 0.25) * 0.11, v), L(0.147 + (v - 0.25) * 0.11, v)], 0.0005, [brick[0] * 0.7, brick[1] * 0.7, brick[2] * 0.7])
+    this.polygon([L(0.122, 0.378), L(0.168, 0.373), L(0.168, 0.393), L(0.14, 0.397), L(0.135, 0.388), L(0.125, 0.398)], roof)
+    // The front wall, two storeys of clapboard.
     this.polygon([L(-0.12, 0), L(0.16, 0), L(0.16, 0.19), L(-0.12, 0.19)], walls)
+    for (let v = 0.016; v < 0.185; v += 0.016) line([L(-0.12, v), L(0.16, v)], 0.0005, seam)
+    // The main roof, sagging in the middle, in rows of shingles, with a hole broken through to the rafters.
+    const ridgeV = (t: number) => 0.3 - 0.025 * Math.sin(t * Math.PI)
     const ridge: Point[] = []
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8
-      ridge.push(L(lerp(-0.1, 0.12, t), 0.3 - 0.025 * Math.sin(t * Math.PI)))
-    }
+    for (let i = 0; i <= 8; i++) ridge.push(L(lerp(-0.1, 0.12, i / 8), ridgeV(i / 8)))
     this.polygon([L(-0.14, 0.18), ...ridge, L(0.185, 0.18)], roof)
-    // The front gable over the bay, steep and crooked, with an attic window.
+    for (let t = 0.12; t < 0.95; t += 0.13) {
+      const row: Point[] = []
+      for (let i = 0; i <= 8; i++) {
+        const s = i / 8
+        row.push(L(lerp(lerp(-0.14, -0.1, t), lerp(0.185, 0.12, t), s), lerp(0.18, ridgeV(s), t)))
+      }
+      line(row, 0.0006, tile)
+    }
+    this.polygon([L(0.088, 0.215), L(0.118, 0.22), L(0.124, 0.252), L(0.1, 0.262), L(0.084, 0.24)], [roof[0] * 0.3, roof[1] * 0.3, roof[2] * 0.3])
+    for (const u of [0.094, 0.108]) line([L(u, 0.214), L(u + 0.006, 0.26)], 0.001, tile)
+    // The front gable over the bay, steep and crooked, sided too, with a carved bargeboard and an attic window.
     this.polygon([L(-0.06, 0.18), L(0.08, 0.18), L(0.012, 0.34)], walls)
-    this.edge(L(-0.075, 0.172), L(0.012, 0.345), 0.007, roof)
-    this.edge(L(0.012, 0.345), L(0.095, 0.172), 0.007, roof)
-    // The turret: a round tower on the left corner under a tall crooked cone.
-    const T = (u: number, v: number): Point => [X(-0.15 + u) + v * 0.02 * H, Y(v)]
+    for (let v = 0.196; v < 0.33; v += 0.016) {
+      const t = (v - 0.18) / 0.16
+      line([L(lerp(-0.06, 0.012, t), v), L(lerp(0.08, 0.012, t), v)], 0.0005, seam)
+    }
+    this.edge(L(-0.075, 0.172), L(0.012, 0.345), 0.006 * S, roof)
+    this.edge(L(0.012, 0.345), L(0.095, 0.172), 0.006 * S, roof)
+    line([L(-0.055, 0.19), L(0.012, 0.318), L(0.077, 0.19)], 0.0012, trim)
+    this.edge(L(0.012, 0.345), L(0.012, 0.37), 0.0015 * S, roof)
+    // The turret: a round tower on the left corner, banded and sided, under a tall crooked shingled cone.
     const tw = 0.042
     this.polygon([T(-tw, 0), T(tw, 0), T(tw, 0.27), T(-tw, 0.27)], walls)
     this.polygon([T(tw * 0.35, 0), T(tw, 0), T(tw, 0.27), T(tw * 0.35, 0.27)], [walls[0] * 0.75, walls[1] * 0.75, walls[2] * 0.78])
+    for (let v = 0.016; v < 0.265; v += 0.016) line([T(-tw, v), T(-tw * 0.3, v + 0.002), T(tw * 0.3, v + 0.002), T(tw, v)], 0.0005, seam)
+    for (const v of [0.095, 0.185]) this.polygon([T(-tw - 0.004, v), T(tw + 0.004, v), T(tw + 0.004, v + 0.008), T(-tw - 0.004, v + 0.008)], trim)
     this.polygon([T(-tw - 0.012, 0.265), T(tw + 0.012, 0.265), T(tw + 0.008, 0.285), T(-tw - 0.008, 0.285)], trim)
-    const tip: Point = [T(0, 0.43)[0] + 0.022 * H, Y(0.43)]
-    this.polygon([T(-tw - 0.01, 0.282), T(tw + 0.01, 0.282), [T(tw * 0.4, 0.36)[0] + 0.01 * H, Y(0.36)], tip, [T(-tw * 0.3, 0.36)[0] + 0.004 * H, Y(0.36)]], roof)
-    this.edge(tip, [tip[0] + 0.004 * H, tip[1] - 0.03 * H], 0.0022, roof)
-    // Trim: eaves boards and a band between the storeys.
-    this.edge(L(-0.12, 0.1), L(0.16, 0.1), 0.004, trim)
-    this.edge(L(-0.14, 0.182), L(0.185, 0.182), 0.005, trim)
-    if (look.style === "rim") this.rimEdges([T(-tw, 0), T(-tw, 0.27), T(-tw - 0.01, 0.282), tip, ...ridge, L(0.185, 0.18)])
-    // Windows: ground floor behind the porch, the upper floor, the attic and the turret.
+    const tip: Point = [T(0, 0.43)[0] + 0.022 * S * H, Y(0.43)]
+    const shoulderL: Point = [T(-tw * 0.3, 0.36)[0] + 0.004 * S * H, Y(0.36)]
+    const shoulderR: Point = [T(tw * 0.4, 0.36)[0] + 0.01 * S * H, Y(0.36)]
+    this.polygon([T(-tw - 0.01, 0.282), T(tw + 0.01, 0.282), shoulderR, tip, shoulderL], roof)
+    for (let t = 0.15; t < 0.8; t += 0.16) {
+      const a = t < 0.55 ? lerp(T(-tw - 0.01, 0.282)[0], shoulderL[0], t / 0.55) : lerp(shoulderL[0], tip[0], (t - 0.55) / 0.45)
+      const b = t < 0.55 ? lerp(T(tw + 0.01, 0.282)[0], shoulderR[0], t / 0.55) : lerp(shoulderR[0], tip[0], (t - 0.55) / 0.45)
+      const y = lerp(Y(0.282), tip[1], t)
+      line([[a, y], [(a + b) / 2, y + 0.002 * S * H], [b, y]], 0.0006, tile)
+    }
+    // A weathervane on the spike: an arrow, bent.
+    this.edge(tip, [tip[0] + 0.004 * S * H, tip[1] - 0.04 * S * H], 0.0018 * S, roof)
+    const vy = tip[1] - 0.032 * S * H
+    line([[tip[0] - 0.014 * S * H, vy + 0.004 * S * H], [tip[0] + 0.02 * S * H, vy - 0.002 * S * H]], 0.0012, roof)
+    this.polygon([[tip[0] + 0.02 * S * H, vy - 0.007 * S * H], [tip[0] + 0.03 * S * H, vy - 0.003 * S * H], [tip[0] + 0.02 * S * H, vy + 0.003 * S * H]], roof)
+    // Trim: a band between the storeys and the eaves boards.
+    this.edge(L(-0.12, 0.1), L(0.16, 0.1), 0.004 * S, trim)
+    this.edge(L(-0.14, 0.182), L(0.185, 0.182), 0.005 * S, trim)
+    // Cracks running through the siding.
+    line([L(0.03, 0.19), L(0.036, 0.168), L(0.028, 0.15), L(0.04, 0.128), L(0.034, 0.112)], 0.001, crack)
+    line([L(-0.11, 0.098), L(-0.1, 0.082), L(-0.106, 0.064)], 0.001, crack)
+    line([T(-0.02, 0.26), T(-0.01, 0.24), T(-0.024, 0.22)], 0.001, crack)
+    if (look.style === "rim") this.rimEdges([T(-tw, 0), T(-tw, 0.27), T(-tw - 0.01, 0.282), shoulderL, tip, ...ridge, L(0.185, 0.18)])
+    // Windows: the ground floor behind the porch, the upper floor, the attic and the turret.
     const plan: [number, number, number, number, Window["kind"]][] = [
-      [-0.09, 0.03, 0.016, 0.03, "glow"],
-      [0.07, 0.03, 0.016, 0.03, "dark"],
-      [0.12, 0.03, 0.014, 0.03, "boarded"],
-      [-0.08, 0.125, 0.016, 0.034, "dark"],
-      [-0.02, 0.125, 0.016, 0.034, "candle"],
-      [0.05, 0.125, 0.016, 0.034, "boarded"],
-      [0.115, 0.125, 0.015, 0.034, "glow"],
-      [0.012, 0.23, 0.014, 0.03, "dark"],
+      [-0.09, 0.024, 0.016, 0.032, "glow"],
+      [-0.05, 0.024, 0.012, 0.032, "dark"],
+      [0.08, 0.024, 0.016, 0.032, "dark"],
+      [0.128, 0.024, 0.013, 0.032, "boarded"],
+      [-0.08, 0.122, 0.016, 0.038, "dark"],
+      [-0.02, 0.122, 0.016, 0.038, "candle"],
+      [0.05, 0.122, 0.016, 0.038, "boarded"],
+      [0.115, 0.122, 0.015, 0.038, "glow"],
+      [0.012, 0.225, 0.014, 0.034, "dark"],
     ]
     const turret: [number, number][] = [
-      [0.045, 0.026],
-      [0.14, 0.03],
-      [0.22, 0.026],
+      [0.04, 0.032],
+      [0.13, 0.036],
+      [0.21, 0.034],
     ]
-    for (const [i, [u, v, w, h, kind]] of plan.entries()) this.paintWindow(L(u, v), L(u, v + h), w * k * H, h * H, kind, i)
-    for (const [i, [v, h]] of turret.entries()) this.paintWindow(T(0, v), T(0, v + h), 0.011 * k * H, h * H, i === 2 ? "glow" : "dark", 20 + i)
+    for (const [i, [u, v, w, h, kind]] of plan.entries()) this.paintWindow(L(u, v), L(u, v + h), w * S * H, h * S * H, kind, i)
+    for (const [i, [v, h]] of turret.entries()) this.paintWindow(T(0, v), T(0, v + h), 0.012 * S * H, h * S * H, i === 2 ? "glow" : "dark", 20 + i)
     // The rooms the wandering light passes through: windows on the same floor in order, then up the turret.
     const order = this.windows.filter((w) => w.kind !== "boarded").sort((a, b) => b.y - a.y || a.x - b.x)
     for (const [i, w] of order.entries()) w.room = i
     this.rooms = order.length
-    // The porch: a sagging roof on thin posts, the floor and a few steps, a door with a lit fanlight.
-    const door = L(0.015, 0)
-    this.polygon([L(0.0, 0), L(0.03, 0), L(0.03, 0.055), L(0.0, 0.055)], this.paint([0.16, 0.1, 0.08]))
-    this.disc(...L(0.015, 0.062), 0.012 * k * H, look.window[0] * look.glow * 0.4, look.window[1] * look.glow * 0.4, look.window[2] * look.glow * 0.4, 1)
+    // The porch: a panelled door under a lit fanlight, a sagging roof on bracketed posts, the floor and steps.
+    const door = this.paint([0.18, 0.11, 0.08])
+    this.polygon([L(-0.002, 0), L(0.032, 0), L(0.032, 0.058), L(-0.002, 0.058)], door)
+    for (const v of [0.008, 0.032]) for (const u of [0.003, 0.018]) this.polygon([L(u, v), L(u + 0.01, v), L(u + 0.01, v + 0.02), L(u, v + 0.02)], [door[0] * 0.7, door[1] * 0.7, door[2] * 0.7])
+    const fan = look.glow * 0.45
+    this.disc(...L(0.015, 0.06), 0.013 * S * H, trim[0], trim[1], trim[2], 1)
+    this.disc(...L(0.015, 0.06), 0.01 * S * H, look.window[0] * fan, look.window[1] * fan, look.window[2] * fan, 1)
+    this.polygon([L(-0.004, 0.058), L(0.034, 0.058), L(0.034, 0.05), L(-0.004, 0.05)], trim)
+    const pr = this.thick(0.0024 * S, 0.7)
     const posts: Part[] = []
-    for (const u of [-0.11, -0.04, 0.06, 0.15]) posts.push(cap(...L(u, 0), ...L(u, 0.07), this.thick(0.0022, 0.7), this.thick(0.0022, 0.7), trim))
+    for (const u of [-0.12, -0.045, 0.072, 0.158]) {
+      posts.push(cap(...L(u, 0), ...L(u, 0.068), pr, pr, trim))
+      for (const s of [-1, 1]) posts.push(cap(...L(u + s * 0.014, 0.068), ...L(u, 0.054), pr * 0.6, pr * 0.6, trim))
+    }
     this.shape(posts, this.lighting, 0.4)
     const porch: Point[] = []
-    for (let i = 0; i <= 6; i++) porch.push(L(lerp(-0.13, 0.165, i / 6), 0.072 - 0.008 * Math.sin((i / 6) * Math.PI) - (i === 6 ? 0.006 : 0)))
-    this.polygon([...porch, L(0.17, 0.058), L(-0.135, 0.06)], roof)
-    this.polygon([L(-0.13, 0.008), L(0.17, 0.008), L(0.17, -0.004), L(-0.13, -0.004)], trim)
-    for (let s = 0; s < 3; s++) this.polygon([L(-0.012 - s * 0.006, -0.004 - s * 0.009), L(0.042 + s * 0.006, -0.004 - s * 0.009), L(0.042 + s * 0.006, -0.013 - s * 0.009), L(-0.012 - s * 0.006, -0.013 - s * 0.009)], [trim[0] * 1.3, trim[1] * 1.3, trim[2] * 1.3])
-    // Railings, with a gap where one has fallen.
-    const rail: Part[] = []
-    const rr = this.thick(0.0012, 0.5)
-    rail.push(cap(...L(-0.13, 0.03), ...L(-0.02, 0.03), rr, rr, trim), cap(...L(0.07, 0.03), ...L(0.165, 0.025), rr, rr, trim))
-    for (let u = -0.12; u < 0.165; u += this.cells ? 0.024 : 0.016) if (u < -0.02 || u > 0.075) rail.push(cap(...L(u, 0.008), ...L(u, 0.03), rr, rr, trim))
+    for (let i = 0; i <= 6; i++) porch.push(L(lerp(-0.135, 0.17, i / 6), 0.074 - 0.009 * Math.sin((i / 6) * Math.PI) - (i === 6 ? 0.007 : 0)))
+    this.polygon([...porch, L(0.175, 0.059), L(-0.14, 0.062)], roof)
+    line(porch.map(([x, y]) => [x, y + 0.012 * S * H] as Point), 0.0015, trim)
+    this.polygon([L(-0.135, 0.008), L(0.175, 0.008), L(0.175, -0.004), L(-0.135, -0.004)], trim)
+    for (let s = 0; s < 3; s++) this.polygon([L(-0.014 - s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.013 - s * 0.009), L(-0.014 - s * 0.006, -0.013 - s * 0.009)], [trim[0] * 1.3, trim[1] * 1.3, trim[2] * 1.3])
+    // Railings: balusters along the top rail, a gap where some have fallen, and a broken rail hanging down.
+    const rr = this.thick(0.0012 * S, 0.5)
+    const rail: Part[] = [cap(...L(-0.12, 0.032), ...L(-0.06, 0.032), rr, rr, trim), cap(...L(-0.06, 0.032), ...L(-0.035, 0.012), rr, rr, trim), cap(...L(0.072, 0.032), ...L(0.158, 0.028), rr, rr, trim)]
+    for (let u = -0.11; u < 0.158; u += this.cells ? 0.02 : 0.012) if ((u < -0.065 || u > 0.08) && Math.abs(u - 0.115) > 0.008) rail.push(cap(...L(u, 0.008), ...L(u, 0.03), rr, rr, trim))
+    rail.push(cap(...L(0.112, 0.008), ...L(0.124, 0.022), rr, rr, trim))
     this.shape(rail, this.lighting, 0)
     // Jack-o'-lanterns on the steps and the porch rail.
-    this.pumpkins.push({ x: L(-0.03, 0)[0], y: Y(-0.012), r: 0.012 * H, seed: 1, flare: 0 })
-    this.pumpkins.push({ x: L(0.06, 0)[0], y: Y(-0.02), r: 0.014 * H, seed: 2, flare: 0 })
-    this.pumpkins.push({ x: L(-0.1, 0.03)[0], y: Y(0.03), r: 0.009 * H, seed: 3, flare: 0 })
-    this.pumpkins.push({ x: door[0] - 0.05 * k * H, y: Y(-0.03), r: 0.01 * H, seed: 4, flare: 0 })
+    const p = (u: number, v: number, r: number, seed: number) => this.pumpkins.push({ x: L(u, v)[0], y: Y(v), r: r * S * H, seed, flare: 0 })
+    p(-0.03, -0.01, 0.011, 1)
+    p(0.06, -0.022, 0.013, 2)
+    p(-0.1, 0.032, 0.008, 3)
+    p(-0.045, -0.028, 0.009, 4)
   }
 
-  // A window from its bottom middle a to top middle b (pixels), half-width w: a frame and glass, and planks nailed
-  // across if boarded.
+  // A window from its bottom middle a to top middle b (pixels), half-width w: a frame with a sill and a lintel, glass
+  // with muntins, and planks nailed across if boarded or a shutter hanging askew on some.
   private paintWindow(a: Point, b: Point, w: number, h: number, kind: Window["kind"], seed: number) {
     const look = this.look
     const frame = look.trim
     const dx = b[0] - a[0]
-    const f = 0.004 * this.H
+    const f = Math.max(0.0045 * this.S * this.H, this.cells ? 1 : 0.5)
     this.polygon([[a[0] - w - f, a[1] + f], [a[0] + w + f, a[1] + f], [b[0] + w + f, b[1] - f], [b[0] - w - f, b[1] - f]], frame)
+    this.polygon([[a[0] - w - f * 2, a[1] + f * 2], [a[0] + w + f * 2, a[1] + f * 2], [a[0] + w + f * 2, a[1] + f * 0.6], [a[0] - w - f * 2, a[1] + f * 0.6]], [frame[0] * 1.3, frame[1] * 1.3, frame[2] * 1.3])
+    this.polygon([[b[0] - w - f * 1.6, b[1] - f * 0.6], [b[0] + w + f * 1.6, b[1] - f * 0.6], [b[0] + w + f, b[1] - f * 2.2], [b[0] - w - f, b[1] - f * 2.2]], frame)
     const pts: Point[] = [
       [a[0] - w, a[1]],
       [a[0] + w, a[1]],
@@ -612,24 +673,40 @@ class HauntedHouse extends Canvas {
     // A broken pane: a jagged hole of darkness in the dark glass.
     if (kind === "dark" && hash(seed * 3.3) < 0.6) this.polygon([[a[0] - w * 0.2, a[1] - h * 0.55], [a[0] + w * 0.7, a[1] - h * 0.9], [a[0] + w * 0.3, a[1] - h * 0.6], [a[0] + w * 0.8, a[1] - h * 0.3]], [g[0] * 0.3, g[1] * 0.3, g[2] * 0.3])
     this.windows.push({ pts, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w, h, kind, room: -1, seed, flash: 0 })
-    // A shutter hanging askew from one hinge.
-    if (seed === 0 || seed === 6) {
-      const sx = a[0] + w * 1.25 + f
-      const sw = w * 0.9
-      this.polygon([[sx, b[1] - f], [sx + sw, b[1] - f + sw * 0.2], [sx + sw * 0.55, a[1] + f + sw * 0.6], [sx - sw * 0.4, a[1] + f + sw * 0.35]], [frame[0] * 1.2, frame[1] * 1.15, frame[2] * 1.1])
+    if (seed === 0 || seed === 4 || seed === 7 || seed === 21) {
+      const sx = a[0] + w + f * 1.5
+      const sw = w * 0.85
+      const c: RGB = [frame[0] * 1.25, frame[1] * 1.2, frame[2] * 1.15]
+      const sh: Point[] = [[sx, b[1] - f], [sx + sw, b[1] - f + sw * 0.25], [sx + sw * 0.5, a[1] + f + sw * 0.7], [sx - sw * 0.45, a[1] + f + sw * 0.35]]
+      this.polygon(sh, c)
+      if (w > 3 * this.px) for (const t of [0.33, 0.66]) this.edge([lerp(sh[0][0], sh[3][0], t), lerp(sh[0][1], sh[3][1], t)], [lerp(sh[1][0], sh[2][0], t), lerp(sh[1][1], sh[2][1], t)], 0.0005, [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7])
     }
-    if (kind !== "boarded") return
-    const wood = this.paint([0.42, 0.34, 0.24])
-    const r = this.thick(0.0035, 0.8)
-    this.shape([cap(a[0] - w * 1.3, a[1] - h * 0.2, b[0] + w * 1.3, b[1] + h * 0.25, r, r, wood), cap(a[0] - w * 1.2, b[1] + h * 0.3, a[0] + w * 1.3 + dx, a[1] - h * 0.35, r, r, wood)], this.lighting, 0.5)
+    if (kind === "boarded") {
+      const wood = this.paint([0.42, 0.34, 0.24])
+      const r = this.thick(0.003 * this.S, 0.8)
+      this.shape([cap(a[0] - w * 1.3, a[1] - h * 0.2, b[0] + w * 1.3, b[1] + h * 0.25, r, r, wood), cap(a[0] - w * 1.2, b[1] + h * 0.3, a[0] + w * 1.3 + dx, a[1] - h * 0.35, r, r, wood), cap(a[0] - w * 1.25 + dx * 0.5, a[1] - h * 0.55, a[0] + w * 1.25 + dx * 0.5, a[1] - h * 0.5, r, r, wood)], this.lighting, 0.5)
+      return
+    }
+    this.drawMuntins(this.windows[this.windows.length - 1])
   }
 
-  // The dead tree on the left with a swing hanging from its long low limb and a lantern from another.
+  // The cross of glazing bars over a window's glass, on windows big enough to show them.
+  private drawMuntins(w: Window) {
+    if (w.w < 3 * this.px) return
+    const [a, b, c, d] = w.pts
+    const frame = this.look.trim
+    this.edge([(a[0] + b[0]) / 2, a[1]], [(c[0] + d[0]) / 2, c[1]], 0.0008, frame)
+    this.edge([(a[0] + d[0]) / 2, (a[1] + d[1]) / 2], [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2], 0.0008, frame)
+  }
+
+  // The dead tree framing the house on the left, a swing hanging from its long low limb and a lantern from another.
   private paintTree() {
     const { H } = this
     const k = this.k
-    const x = 0.16 * k
-    const y = 0.76
+    // The tree's size: its parts below are in screen heights at z = 1.
+    const z = 1.35
+    const x = 0.13 * k
+    const y = 0.86
     const bark = this.paint([0.2, 0.16, 0.13])
     const groups: Part[][] = []
     const min = this.cells ? 0.7 * this.px : 0.3 * this.px
@@ -653,52 +730,50 @@ class HauntedHouse extends Canvas {
         grow(ax, ay, a + spread + droop, len * (0.62 + 0.12 * hash(seed * 4.3 + i)), r * 0.62, depth - 1, seed * 3 + i + 1, depth >= 4 ? (groups[groups.push([]) - 1] as Part[]) : parts)
       }
     }
+    const P = (u: number, v: number) => [(x + u * z) * H, (y + v * z) * H] as const
     const trunk: Part[] = []
     groups.push(trunk)
-    trunk.push(cap((x - 0.035) * H, (y + 0.004) * H, x * H, (y - 0.02) * H, 0.008 * H, 0.015 * H, bark), cap((x + 0.038) * H, (y + 0.006) * H, x * H, (y - 0.02) * H, 0.007 * H, 0.015 * H, bark))
-    trunk.push(cap(x * H, y * H, (x - 0.01) * H, (y - 0.1) * H, 0.02 * H, 0.016 * H, bark), cap((x - 0.01) * H, (y - 0.1) * H, (x + 0.004) * H, (y - 0.17) * H, 0.016 * H, 0.012 * H, bark))
+    trunk.push(cap(...P(-0.035, 0.004), ...P(0, -0.02), 0.008 * z * H, 0.015 * z * H, bark), cap(...P(0.038, 0.006), ...P(0, -0.02), 0.007 * z * H, 0.015 * z * H, bark))
+    trunk.push(cap(...P(0, 0), ...P(-0.01, -0.1), 0.02 * z * H, 0.016 * z * H, bark), cap(...P(-0.01, -0.1), ...P(0.004, -0.17), 0.016 * z * H, 0.012 * z * H, bark))
     // The swing's limb reaches out level to the right; the lantern's to the left.
-    const limb = [x - 0.008, y - 0.15]
-    const end = [x + 0.17 * Math.max(k, 0.75), y - 0.16]
-    trunk.push(cap(limb[0] * H, limb[1] * H, ((limb[0] + end[0]) / 2) * H, (end[1] - 0.012) * H, 0.009 * H, 0.007 * H, bark), cap(((limb[0] + end[0]) / 2) * H, (end[1] - 0.012) * H, end[0] * H, end[1] * H, 0.007 * H, 0.004 * H, bark))
-    this.swing = { x: lerp(limb[0], end[0], 0.62), y: end[1] - 0.006, len: 0.13 }
-    trunk.push(cap((x - 0.006) * H, (y - 0.12) * H, (x - 0.09) * H, (y - 0.17) * H, 0.007 * H, 0.004 * H, bark))
-    this.lantern = { x: x - 0.075, y: y - 0.162, len: 0.035 }
-    grow(x + 0.004, y - 0.17, -Math.PI / 2 - 0.6, 0.15, 0.01, 4, 3, trunk)
-    grow(x + 0.004, y - 0.17, -Math.PI / 2 + 0.45, 0.16, 0.01, 4, 11, trunk)
-    grow(x - 0.008, y - 0.13, -Math.PI / 2 - 1.2, 0.1, 0.007, 3, 23, trunk)
+    trunk.push(cap(...P(-0.008, -0.15), ...P(0.08, -0.172), 0.009 * z * H, 0.007 * z * H, bark), cap(...P(0.08, -0.172), ...P(0.17, -0.16), 0.007 * z * H, 0.004 * z * H, bark))
+    this.swing = { x: x + 0.11 * z, y: y - 0.172 * z, len: 0.13 * z }
+    trunk.push(cap(...P(-0.006, -0.12), ...P(-0.09, -0.17), 0.007 * z * H, 0.004 * z * H, bark))
+    this.lantern = { x: x - 0.075 * z, y: y - 0.162 * z, len: 0.035 * z }
+    grow(x + 0.004 * z, y - 0.17 * z, -Math.PI / 2 - 0.6, 0.15 * z, 0.01 * z, 4, 3, trunk)
+    grow(x + 0.004 * z, y - 0.17 * z, -Math.PI / 2 + 0.45, 0.16 * z, 0.01 * z, 4, 11, trunk)
+    grow(x - 0.008 * z, y - 0.13 * z, -Math.PI / 2 - 1.2, 0.1 * z, 0.007 * z, 3, 23, trunk)
     for (const g of groups) if (g.length) this.shape(g, this.lighting, 0.6)
   }
 
-  // The graveyard's iron fence: along the back on the right with a gate ajar on the path up to the house, and on
-  // the left behind the tree.
+  // The graveyard's iron fence across the front of the knoll, with a gate ajar where the path comes down from the
+  // porch steps.
   private paintFences() {
-    const { A } = this
-    const k = this.k
-    const gate = this.hx - 0.02 * k
-    this.paintFence(A - 0.72 * k, gate - 0.035, 0.045)
-    this.paintFence(gate + 0.035, A + 0.02, 0.045)
-    this.paintFence(-0.02, 0.36 * k, 0.04)
-    // The gate's two leaves, one swung half open, and the path up to the steps.
-    const { H, look } = this
+    const { A, H, look } = this
+    const S = this.S
+    const gate = this.hx + 0.015 * S
+    const half = 0.045
+    this.paintFence(-0.02, gate - half, 0.05)
+    this.paintFence(gate + half, A + 0.02, 0.05)
+    const path = this.paint(look.dirt, look.night ? 2 : 1.3)
+    this.polygon([[(gate - half) * H, (FENCE + 0.004) * H], [(gate + half) * H, (FENCE + 0.004) * H], [(this.hx + 0.05 * S) * H, (this.hy + 0.03 * S) * H], [(this.hx - 0.02 * S) * H, (this.hy + 0.03 * S) * H]], path, 0.45)
+    // The gate's two leaves, one swung half open.
     const iron = this.paint([0.06, 0.05, 0.07])
     const r = this.thick(0.0016, 0.55)
     const parts: Part[] = []
-    const top = FENCE - 0.06
+    const top = FENCE - 0.065
     for (const [x0, x1, y1] of [
-      [gate - 0.035, gate - 0.002, 0],
-      [gate + 0.035, gate + 0.012, 0.012],
+      [gate - half, gate - 0.003, 0],
+      [gate + half, gate + 0.016, 0.016],
     ]) {
-      parts.push(cap(x0 * H, FENCE * H, x1 * H, (FENCE + y1) * H, r, r, iron), cap(x0 * H, top * H, x1 * H, (top + y1 * 1.2) * H, r, r, iron))
-      for (let i = 0; i <= 4; i++) {
-        const xx = lerp(x0, x1, i / 4)
-        const yy = lerp(0, y1, i / 4)
-        parts.push(cap(xx * H, (FENCE + yy) * H, xx * H, (top - 0.01 + yy * 1.1 + Math.sin((i / 4) * Math.PI) * -0.006) * H, r, r, iron))
+      parts.push(cap(x0 * H, FENCE * H, x1 * H, (FENCE + y1) * H, r, r, iron), cap(x0 * H, (top + 0.012) * H, x1 * H, (top + 0.012 + y1 * 1.2) * H, r, r, iron))
+      for (let i = 0; i <= 5; i++) {
+        const xx = lerp(x0, x1, i / 5)
+        const yy = lerp(0, y1, i / 5)
+        parts.push(cap(xx * H, (FENCE + yy) * H, xx * H, (top + yy * 1.1 - Math.sin((i / 5) * Math.PI) * 0.008) * H, r, r, iron))
       }
     }
     this.shape(parts, this.lighting, 0.4)
-    const path = this.paint(look.dirt, look.night ? 2 : 1.3)
-    this.polygon([[(gate - 0.045) * H, (FENCE + 0.006) * H], [(gate + 0.045) * H, (FENCE + 0.006) * H], [(this.hx + 0.04 * k) * H, (this.hy + 0.004) * H], [(this.hx - 0.005 * k) * H, (this.hy + 0.004) * H]], path, 0.4)
   }
 
   private paintFence(x0: number, x1: number, h: number) {
@@ -716,41 +791,55 @@ class HauntedHouse extends Canvas {
     for (const x of [x0, x1]) if (x > 0 && x < this.A) this.polygon([[(x - 0.005) * H, FENCE * H], [(x + 0.005) * H, FENCE * H], [(x + 0.005) * H, (top - 0.012) * H], [(x - 0.005) * H, (top - 0.012) * H]], post)
   }
 
-  // A stone crypt in the graveyard: steps, two columns, a pediment and a heavy iron door.
+  // Where the crypt stands: near the right edge, but no further from the house than wide screens need.
+  private cryptX() {
+    return Math.min(this.A - 0.2 * this.k, this.hx + 0.6 * this.S)
+  }
+
+  // A stone crypt framing the house on the right: steps, two columns, a pediment and a heavy iron door.
   private paintCrypt() {
-    const { H, look } = this
-    const k = this.k
-    const x = 0.44 * k
-    const y = 0.775
+    const { A, H, look } = this
+    const x = this.cryptX()
+    const y = 0.88
+    const z = 1.35
+    const Q = (u: number, v: number): Point => [(x + u * z) * H, (y - v * z) * H]
     const w = 0.055
     const stone = look.stone
     const dark: RGB = [stone[0] * 0.6, stone[1] * 0.6, stone[2] * 0.65]
-    this.polygon([[(x + w) * H, y * H], [(x + w + 0.025) * H, (y - 0.01) * H], [(x + w + 0.025) * H, (y - 0.095) * H], [(x + w) * H, (y - 0.085) * H]], dark)
-    this.polygon([[(x - w) * H, y * H], [(x + w) * H, y * H], [(x + w) * H, (y - 0.085) * H], [(x - w) * H, (y - 0.085) * H]], stone)
-    this.polygon([[(x - w - 0.008) * H, (y - 0.083) * H], [(x + w + 0.008) * H, (y - 0.083) * H], [x * H, (y - 0.125) * H]], [stone[0] * 0.85, stone[1] * 0.85, stone[2] * 0.88])
-    this.polygon([[(x - w * 0.55) * H, (y - 0.096) * H], [(x + w * 0.55) * H, (y - 0.096) * H], [x * H, (y - 0.116) * H]], dark)
-    for (const s of [-1, 1]) this.polygon([[(x + s * w * 0.7 - 0.006) * H, y * H], [(x + s * w * 0.7 + 0.006) * H, y * H], [(x + s * w * 0.7 + 0.006) * H, (y - 0.08) * H], [(x + s * w * 0.7 - 0.006) * H, (y - 0.08) * H]], [stone[0] * 1.15, stone[1] * 1.15, stone[2] * 1.15])
-    this.polygon([[(x - 0.022) * H, y * H], [(x + 0.022) * H, y * H], [(x + 0.022) * H, (y - 0.058) * H], [x * H, (y - 0.066) * H], [(x - 0.022) * H, (y - 0.058) * H]], this.paint([0.08, 0.08, 0.09]))
-    this.polygon([[(x - w - 0.01) * H, (y + 0.008) * H], [(x + w + 0.01) * H, (y + 0.008) * H], [(x + w + 0.01) * H, y * H], [(x - w - 0.01) * H, y * H]], dark)
-    if (look.style === "rim") this.rimEdges([[(x - w - 0.008) * H, (y - 0.083) * H], [x * H, (y - 0.125) * H], [(x + w + 0.008) * H, (y - 0.083) * H]])
+    this.polygon([Q(w, 0), Q(w + 0.025, 0.01), Q(w + 0.025, 0.095), Q(w, 0.085)], dark)
+    this.polygon([Q(-w, 0), Q(w, 0), Q(w, 0.085), Q(-w, 0.085)], stone)
+    for (let v = 0.02; v < 0.08; v += 0.02) this.edge(Q(-w, v), Q(w, v), 0.0006, dark)
+    this.polygon([Q(-w - 0.008, 0.083), Q(w + 0.008, 0.083), Q(0, 0.125)], [stone[0] * 0.85, stone[1] * 0.85, stone[2] * 0.88])
+    this.polygon([Q(-w * 0.55, 0.096), Q(w * 0.55, 0.096), Q(0, 0.116)], dark)
+    for (const s of [-1, 1]) this.polygon([Q(s * w * 0.7 - 0.006, 0), Q(s * w * 0.7 + 0.006, 0), Q(s * w * 0.7 + 0.006, 0.08), Q(s * w * 0.7 - 0.006, 0.08)], [stone[0] * 1.15, stone[1] * 1.15, stone[2] * 1.15])
+    this.polygon([Q(-0.022, 0), Q(0.022, 0), Q(0.022, 0.058), Q(0, 0.066), Q(-0.022, 0.058)], this.paint([0.08, 0.08, 0.09]))
+    this.edge(Q(0, 0), Q(0, 0.064), 0.0008, this.paint([0.03, 0.03, 0.04]))
+    this.polygon([Q(-w - 0.01, -0.008), Q(w + 0.01, -0.008), Q(w + 0.01, 0), Q(-w - 0.01, 0)], dark)
+    this.edge(Q(-0.035, 0.07), Q(-0.02, 0.04), 0.0008, dark)
+    if (look.style === "rim") this.rimEdges([Q(-w - 0.008, 0.083), Q(0, 0.125), Q(w + 0.008, 0.083)])
   }
 
-  // Tilted gravestones spreading through the graveyard, thicker toward the sides, with mounds; an open grave with a
-  // spade in its heap; and the grave the hand claws out of.
+  // Tilted gravestones spreading through the graveyard in front of the house, with mounds; an open grave with a spade
+  // in its heap; and the grave the hand claws out of.
   private paintGraves() {
     const { A, H, look } = this
     const k = this.k
+    const S = this.S
+    const gate = this.hx + 0.015 * S
+    const crypt = this.cryptX()
+    const open = { x: this.hx - 0.3 * S, y: 0.955 }
+    this.grave = { x: this.hx + 0.28 * S, y: 0.955 }
     const stones: Stone[] = []
-    for (let i = 0; stones.length < 26 && i < 400; i++) {
-      const y = lerp(FENCE + 0.02, 0.97, hash(i * 1.93) ** 0.8)
+    for (let i = 0; stones.length < 26 && i < 500; i++) {
+      const y = lerp(FENCE + 0.03, 0.985, hash(i * 1.93) ** 0.8)
       const x = hash(i * 2.71) * A
-      const edge = Math.min(x, A - x) / k
-      // The middle stays open, more so higher up where text sits.
-      if (edge > 0.5 && (y < 0.9 || hash(i * 5.7) < 0.85)) continue
-      if (Math.abs(x - 0.44 * k) < 0.09 && y < 0.81) continue
-      if (Math.abs(x - 0.16 * k) < 0.05 && y < 0.79) continue
-      const s = 0.016 + 0.022 * smoothstep(FENCE, 1, y)
-      if (stones.some((o) => Math.abs(o.x - x) < (o.s + s) * 1.1 && Math.abs(o.y - y) < 0.035)) continue
+      if (Math.abs(x - crypt) < 0.12 && y < 0.9) continue
+      if (Math.abs(x - 0.13 * k) < 0.07 && y < 0.9) continue
+      if (Math.abs(x - gate) < 0.06 && y < 0.86) continue
+      if ((Math.abs(x - open.x) < 0.09 || Math.abs(x - this.grave.x) < 0.07) && Math.abs(y - 0.955) < 0.05) continue
+      if (Math.abs(x - this.hx) < 0.25 && hash(i * 5.7) < 0.5) continue
+      const s = 0.02 + 0.03 * smoothstep(FENCE, 1, y)
+      if (stones.some((o) => Math.abs(o.x - x) < (o.s + s) * 1.1 && Math.abs(o.y - y) < 0.04)) continue
       stones.push({ x, y, s, tilt: (hash(i * 7.9) - 0.5) * 0.5, kind: Math.floor(hash(i * 3.3) * 4) })
     }
     stones.sort((a, b) => a.y - b.y)
@@ -760,18 +849,17 @@ class HauntedHouse extends Canvas {
       if (hash(s.x * 13.1) < 0.6) this.ellipse(s.x * H, (s.y + s.s * 0.5) * H, s.s * 1.6 * H, s.s * 0.45 * H, mound[0], mound[1], mound[2], 0.6)
       this.drawStone(s)
     }
-    // The open grave, near the bottom right: a dark pit, a heap of earth and a spade.
-    const ox = A - 0.2 * k
-    const oy = 0.935
+    // The open grave: a dark pit, a heap of earth and a spade.
+    const ox = open.x
+    const oy = open.y
     const pit = this.paint([0.03, 0.02, 0.02])
-    this.ellipse((ox + 0.06) * H, (oy - 0.005) * H, 0.035 * H, 0.016 * H, mound[0] * 1.2, mound[1] * 1.2, mound[2] * 1.2, 1)
-    this.polygon([[(ox - 0.045) * H, (oy - 0.012) * H], [(ox + 0.04) * H, (oy - 0.012) * H], [(ox + 0.05) * H, (oy + 0.014) * H], [(ox - 0.055) * H, (oy + 0.014) * H]], pit)
-    this.edge([(ox - 0.055) * H, (oy + 0.014) * H], [(ox + 0.05) * H, (oy + 0.014) * H], 0.002, mound)
-    this.shape([cap((ox + 0.07) * H, (oy - 0.012) * H, (ox + 0.082) * H, (oy - 0.06) * H, this.thick(0.0018, 0.6), this.thick(0.0018, 0.6), this.paint([0.32, 0.22, 0.14])), ell((ox + 0.068) * H, (oy - 0.008) * H, 0.006 * H, 0.009 * H, 0.2, this.paint([0.4, 0.4, 0.42]))], this.lighting, 0.5)
-    // The restless grave near the bottom left, freshly heaped.
-    this.grave = { x: 0.26 * k, y: 0.93 }
-    this.ellipse(this.grave.x * H, this.grave.y * H, 0.045 * H, 0.012 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1)
-    this.drawStone({ x: this.grave.x - 0.045, y: this.grave.y, s: 0.03, tilt: -0.2, kind: 1 })
+    this.ellipse((ox + 0.075) * H, (oy - 0.006) * H, 0.045 * H, 0.02 * H, mound[0] * 1.2, mound[1] * 1.2, mound[2] * 1.2, 1)
+    this.polygon([[(ox - 0.058) * H, (oy - 0.015) * H], [(ox + 0.052) * H, (oy - 0.015) * H], [(ox + 0.064) * H, (oy + 0.018) * H], [(ox - 0.07) * H, (oy + 0.018) * H]], pit)
+    this.edge([(ox - 0.07) * H, (oy + 0.018) * H], [(ox + 0.064) * H, (oy + 0.018) * H], 0.0025, mound)
+    this.shape([cap((ox + 0.09) * H, (oy - 0.015) * H, (ox + 0.105) * H, (oy - 0.078) * H, this.thick(0.0022, 0.6), this.thick(0.0022, 0.6), this.paint([0.32, 0.22, 0.14])), ell((ox + 0.088) * H, (oy - 0.01) * H, 0.008 * H, 0.012 * H, 0.2, this.paint([0.4, 0.4, 0.42]))], this.lighting, 0.5)
+    // The restless grave, freshly heaped under a leaning stone.
+    this.ellipse(this.grave.x * H, this.grave.y * H, 0.06 * H, 0.016 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1)
+    this.drawStone({ x: this.grave.x - 0.06, y: this.grave.y, s: 0.04, tilt: -0.2, kind: 1 })
   }
 
   // A gravestone standing at (x, y) in screen heights: a rounded or pointed slab, an obelisk or a cross-topped
@@ -840,21 +928,22 @@ class HauntedHouse extends Canvas {
   private placeCreatures() {
     const { A } = this
     const k = this.k
+    const S = this.S
     const anchors: Point[] = [
-      [this.hx - 0.12 * k, 0.16],
-      [this.orb.x * A + 0.12, 0.12],
-      [0.2 * k, 0.4],
-      [this.hx + 0.1 * k, 0.24],
-      [this.orb.x * A - 0.2, 0.2],
-      [0.35 * k, 0.3],
+      [this.hx - 0.13 * S, this.hy - 0.5 * S],
+      [this.orb.x * A + 0.15, 0.1],
+      [0.2 * k, 0.42],
+      [this.hx + 0.16 * S, this.hy - 0.45 * S],
+      [this.orb.x * A - 0.2, 0.22],
+      [this.hx + 0.3 * S, 0.12],
     ]
     for (const [i, b] of this.bats.entries()) [b.ax, b.ay] = anchors[i % anchors.length]
     for (const [i, g] of this.ghosts.entries()) {
-      const [x0, x1] = i === 0 ? [this.hx - 0.14 * k, this.hx + 0.14 * k] : [0.05 * k, 0.5 * k]
+      const [x0, x1] = i === 0 ? [this.hx - 0.12 * S, this.hx + 0.14 * S] : [0.05 * k, this.hx - 0.3 * S]
       g.x0 = x0
       g.x1 = x1
       if (g.x === 0) g.x = lerp(x0, x1, hash(i * 3.7 + 1))
-      g.y = i === 0 ? this.hy - 0.13 : 0.8
+      g.y = i === 0 ? this.hy - 0.13 * S : 0.86
     }
     const z = this.zombie
     if (z.x === 0.5) Object.assign(z, { x: A * 0.3, y: lerp(WALK0, WALK1, 0.5) })
@@ -874,6 +963,7 @@ class HauntedHouse extends Canvas {
       if (k <= 0.01 && w.kind === "dark") continue
       const g = look.window
       this.polygon(w.pts, [lerp(look.glass[0], g[0] * k, Math.min(1, k * 2)), lerp(look.glass[1], g[1] * k, Math.min(1, k * 2)), lerp(look.glass[2], g[2] * k, Math.min(1, k * 2))])
+      this.drawMuntins(w)
       if (w.kind === "candle") this.drawCandle(w, dim)
       if (w.flash > 0.7) this.drawFigure(w)
       if (look.style === "rim" || k > 0.4) this.lights.pool(w.x, w.y + w.h, w.w * 4, w.h * 1.5, [1, 0.55, 0.15], 1.2 * k, 0.006 * k)
@@ -957,7 +1047,7 @@ class HauntedHouse extends Canvas {
       l.y += (l.fall + Math.sin(this.time * 0.9 + l.spin) * 0.01 - g * 0.01) * dt
       l.spin += l.rate * (1 + 2 * g) * dt
       if (l.x < this.A + 0.05 && l.y < 1.02) continue
-      Object.assign(l, i % 2 ? this.leaf(0.16 * this.k + rand(-0.1, 0.15), rand(0.45, 0.6)) : this.leaf(-0.04, rand(0.05, 0.9)))
+      Object.assign(l, i % 2 ? this.leaf(0.13 * this.k + rand(-0.15, 0.2), rand(0.4, 0.62)) : this.leaf(-0.04, rand(0.05, 0.9)))
     }
   }
 
@@ -1001,7 +1091,7 @@ class HauntedHouse extends Canvas {
     if (fade <= 0.01) return
     const x = g.x * H
     const y = (g.y + Math.sin(g.phase * 1.3) * 0.012) * H
-    const s = 0.04 * H
+    const s = 0.06 * H
     const c = look.ghost
     const lean = -g.dir * 0.25
     const pts: Point[] = []
@@ -1053,7 +1143,7 @@ class HauntedHouse extends Canvas {
     g.wait -= dt
     if (g.wait > 0) return
     g.wait = rand(14, 30)
-    const sides = this.stones.map((s, i) => [s, i] as const).filter(([s]) => Math.min(s.x, this.A - s.x) < 0.5 * this.k && s.s > 0.022)
+    const sides = this.stones.map((s, i) => [s, i] as const).filter(([s]) => Math.abs(s.x - this.hx) > 0.2 * this.S && s.s > 0.03)
     if (!sides.length) return
     Object.assign(g, { stone: sides[Math.floor(Math.random() * sides.length)][1], t: 0, dur: 9 })
   }
@@ -1107,12 +1197,12 @@ class HauntedHouse extends Canvas {
     const skin = look.night ? ([0.14, 0.32, 0.18] as RGB) : this.paint(look.zombie)
     const x = gx * H
     const y = gy * H
-    const reach = 0.05 * up * H
+    const reach = 0.07 * up * H
     const wave = Math.sin(t * 2.2) * 0.2
     const wx = x + Math.sin(wave) * reach * 0.3
     const wy = y - reach
     const claw = 0.5 + 0.5 * Math.sin(t * 3.1)
-    const s = 0.012 * H
+    const s = 0.017 * H
     const parts: Part[] = [cap(x, y, wx, wy, s * 0.55, s * 0.5, skin), ell(wx, wy - s * 0.4, s * 0.5, s * 0.55, wave, skin)]
     for (let i = 0; i < 4; i++) {
       const a = -Math.PI / 2 + (i - 1.5) * 0.4 + wave
@@ -1124,7 +1214,7 @@ class HauntedHouse extends Canvas {
     parts.push(cap(wx - s * 0.4, wy - s * 0.2, wx - s * 1, wy - s * 0.6 + claw * s * 0.3, s * 0.16, s * 0.1, skin))
     this.shape(parts, this.lighting, 0.5)
     const mound = this.paint(look.dirt, 0.9)
-    this.ellipse(x, y + 0.002 * H, 0.016 * H, 0.005 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1)
+    this.ellipse(x, y + 0.003 * H, 0.022 * H, 0.007 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1)
   }
 
   // Teeming: the zombie shuffles back and forth across the graveyard, turning round at the edges.
@@ -1259,7 +1349,7 @@ class HauntedHouse extends Canvas {
     const [wx, wy] = this.witchAt(this.witch.t)
     const x = wx * H
     const y = wy * H
-    const s = 0.05 * H
+    const s = 0.075 * H
     const d = this.witch.dir
     const dark = this.paint([0.09, 0.06, 0.1])
     const flap = Math.sin(this.time * 7) * 0.12
@@ -1291,10 +1381,10 @@ class HauntedHouse extends Canvas {
     const t = this.dance.t
     const rise = smoothstep(0, 4, t) * (1 - smoothstep(DANCE - 4, DANCE, t))
     const dance = smoothstep(4, 6, t) * (1 - smoothstep(DANCE - 6, DANCE - 4, t))
-    const k = this.k
-    for (const [i, x] of [0.3 * k, 0.42 * k, 0.54 * k].entries()) {
+    const S = this.S
+    for (const [i, x] of [this.hx - 0.2 * S, this.hx, this.hx + 0.2 * S].entries()) {
       const step = Math.sin(this.time * 2 + i * 0.3) * 0.02 * dance
-      this.drawZombie(x + step, 0.95, i === 1 ? -1 : 1, this.time * 2, dance, rise)
+      this.drawZombie(x + step, 0.97, i === 1 ? -1 : 1, this.time * 2, dance, rise)
     }
   }
 
