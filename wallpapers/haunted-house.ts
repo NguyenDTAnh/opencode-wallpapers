@@ -849,7 +849,8 @@ class HauntedHouse extends Canvas {
     const { A, H } = this
     const k = this.k
     const bark = this.paint([0.15, 0.12, 0.1])
-    const z = 1.35
+    // Narrow screens get smaller trees, so they frame the house rather than hide it.
+    const z = 1.35 * (0.5 + 0.5 * k)
     const x = 0.13 * k
     const y = 0.86
     this.lanterns = []
@@ -871,7 +872,7 @@ class HauntedHouse extends Canvas {
     this.paintMoss(tips, z, 0.22)
     this.paintWeb((x + 0.002 * z) * H, (y - 0.17 * z) * H, 0.03 * z * H, -Math.PI * 0.9, -Math.PI * 0.15)
     // The right one leans in over the graves from beyond the edge.
-    const rz = 1.5
+    const rz = 1.5 * (0.4 + 0.6 * k)
     const rx = A + 0.02
     const ry = 0.95
     const right = this.paintDeadTree(
@@ -1001,6 +1002,8 @@ class HauntedHouse extends Canvas {
     this.polygon([...hem, P(-0.16, 0.5), P(-0.11, 0.78), P(-0.02, 0.9), P(0.09, 0.82), P(0.14, 0.55)], cloak)
     this.polygon([P(-0.02, 0.9), P(0.11, 0.86), P(0.13, 0.72), P(0.06, 0.66), P(-0.06, 0.7)], [cloak[0] * 1.3, cloak[1] * 1.3, cloak[2] * 1.4])
     this.ellipse(...P(0.055, 0.76), 0.038 * s * H * 1.2, 0.055 * s * H, 0.008, 0.005, 0.01, 1)
+    const eye: RGB = this.look.style === "front" ? [0.6, 0.12, 0.05] : [1.6, 0.25, 0.08]
+    for (const e of [-1, 1]) this.disc(...P(0.055 + e * 0.022, 0.765), Math.max(0.006 * s * H, 0.6 * this.px), eye[0], eye[1], eye[2], 1)
     // The scythe: a long crooked snath and a curved blade.
     const wood = this.paint([0.2, 0.15, 0.1])
     const w = this.thick(0.0022, 0.7)
