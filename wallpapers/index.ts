@@ -6,11 +6,10 @@ import { farm } from "./farm"
 import { jungle } from "./jungle"
 import { megacity } from "./megacity"
 import { ocean } from "./ocean"
-import { opencode1 } from "./opencode1"
 import { prehistoric } from "./prehistoric"
 import { rider } from "./rider"
 import { space } from "./space"
 import { tundra } from "./tundra"
 import { zen } from "./zen"
 
-export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, opencode1]
+export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome]
