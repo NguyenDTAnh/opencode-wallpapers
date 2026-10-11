@@ -307,10 +307,8 @@ class Prehistoric extends Canvas {
     if (this.night) {
       const pulse = (lag: number) => 0.5 + 0.5 * Math.sin(this.time * 0.6 - lag)
       this.lights.pool((A - VENT_X + 0.08 + 0.02 * Math.sin(this.time * 0.25)) * this.H, 0.63 * this.H, 0.45 * this.H, 0.13 * this.H, [1, 0.36, 0.06], 2.1 + 0.7 * pulse(0), 0.03)
-      if (this.activity === "teeming") {
-        const [lx, ly, lrx, lry] = this.lake()
-        this.lights.pool((Math.max(lx, A - VENT_X - 0.05) + 0.03 * Math.sin(this.time * 0.3)) * this.H, ly * this.H, lrx * 0.7 * this.H, lry * 1.6 * this.H, [1, 0.3, 0.05], 1.6 * pulse(0.9), 0.02 * pulse(0.9))
-      }
+      const [lx, ly, lrx, lry] = this.lake()
+      this.lights.pool((Math.max(lx, A - VENT_X - 0.05) + 0.03 * Math.sin(this.time * 0.3)) * this.H, ly * this.H, lrx * 0.7 * this.H, lry * 1.6 * this.H, [1, 0.3, 0.05], 1.6 * pulse(0.9), 0.02 * pulse(0.9))
     }
     this.lights.apply(this.hdr)
     for (const [i, x] of [0.01, 0.2, 0.76, 0.99].entries()) this.drawFern(x * A, 1.03, 0.17 + hash(i) * 0.04, i, true)
@@ -394,11 +392,30 @@ class Prehistoric extends Canvas {
       haze(this.hdr, sky, W, H, 0.62, 0.8, 0.14, 0, 0.56)
     }
     this.pool = { y0: 0, y1: 0, rows: new Float32Array(0), amp: new Float32Array(0), gloss: new Float32Array(0) }
-    if (this.activity === "teeming") this.paintLake()
+    this.paintLake()
+    this.paintRiver()
     const water = this.hdr.slice(this.pool.y0 * W * 3, this.pool.y1 * W * 3)
     // The sauropod's two trees keep to the left, the volcano to the right.
     this.trees = [0.06, 0.48]
     const ground = (x: number, y: number, w: number, h: number, tip?: number) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip)
+    const [lx, ly, lrx, lry] = this.lake()
+    // Small monkey-puzzles and bushes along the forest's edge, far off.
+    const distant = [
+      [0.27, 0.632, 0.52, 0.4],
+      [0.74, 0.628, 0.5, 0.45],
+      [0.93, 0.626, 0.53, 0.35],
+      [A - 0.36, 0.624, 0.53, 0.35],
+    ]
+    for (const [x, base, top, s] of distant) this.drawTree(x, base, top, s)
+    const edge = [
+      [0.17, 0.648, 0.034],
+      [0.37, 0.65, 0.04],
+      [0.62, 0.645, 0.034],
+      [0.84, 0.65, 0.045],
+      [lx - lrx - 0.04, 0.655, 0.04],
+      [A - 0.2, 0.652, 0.036],
+    ]
+    for (const [i, [x, y, s]] of edge.entries()) this.drawBush(x, y, s, i + 3)
     for (const [x, base, top] of [[this.trees[0], 0.665, 0.29], [this.trees[1], 0.662, 0.31], [A - 0.1, 0.64, 0.45]]) ground(x, base, 0.08, base - top, 1.5)
     for (const [x, y, s] of [[0.32, 0.78, 0.07], [0.88, 0.74, 0.08], [0.48, 0.9, 0.08]]) ground(x * A, y, s * 1.4, s * 0.8, 1.2)
     for (const [x, y, s] of [[0.04, 0.86, 0.09], [0.47, 0.835, 0.07], [0.9, 0.84, 0.1]]) ground(x * A, y, s * 1.4, s * 1.1, 1.5)
@@ -406,10 +423,38 @@ class Prehistoric extends Canvas {
     this.drawTree(this.trees[1], 0.662, 0.31)
     this.drawTree(A - 0.1, 0.64, 0.45)
     this.plants.begin(this.hdr)
+    // Tree ferns on either side of the lake, and bushes in the middle distance.
+    const treeFerns = [
+      [lx - lrx - 0.02, 0.715, 0.05],
+      [0.66, 0.7, 0.045],
+      [A - 0.04, 0.74, 0.06],
+    ]
+    for (const [x, base, size] of treeFerns) this.drawCycad(x, base, size, 2.4)
+    const bushes = [
+      [0.2, 0.72, 0.055],
+      [lx + lrx * 0.7, 0.8, 0.065],
+      [0.16 * A, 0.95, 0.08],
+    ]
+    for (const [i, [x, y, s]] of bushes.entries()) this.drawBush(x, y, s, i + 11)
+    // Horsetails crowd the lake's shore and the river's banks.
+    const reeds = [
+      [lx - lrx * 0.75, ly + lry * 0.6, 0.08],
+      [lx + lrx * 0.82, ly + lry * 0.2, 0.07],
+      [lx - lrx * 0.15, ly + lry * 1.1, 0.06],
+      [lx - lrx * 0.55 - 0.13, 0.88, 0.1],
+      [lx - lrx * 0.55 + 0.06, 0.84, 0.08],
+      [lx - lrx * 0.9 - 0.06, 0.665, 0.035],
+      [0.62, 0.735, 0.05],
+      [0.9, 0.73, 0.045],
+    ]
+    for (const [i, [x, y, s]] of reeds.entries()) this.drawReeds(x, y, s, i + 5)
     const ferns = [
       [0.32, 0.78, 0.07],
       [0.88, 0.74, 0.08],
       [0.48, 0.9, 0.08],
+      [0.1, 0.74, 0.05],
+      [0.58, 0.76, 0.05],
+      [0.7, 0.95, 0.07],
     ]
     for (const [i, [x, y, s]] of ferns.entries()) this.drawFern(x * A, y, s, i + 7, false)
     const cycads = [
@@ -418,8 +463,14 @@ class Prehistoric extends Canvas {
       [0.9, 0.84, 0.1],
     ]
     for (const [x, base, size] of cycads) this.drawCycad(x * A, base, size)
-    // Each plant bends from its base, the cycads' wide crowns over a wider reach.
-    const reach = [...ferns.map(([x, y, s]) => [x * A, y, s, s * 1.2]), ...cycads.map(([x, y, s]) => [x * A, y, s, s * 2.2])]
+    // Each plant bends from its base, the cycads' and tree ferns' wide crowns over a wider reach.
+    const reach = [
+      ...ferns.map(([x, y, s]) => [x * A, y, s, s * 1.2]),
+      ...cycads.map(([x, y, s]) => [x * A, y, s, s * 2.2]),
+      ...treeFerns.map(([x, y, s]) => [x, y, s * 2.4, s * 2.2]),
+      ...bushes.map(([x, y, s]) => [x, y, s * 2, s * 1.2]),
+      ...reeds.map(([x, y, s]) => [x, y, s, s * 0.6]),
+    ]
     this.plants.end(this.hdr, W, H, 0.01 * H, (px, py) => reach.reduce((w, [x, y, s, r]) => (Math.abs(px / H - x) < r ? Math.max(w, clamp((y - py / H) / (s * 1.2), 0, 1)) : w), 0))
     // Plants painted over the water stay in front of its reflection.
     const p = this.pool
@@ -571,34 +622,82 @@ class Prehistoric extends Canvas {
     }
   }
 
+  // A river winding in across the plain to the lake's far shore, and out of its near shore toward the viewer, and a
+  // pond. They show the sky's horizon color, brighter in the distance, with a few ripples catching the light.
+  private paintRiver() {
+    const { W, H, look, px } = this
+    const [lx, ly, lrx, lry] = this.lake()
+    const mud = this.paint([0.3, 0.24, 0.15])
+    const sky = look.sky[look.sky.length - 1][1]
+    const reaches = [
+      { y0: 0.62, y1: ly - lry * 0.4, x0: lx - lrx * 0.9 - 0.1, x1: lx - lrx * 0.55, w0: 0.002, w1: 0.012, amp: 0.025, seed: 1 },
+      { y0: ly + lry * 0.4, y1: 1.02, x0: lx - lrx * 0.5, x1: lx - lrx * 0.55 - 0.16, w0: 0.014, w1: 0.08, amp: 0.05, seed: 2 },
+    ]
+    // A small pond out on the plain, between the sauropod's trees and the lake.
+    const [qx, qy, qrx, qry] = [0.76, 0.728, 0.1, 0.017]
+    for (let y = Math.floor((qy - qry * 1.4) * H); y < Math.ceil((qy + qry * 1.4) * H); y++)
+      for (let x = Math.floor((qx - qrx * 1.2) * H); x < Math.ceil((qx + qrx * 1.2) * H); x++) {
+        const q = Math.hypot(((x + 0.5) / H - qx) / qrx, ((y + 0.5) / H - qy) / qry)
+        const o = (y * W + x) * 3
+        this.blend(o, mud[0], mud[1], mud[2], clamp((1.15 - q) * 6, 0, 1) * 0.8)
+        const wet = clamp((1 - q) * qry * H * 0.5 + 0.5, 0, 1)
+        if (wet <= 0) continue
+        const mirror = 0.5 - 0.3 * clamp(((y + 0.5) / H - qy + qry) / (2 * qry), 0, 1)
+        const ripple = 0.18 * smoothstep(0.75, 1, Math.sin((y / px) * 1.3 + fbm1((x / px) * 0.08 + 5, 4) * 6))
+        this.blend(o, lerp(look.water[0], sky[0] * look.mirror[0], mirror) + look.ripple[0] * ripple, lerp(look.water[1], sky[1] * look.mirror[1], mirror) + look.ripple[1] * ripple, lerp(look.water[2], sky[2] * look.mirror[2], mirror) + look.ripple[2] * ripple, wet)
+      }
+    for (const r of reaches)
+      for (let y = Math.floor(r.y0 * H); y < Math.min(H, Math.ceil(r.y1 * H)); y++) {
+        const t = clamp((y / H - r.y0) / (r.y1 - r.y0), 0, 1)
+        const w = lerp(r.w0, r.w1, t) * H
+        const cx = (lerp(r.x0, r.x1, t) + r.amp * (Math.sin(TAU * t + r.seed) - Math.sin(r.seed))) * H
+        const mirror = 0.45 - 0.25 * t
+        const water: RGB = [lerp(look.water[0], sky[0] * look.mirror[0], mirror), lerp(look.water[1], sky[1] * look.mirror[1], mirror), lerp(look.water[2], sky[2] * look.mirror[2], mirror)]
+        for (let x = Math.max(0, Math.floor(cx - w * 1.4 - 1)); x < Math.min(W, Math.ceil(cx + w * 1.4 + 1)); x++) {
+          if (Math.hypot(((x + 0.5) / H - lx) / lrx, ((y + 0.5) / H - ly) / lry) < 1) continue
+          const d = Math.abs(x + 0.5 - cx)
+          const o = (y * W + x) * 3
+          this.blend(o, mud[0], mud[1], mud[2], clamp(w * 1.35 - d + 0.5, 0, 1) * 0.8)
+          const wet = clamp(w - d + 0.5, 0, 1)
+          if (wet <= 0) continue
+          const ripple = 0.18 * smoothstep(0.75, 1, Math.sin((y / px) * 1.3 + fbm1((x / px) * 0.08 + r.seed * 9, 4) * 6))
+          this.blend(o, water[0] + look.ripple[0] * ripple, water[1] + look.ripple[1] * ripple, water[2] + look.ripple[2] * ripple, wet)
+        }
+      }
+  }
+
   // The lake's center and radii, in screen heights.
   private lake() {
     return [this.A - VENT_X - 0.1, 0.735, Math.min(0.3, 0.22 * this.A), 0.042] as const
   }
 
   // A monkey-puzzle conifer: a bare trunk with tiers of drooping branches toward its rounded top.
-  private drawTree(x: number, base: number, top: number) {
+  // scale shrinks it for the distance.
+  private drawTree(x: number, base: number, top: number, scale = 1) {
     const H = this.H
     const h = base - top
-    this.shape([cap(x * H, base * H, x * H, (top + 0.02) * H, 0.008 * H, 0.004 * H, this.paint(BARK))], this.lighting, 0.6)
+    const z = scale
+    this.shape([cap(x * H, base * H, x * H, (top + 0.02 * z) * H, this.thick(0.008 * z), this.thick(0.004 * z), this.paint(BARK))], this.lighting, 0.6)
     const needles = this.paint(NEEDLES)
-    const parts: Part[] = [ell(x * H, (top + 0.015) * H, 0.035 * H, 0.02 * H, 0, needles)]
+    const parts: Part[] = [ell(x * H, (top + 0.015 * z) * H, 0.035 * z * H, 0.02 * z * H, 0, needles)]
     for (let k = 0; k < 5; k++) {
-      const y = top + 0.02 + k * h * 0.07
-      const w = 0.035 + k * 0.008 + hash(x * 9 + k) * 0.01
+      const y = top + 0.02 * z + k * h * 0.07
+      const w = (0.035 + k * 0.008 + hash(x * 9 + k) * 0.01) * z
       for (const s of [-1, 1]) {
-        parts.push(cap(x * H, y * H, (x + s * w) * H, (y + 0.012) * H, 0.006 * H, 0.004 * H, needles))
-        parts.push(ell((x + s * w * 0.7) * H, (y + 0.012) * H, w * 0.45 * H, 0.011 * H, s * 0.15, needles))
+        parts.push(cap(x * H, y * H, (x + s * w) * H, (y + 0.012 * z) * H, this.thick(0.006 * z), this.thick(0.004 * z), needles))
+        parts.push(ell((x + s * w * 0.7) * H, (y + 0.012 * z) * H, w * 0.45 * H, 0.011 * z * H, s * 0.15, needles))
       }
     }
     this.shape(parts, this.lighting, this.look.style === "rim" ? 0.4 : 0.7)
   }
 
-  // A cycad: a stout scaly trunk crowned with stiff feathery fronds and a cone in the middle.
-  private drawCycad(x: number, base: number, size: number) {
+  // A cycad: a stout scaly trunk crowned with stiff feathery fronds and a cone in the middle. A tall trunk (in sizes)
+  // makes it a tree fern instead: a slim shaggy trunk and no cone.
+  private drawCycad(x: number, base: number, size: number, trunk = 0.6) {
     const H = this.H
-    const top = base - size * 0.6
-    this.shape([cap(x * H, base * H, x * H, top * H, size * 0.14 * H, size * 0.12 * H, this.paint([0.42, 0.32, 0.18]), 4)], this.lighting, 0.7)
+    const top = base - size * trunk
+    const fern = trunk > 1
+    this.shape([cap(x * H, base * H, x * H, top * H, size * (fern ? 0.1 : 0.14) * H, size * (fern ? 0.07 : 0.12) * H, this.paint(fern ? [0.3, 0.22, 0.14] : [0.42, 0.32, 0.18]), 4)], this.lighting, 0.7)
     const frond = this.paint(FROND)
     for (let i = 0; i < 11; i++) {
       const a = -Math.PI - 0.35 + (i / 10) * (Math.PI + 0.7) + (hash(i + x) - 0.5) * 0.15
@@ -623,7 +722,46 @@ class Prehistoric extends Canvas {
       // On terminal cells rim light would outline every frond in scribbles; they stay near-silhouettes there.
       this.shape(parts, this.lighting, this.look.style === "rim" ? (this.cells ? 0.18 : 0.3) : 0.6)
     }
-    this.shape([ell(x * H, (top - 0.008) * H, size * 0.12 * H, size * 0.16 * H, 0, this.paint([0.7, 0.5, 0.2]), 3)], this.lighting, 0.6)
+    if (!fern) this.shape([ell(x * H, (top - 0.008) * H, size * 0.12 * H, size * 0.16 * H, 0, this.paint([0.7, 0.5, 0.2]), 3)], this.lighting, 0.6)
+  }
+
+  // A low mound of leafy clumps, the back ones darker.
+  private drawBush(x: number, y: number, size: number, seed: number) {
+    const H = this.H
+    const greens = [this.paint(NEEDLES), this.paint(FROND), this.paint([0.24, 0.44, 0.16])]
+    const parts: Part[] = []
+    for (let i = 0; i < 8; i++) {
+      const u = (i / 7 - 0.5) * 1.5 + (hash(seed * 13 + i) - 0.5) * 0.3
+      const r = size * (0.42 + 0.22 * hash(seed * 7 + i)) * (1 - 0.35 * Math.abs(u))
+      const cy = y - r * 0.8 - size * 0.45 * (1 - u * u) * hash(seed * 3 + i)
+      parts.push(ell((x + u * size) * H, cy * H, r * H, r * 0.8 * H, 0, greens[i % 3]))
+    }
+    parts.sort((a, b) => (a.kind === "ellipse" && b.kind === "ellipse" ? a.cy - b.cy : 0))
+    this.shape(parts, this.lighting, this.look.style === "rim" ? 0.3 : 0.6)
+  }
+
+  // Horsetails: a clump of straight jointed stalks, each tipped with a little cone.
+  private drawReeds(x: number, y: number, size: number, seed: number) {
+    const H = this.H
+    const stalk = this.paint([0.2, 0.32, 0.1])
+    const tip = this.paint([0.45, 0.38, 0.2])
+    const parts: Part[] = []
+    for (let i = 0; i < 9; i++) {
+      const bx = x + (hash(seed * 11 + i) - 0.5) * size * 0.6
+      const lean = (hash(seed * 5 + i) - 0.5) * 0.25
+      const h = size * (0.6 + 0.5 * hash(seed * 17 + i))
+      const tx = bx + lean * h
+      const ty = y - h
+      parts.push(cap(bx * H, y * H, tx * H, ty * H, this.thick(0.003), this.thick(0.002), stalk))
+      if (!this.cells)
+        for (let j = 1; j < 5; j++) {
+          const jx = bx + lean * h * (j / 5)
+          const jy = y - h * (j / 5)
+          for (const side of [-1, 1]) parts.push(cap(jx * H, jy * H, (jx + side * size * 0.08) * H, (jy + size * 0.05) * H, 0.0012 * H, 0.0006 * H, stalk))
+        }
+      parts.push(ell(tx * H, (ty - size * 0.03) * H, this.thick(0.0028), size * 0.05 * H, lean, tip))
+    }
+    this.shape(parts, this.lighting, this.look.style === "rim" ? (this.cells ? 0.18 : 0.3) : 0.6)
   }
 
   // A clump of fern fronds arching out and drooping at the tips; the front clumps sway in the breeze.
