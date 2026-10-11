@@ -437,7 +437,7 @@ class Halloween extends Canvas {
   // The hill's surface at x, in screen heights.
   private hillY(x: number) {
     const k = this.k
-    return YARD + 0.01 - 0.35 * Math.exp(-(((x - this.crest) / (0.36 * k)) ** 2)) + (fbm1(x * 4, 3) - 0.5) * 0.02
+    return YARD + 0.01 - 0.35 * (0.7 + 0.3 * k) * Math.exp(-(((x - this.crest) / (0.36 * Math.sqrt(k))) ** 2)) + (fbm1(x * 4, 3) - 0.5) * 0.02
   }
 
   // The far ridge with a few distant cottages, the meadow below it, and the hill on the left.
@@ -469,7 +469,9 @@ class Halloween extends Canvas {
     }
     // Distant cottages on the ridge, their windows lit after dark.
     const k = this.k
-    for (const [i, x] of [0.72 * k, 0.8 * k, this.A - 0.76 * k, this.A - 0.84 * k].entries()) {
+    const spots = [0.72 * k, 0.8 * k, this.A - 0.76 * k, this.A - 0.84 * k]
+    for (let x = 1.05 * k, i = 0; x < this.A - 1.1 * k; x += 0.2, i++) if (hash(i * 4.7 + 0.3) > 0.4) spots.push(x + hash(i * 2.9) * 0.08)
+    for (const [i, x] of spots.entries()) {
       const y = HORIZON - 0.02 - (fbm1(x * 2.2, 11) - 0.5) * 0.07 + 0.006
       const w = 0.016 + 0.006 * hash(i * 3.3)
       const h = 0.012 + 0.004 * hash(i * 1.7)
