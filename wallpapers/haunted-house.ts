@@ -766,7 +766,7 @@ class HauntedHouse extends Canvas {
       for (let i = 0; i < kids; i++) {
         const spread = (i - (kids - 1) / 2) * (0.55 + 0.25 * hash(seed + i * 7.7)) + (hash(seed * 1.9 + i) - 0.5) * 0.4
         const droop = depth <= 2 ? Math.sign(Math.cos(a + spread)) * 0.35 : 0
-        grow(ax, ay, a + spread + droop, len * (0.62 + 0.12 * hash(seed * 4.3 + i)), r * 0.62, depth - 1, seed * 3 + i + 1, depth >= 4 ? (groups[groups.push([]) - 1] as Part[]) : parts)
+        grow(ax, ay, a + spread + droop, len * (0.62 + 0.12 * hash(seed * 4.3 + i)), r * 0.62, depth - 1, seed * 3 + i + 1, depth >= 2 ? (groups[groups.push([]) - 1] as Part[]) : parts)
       }
     }
     const P = (u: number, v: number): Point => [(x + u * z) * H, (y + v * z) * H]
