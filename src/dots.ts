@@ -77,9 +77,14 @@ function addDot(size: Uint8Array, sub: Uint8Array, light: Float32Array, i: numbe
 
 // Writes cell i as a dot if it is flat enough and clear of the scrim's strongest part: the cell's mean color behind,
 // the point's color in front. q holds the cell's eight sub-pixels as displayed (curve and scrim applied), grid the
-// scene before the curve, st and sb the scrim over the top and bottom halves. held says it showed a dot last frame.
-export function placeDot(dots: Dots, i: number, x: number, y: number, q: Float32Array, grid: Float32Array, GW: number, st: number, sb: number, curve: Uint8Array, held: boolean, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, o: number) {
-  if (st > SCRIM || sb > SCRIM) return false
+// scene before the curve, scrim the text scrim's strength per sub-pixel. held says it showed a dot last frame.
+export function placeDot(dots: Dots, i: number, x: number, y: number, q: Float32Array, grid: Float32Array, scrim: Float32Array, GW: number, curve: Uint8Array, held: boolean, char: Uint32Array, fg: Uint16Array, bg: Uint16Array, o: number) {
+  let cover = 0
+  for (let s = 0; s < 8; s++) {
+    const k = scrim[(y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)]
+    if (k > SCRIM) return false
+    cover += k / 8
+  }
   let r = 0
   let g = 0
   let b = 0
@@ -94,7 +99,7 @@ export function placeDot(dots: Dots, i: number, x: number, y: number, q: Float32
   let err = 0
   for (let s = 0; s < 8; s++) err += (q[s * 3] - r) ** 2 + (q[s * 3 + 1] - g) ** 2 + (q[s * 3 + 2] - b) ** 2
   if (err > (held ? FLAT * 2 : FLAT)) return false
-  const k = (1 - (st + sb) / 2) * GAINS[dots.size[i] - 1]
+  const k = (1 - cover) * GAINS[dots.size[i] - 1]
   char[i] = GLYPHS[dots.size[i] - 1]
   bg[o] = r
   bg[o + 1] = g
@@ -117,10 +122,11 @@ export function placeDot(dots: Dots, i: number, x: number, y: number, q: Float32
 const lift = new Float32Array(3)
 
 // Paints cell i's point into its sub-pixel q, as it would look drawn into the scene.
-export function lightDot(dots: Dots, i: number, x: number, y: number, q: Float32Array, grid: Float32Array, GW: number, st: number, sb: number, curve: Uint8Array) {
+export function lightDot(dots: Dots, i: number, x: number, y: number, q: Float32Array, grid: Float32Array, scrim: Float32Array, GW: number, curve: Uint8Array) {
   const s = dots.sub[i]
-  const a = ((y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)) * 3
-  const k = 1 - (s < 4 ? st : sb)
+  const g = (y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)
+  const a = g * 3
+  const k = 1 - scrim[g]
   for (let c = 0; c < 3; c++) {
     const under = grid[a + c]
     q[s * 3 + c] += (curve[Math.min(255, under + dots.light[i * 3 + c] * SHARPENED) | 0] - curve[under | 0]) * k

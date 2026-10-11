@@ -27,12 +27,12 @@ Type `/wallpaper` to open the wallpaper menu:
 Use ↑/↓ to pick a setting, and Enter or ←/→ to change it. The wallpaper crossfades to each choice as you go, and
 Escape closes the menu. Your choices are kept across restarts.
 
-- **Brightness** is subtle, normal or vivid. Brighter scenes get a firmer scrim behind text, so it stays readable.
+- **Brightness** is subtle, normal or vivid. Brighter scenes are dimmed more, so text stays readable.
 - **Shuffle** switches to a different wallpaper every hour, or each time OpenCode starts.
 - **Per project** remembers a wallpaper for each project directory. A project starts from the global choice until you
   pick one there.
 
-With a light OpenCode theme the scene is washed out toward white and text gets a pale scrim instead of a dark one.
+With a light OpenCode theme the scene is washed out toward white instead of dimmed.
 
 ## Wallpapers
 
@@ -182,10 +182,10 @@ variables tune rendering:
 ## How it works
 
 The plugin post-processes each frame OpenCode draws. Cells painted with OpenCode's neutral surface colors are replaced
-by the scene, while colored backgrounds such as diffs and selections are left alone. Text keeps a soft scrim that fades
-the scene toward a dark tint around it. Scenes render in HDR with bloom and tone mapping, then are fitted to two colors
-per character cell. While one look fades into another, both scenes render and blend, scrim included, so only
-transitions cost extra. Scenes keep their landmarks toward the edges, and the engine tells them where text sits, so
+by the scene, while colored backgrounds such as diffs and selections are left alone. The whole scene is dimmed evenly
+toward a dark tint, so text reads anywhere without a backing of its own. Scenes render in HDR with bloom and tone
+mapping, then are fitted to two colors per character cell. While one look fades into another, both scenes render and
+blend, scrim included, so only transitions cost extra. Scenes keep their landmarks toward the edges, and the engine tells them where text sits, so
 creatures and visitors stop where they can be seen. Outdoor scenes share one wind: now and then a gust rolls across
 the screen, bending plants and carrying petals, snow and dust.
 
