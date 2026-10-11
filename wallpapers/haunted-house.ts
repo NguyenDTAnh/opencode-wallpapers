@@ -88,7 +88,7 @@ const LOOKS: Record<Time, Look> = {
     walls: [0.4, 0.4, 0.38],
     trim: [0.24, 0.24, 0.24],
     roof: [0.14, 0.14, 0.15],
-    stone: [0.34, 0.36, 0.33],
+    stone: [0.28, 0.3, 0.27],
     glass: [0.08, 0.09, 0.09],
     window: [0.95, 0.75, 0.35],
     glow: 0.5,
@@ -184,7 +184,7 @@ const DAYLIGHT = (() => {
 
 // Candlelight, the lightning's color, and the dead leaves.
 const CANDLE: RGB = [2.3, 1.05, 0.22]
-const BOLT: RGB = [0.75, 0.6, 1.6]
+const BOLT: RGB = [0.5, 0.42, 1.5]
 const LEAVES: RGB[] = [
   [0.6, 0.32, 0.08],
   [0.5, 0.2, 0.08],
@@ -355,11 +355,11 @@ class HauntedHouse extends Canvas {
     this.drawWindows()
     for (const g of this.ghosts) this.drawGhost(g)
     this.drawSwing()
+    if (this.ghoul.t >= 0) this.drawGhoul()
+    if (this.hand.t >= 0) this.drawHand(this.grave.x, this.grave.y, this.hand.t)
     creep(hdr, W, H, this.fog, this.fogY0, this.fogRows, this.time * 1.6, this.time * 1.1, look.fog, look.fogAlpha)
     touch(hdr, 0, this.fogY0, W - 1, this.fogY0 + this.fogRows - 1)
     this.drawPumpkins()
-    if (this.ghoul.t >= 0) this.drawGhoul()
-    if (this.hand.t >= 0) this.drawHand(this.grave.x, this.grave.y, this.hand.t)
     if (this.activity === "teeming") this.drawZombie(this.zombie.x, this.zombie.y, this.zombie.dir, this.zombie.phase, 0, 1)
     if (this.dance.t >= 0) this.drawDance()
     this.lights.apply(hdr)
@@ -612,6 +612,12 @@ class HauntedHouse extends Canvas {
     // A broken pane: a jagged hole of darkness in the dark glass.
     if (kind === "dark" && hash(seed * 3.3) < 0.6) this.polygon([[a[0] - w * 0.2, a[1] - h * 0.55], [a[0] + w * 0.7, a[1] - h * 0.9], [a[0] + w * 0.3, a[1] - h * 0.6], [a[0] + w * 0.8, a[1] - h * 0.3]], [g[0] * 0.3, g[1] * 0.3, g[2] * 0.3])
     this.windows.push({ pts, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w, h, kind, room: -1, seed, flash: 0 })
+    // A shutter hanging askew from one hinge.
+    if (seed === 0 || seed === 6) {
+      const sx = a[0] + w * 1.25 + f
+      const sw = w * 0.9
+      this.polygon([[sx, b[1] - f], [sx + sw, b[1] - f + sw * 0.2], [sx + sw * 0.55, a[1] + f + sw * 0.6], [sx - sw * 0.4, a[1] + f + sw * 0.35]], [frame[0] * 1.2, frame[1] * 1.15, frame[2] * 1.1])
+    }
     if (kind !== "boarded") return
     const wood = this.paint([0.42, 0.34, 0.24])
     const r = this.thick(0.0035, 0.8)
@@ -869,7 +875,7 @@ class HauntedHouse extends Canvas {
       const g = look.window
       this.polygon(w.pts, [lerp(look.glass[0], g[0] * k, Math.min(1, k * 2)), lerp(look.glass[1], g[1] * k, Math.min(1, k * 2)), lerp(look.glass[2], g[2] * k, Math.min(1, k * 2))])
       if (w.kind === "candle") this.drawCandle(w, dim)
-      if (w.flash > 0.05) this.drawFigure(w)
+      if (w.flash > 0.7) this.drawFigure(w)
       if (look.style === "rim" || k > 0.4) this.lights.pool(w.x, w.y + w.h, w.w * 4, w.h * 1.5, [1, 0.55, 0.15], 1.2 * k, 0.006 * k)
     }
     // The lantern hanging from the tree, swaying a little.
@@ -899,7 +905,7 @@ class HauntedHouse extends Canvas {
 
   // A dark figure standing in a flashing window, head and shoulders against the light.
   private drawFigure(w: Window) {
-    const k = smoothstep(0.05, 0.4, w.flash)
+    const k = smoothstep(0.7, 0.95, w.flash)
     const c = this.paint([0.02, 0.015, 0.03])
     const x = w.x
     const y = w.y + w.h * 0.5
@@ -1060,7 +1066,7 @@ class HauntedHouse extends Canvas {
     if (!s) return
     const { H, look } = this
     const up = smoothstep(0, 1.2, g.t) * (1 - smoothstep(g.dur - 1.2, g.dur, g.t))
-    const x = (s.x + s.s * 0.5) * H
+    const x = (s.x + s.s * 0.3) * H
     const top = (s.y - s.s * 1.95) * H
     const size = s.s * H
     const y = top + size * (0.9 - 1.3 * up)
@@ -1209,7 +1215,7 @@ class HauntedHouse extends Canvas {
     for (let i = 1; i <= 7; i++) pts.push([(f.x + (hash(i * 3.7 + f.wait) - 0.5) * 0.05 * i * 0.4) * H, ((HORIZON - 0.04) * i / 7) * H])
     const r = this.thick(0.0015, 0.6)
     const parts: Part[] = []
-    for (let i = 0; i + 1 < pts.length; i++) parts.push(cap(...pts[i], ...pts[i + 1], r, r, [BOLT[0] * 2 * k, BOLT[1] * 2 * k, BOLT[2] * 2 * k]))
+    for (let i = 0; i + 1 < pts.length; i++) parts.push(cap(...pts[i], ...pts[i + 1], r, r, [BOLT[0] * 1.5 * k, BOLT[1] * 1.5 * k, BOLT[2] * 1.5 * k]))
     const fork = pts[3]
     parts.push(cap(...fork, fork[0] + (f.x < A / 2 ? 0.04 : -0.04) * H, fork[1] + 0.08 * H, r * 0.8, r * 0.6, [BOLT[0] * 1.5 * k, BOLT[1] * 1.5 * k, BOLT[2] * 1.5 * k]))
     this.shape(parts, this.lighting, 0)
