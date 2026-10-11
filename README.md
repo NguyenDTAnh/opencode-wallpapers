@@ -47,7 +47,7 @@ With a light OpenCode theme the scene is washed out toward white instead of dimm
 | `beach` | Waves washing up a sandy beach between swaying palms, with a sailboat on the horizon now and then. |
 | `city` | A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then. |
 | `zen` | A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then. |
-| `prehistoric` | A smoking volcano over ferns and cycads, with a T. rex stomping by now and then. |
+| `prehistoric` | A smoking volcano over a lake, a winding river and lush ferns, cycads and tree ferns, with a T. rex stomping by now and then. |
 
 ### Activity
 
@@ -64,7 +64,7 @@ Every wallpaper has three activity levels, which set how much is going on behind
 | `beach` | Sea, waves, sand and palm trees | Adds leaping dolphins and seagulls | Adds a crab, a surfer, an umbrella and a sandcastle |
 | `city` | Skyline, river and light traffic on the highway | Adds a train crossing the bridge and more traffic | Adds neon signs, boats on the river, people on the street, and rain at night |
 | `zen` | Garden, pond ripples, petals and a bamboo fountain | Adds koi circling under the lily pads | Adds more koi, a frog on a lily pad and dragonflies |
-| `prehistoric` | Volcano, smoke, ferns and cycads | Adds a browsing sauropod and circling pterosaurs | Adds a triceratops herd, dragonflies and a lake with something in it |
+| `prehistoric` | Volcano, smoke, lake, river and plants | Adds a browsing sauropod and circling pterosaurs | Adds a triceratops herd, dragonflies and something in the lake |
 
 ### Time of day
 
