@@ -70,7 +70,7 @@ const LOOKS: Record<Time, Look> = {
       [0.32, [0.6, 0.56, 0.52]],
       [HORIZON, [0.98, 0.7, 0.38]],
     ],
-    orb: { x: 0.12, y: 0.15, r: 0.045, core: [3.4, 2.6, 1.5], glow: [1, 0.7, 0.35], near: 0.4, wide: 0.22 },
+    orb: { x: 0.12, y: 0.15, r: 0.045, core: [3.2, 2.2, 1], glow: [1, 0.66, 0.3], near: 0.4, wide: 0.22 },
     stars: 0,
     clouds: [
       [1, 0.86, 0.68],
@@ -178,8 +178,8 @@ const LOOKS: Record<Time, Look> = {
     window: [1.6, 0.78, 0.22],
     lit: 0.75,
     glow: 1.25,
-    fog: [0.12, 0.065, 0.26],
-    fogAlpha: 0.34,
+    fog: [0.15, 0.08, 0.3],
+    fogAlpha: 0.4,
     ghost: [0.22, 1.1, 0.78],
     skin: [0.32, 0.1, 0.02],
     tint: [0.1, 0.06, 0.18],
@@ -278,6 +278,7 @@ class Halloween extends Canvas {
   private readonly look: Look
   private readonly weather: WeatherLayer
   private lighting: Lighting = { style: "front", dir: DAYLIGHT }
+  private light: RGB = [1, 1, 1]
   private readonly lights = new LightMap()
   private stars: Star[]
   private shown: Star[] = []
@@ -361,7 +362,7 @@ class Halloween extends Canvas {
     this.lights.clear(W, H)
     this.drawLights()
     if (this.activity !== "calm") this.drawCat()
-    if (this.activity === "teeming") this.drawScarecrowArm(true)
+    if (this.activity === "teeming") this.drawArm(1, smoothstep(0, 1, Math.sin((this.time / 22) * TAU) * 2 - 1))
     for (const kid of [...this.kids].sort((a, b) => a.y - b.y)) this.drawKid(kid)
     if (this.rider.t >= 0) this.drawRider()
     this.lights.apply(hdr)
@@ -393,7 +394,10 @@ class Halloween extends Canvas {
     const k = (this.k = clamp(A / 1.7, 0.58, 1))
     this.crest = 0.2 * k
     this.orb = { ...look.orb, x: (this.crest + look.orb.x * k) / A }
-    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT } : { style: "rim", color: look.light, x: this.orb.x * W, y: this.orb.y * H }
+    // Under a cloud deck the hidden sun or moon only faintly rims things.
+    const veil = this.weather.covered ? 0.3 : 1
+    this.light = [look.light[0] * veil, look.light[1] * veil, look.light[2] * veil]
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT } : { style: "rim", color: this.light, x: this.orb.x * W, y: this.orb.y * H }
     this.pumpkins = []
     this.lanterns = []
     this.candles = []
@@ -406,6 +410,7 @@ class Halloween extends Canvas {
     this.paintTree()
     this.paintPatch()
     this.paintStreet()
+    this.paintFallen()
     this.paintFences()
     this.paintCorners()
     for (const p of this.pumpkins) this.drawPumpkin(p, 1)
@@ -459,7 +464,7 @@ class Halloween extends Canvas {
         const grain = 0.9 + 0.2 * fbm2(u * 9, v * 40, 2)
         const face = look.style === "front" ? 1 + 0.18 * clamp((this.crest - u) * 4, -1, 1) : 1
         const rim = look.style === "rim" ? Math.exp(-((v - hill) * H) / (2 * this.px)) * (look.night ? 0.12 : 0.2) : 0
-        for (let c = 0; c < 3; c++) hdr[o + c] += (look.hill[c] * grain * face + look.light[c] * rim - hdr[o + c]) * a3
+        for (let c = 0; c < 3; c++) hdr[o + c] += (look.hill[c] * grain * face + this.light[c] * rim - hdr[o + c]) * a3
       }
     }
     // Distant cottages on the ridge, their windows lit after dark.
@@ -481,7 +486,7 @@ class Halloween extends Canvas {
     const spots: [number, number, number][] = [
       [A - 0.28 * k, YARD, 0.075],
       [A + 0.01, YARD, 0.09],
-      [A - 0.72 * k, YARD + 0.005, 0.055],
+      [A - 0.78 * k, YARD + 0.005, 0.055],
       [0.0, this.hillY(0) + 0.01, 0.06],
     ]
     const bark = this.paint([0.22, 0.14, 0.1])
@@ -495,7 +500,7 @@ class Halloween extends Canvas {
         const c = LEAVES[(i + j) % 3]
         parts.push(ell((x + Math.cos(a) * d) * H, (cy + Math.sin(a) * d * 0.8) * H, r * (0.5 + 0.15 * hash(j + i)) * H, r * (0.45 + 0.1 * hash(j * 2 + i)) * H, 0, this.paint([c[0] * 0.85, c[1] * 0.85, c[2] * 0.85])))
       }
-      this.shape(parts, this.lighting, 0.8)
+      this.shape(parts, this.lighting, this.look.style === "rim" ? 0.45 : 0.8)
     }
   }
 
@@ -507,9 +512,9 @@ class Halloween extends Canvas {
     const houses = [
       { x: A - 0.065 * k, w: 0.11 * k, h: 0.2, roof: 0.12, lean: 0.008, color: 0, side: -1 },
       { x: A - 0.2 * k, w: 0.1 * k, h: 0.15, roof: 0.1, lean: -0.01, color: 1, side: -1 },
-      { x: A - 0.62 * k, w: 0.095 * k, h: 0.12, roof: 0.11, lean: 0.012, color: 2, side: 1 },
+      { x: A - 0.66 * k, w: 0.095 * k, h: 0.125, roof: 0.11, lean: 0.012, color: 2, side: 1 },
     ]
-    this.paintChurch(A - 0.4 * k, anchors)
+    this.paintChurch(A - 0.44 * k, anchors)
     for (const [i, h] of houses.entries()) anchors.push(...this.paintHouse(h.x, YARD, h.w, h.h, h.roof, h.lean, h.color, h.side, i))
     // Strings of lanterns between the eaves.
     anchors.sort((a, b) => a[0] - b[0])
@@ -559,8 +564,7 @@ class Halloween extends Canvas {
     for (let r = 0; r < rows; r++)
       for (let c = 0; c < cols; c++) {
         const u = (c - (cols - 1) / 2) * w * 0.45
-        const v = h - 0.035 - r * 0.07
-        if (r === rows - 1 && c === 0 && rows === 1) continue
+        const v = rows === 1 ? h - 0.03 : h - 0.035 - r * 0.07
         this.paintWindow(P, u, v, 0.016, 0.026, seed * 7 + r * 3 + c)
       }
     const g = P(0, h + roofH * 0.38)
@@ -568,7 +572,7 @@ class Halloween extends Canvas {
     const gc = lit ? look.window : look.glass
     this.disc(g[0], g[1], 0.011 * H, roof[0], roof[1], roof[2], 1)
     this.disc(g[0], g[1], 0.008 * H, gc[0], gc[1], gc[2], 1)
-    const du = rows === 1 ? -w * 0.22 : 0
+    const du = 0
     const door = [P(du - 0.013, 0), P(du + 0.013, 0), P(du + 0.013, 0.04), P(du, 0.048), P(du - 0.013, 0.04)]
     this.polygon(door, this.paint([0.2, 0.1, 0.08]))
     // A step and a jack-o'-lantern by the door.
@@ -604,7 +608,7 @@ class Halloween extends Canvas {
     const top = YARD - 0.36
     // The nave, to the right of the tower.
     const n0 = x + tw * 0.8
-    const n1 = x + 0.17 * k
+    const n1 = x + 0.145 * k
     const nh = 0.13
     this.polygon([[n0 * H, YARD * H], [n1 * H, YARD * H], [n1 * H, (YARD - nh) * H], [n0 * H, (YARD - nh) * H]], [stone[0] * 0.92, stone[1] * 0.92, stone[2] * 0.95])
     this.polygon([[(n0 - 0.01) * H, (YARD - nh + 0.004) * H], [(n1 + 0.012) * H, (YARD - nh + 0.004) * H], [(n1 - 0.02) * H, (YARD - nh - 0.07) * H], [(n0 + 0.01) * H, (YARD - nh - 0.075) * H]], roof)
@@ -638,6 +642,17 @@ class Halloween extends Canvas {
     this.disc(tip[0] + 0.002 * H, tip[1] - 0.027 * H, 0.004 * H, roof[0], roof[1], roof[2], 1)
     if (look.style === "rim") this.rimEdges([T(-tw, YARD), T(-tw, top), T(-tw - 0.008, top), tip, T(tw + 0.008, top)])
     anchors.push([n1 * H, (YARD - nh) * H], T(-tw, top + 0.1))
+    // Leaning headstones in the churchyard.
+    const grave = this.paint([0.5, 0.48, 0.5], look.night ? 2.5 : 1)
+    for (let i = 0; i < 5; i++) {
+      const gx = x - 0.07 * k + i * 0.045 * k + (hash(i * 2.3) - 0.5) * 0.012
+      const gy = YARD + 0.014 + hash(i * 5.1) * 0.012
+      const gh = 0.02 + 0.008 * hash(i * 3.7)
+      const gw = 0.008 + 0.003 * hash(i * 1.1)
+      const tilt = (hash(i * 7.9) - 0.5) * 0.012
+      this.shape([cap(gx * H, gy * H, (gx + tilt) * H, (gy - gh + gw) * H, gw * H, gw * H, grave)], this.lighting, 0.6)
+      this.polygon([[(gx - gw) * H, gy * H], [(gx + gw) * H, gy * H], [(gx + gw + tilt * 0.5) * H, (gy - gh * 0.5) * H], [(gx - gw + tilt * 0.5) * H, (gy - gh * 0.5) * H]], grave)
+    }
     this.pumpkins.push({ x: T(-tw - 0.012, YARD)[0], y: (YARD + 0.004) * H, r: 0.012 * H, carved: true, seed: 71, flare: 0 })
   }
 
@@ -720,7 +735,7 @@ class Halloween extends Canvas {
     }
     const sx = 0.42 * k
     this.scarecrow = { x: sx, y: Math.max(this.hillY(sx) + 0.03, 0.7) }
-    this.drawScarecrow(this.activity !== "teeming")
+    this.drawScarecrow()
   }
 
   // The street: worn cobbles under the fences, a curb, and a strip of grass along the bottom.
@@ -754,13 +769,28 @@ class Halloween extends Canvas {
     }
   }
 
+  // Fallen leaves drifted against the curb and in the grass, toward the sides.
+  private paintFallen() {
+    const { A, H } = this
+    const k = this.k
+    const r = this.thick(0.005, 1)
+    for (let i = 0; i < 36; i++) {
+      const side = i % 2 ? 1 : -1
+      const d = hash(i * 3.3) ** 1.5 * 0.55 * k
+      const x = side < 0 ? d : A - d
+      const y = hash(i * 1.7) < 0.4 ? FENCE + 0.006 + hash(i * 5.9) * 0.008 : 0.958 + hash(i * 7.1) * 0.04
+      const c = this.paint(LEAVES[i % LEAVES.length], 0.8)
+      this.ellipse(x * H, y * H, r * 1.4, r * 0.8, c[0], c[1], c[2], 0.9)
+    }
+  }
+
   // Iron fences with spear-tipped bars and stone pillars, in front of the pumpkin patch and the houses, with lanterns
   // strung between tall posts over the patch.
   private paintFences() {
     const { A, H } = this
     const k = this.k
     this.paintFence(-0.02, 0.62 * k, 0.05)
-    this.paintFence(A - 0.7 * k, A + 0.02, 0.045)
+    this.paintFence(A - 0.76 * k, A + 0.02, 0.045)
     const posts = [0.04 * k, 0.24 * k, 0.44 * k, 0.64 * k]
     const wood = this.paint([0.16, 0.11, 0.09])
     for (const x of posts) this.shape([cap(x * H, FENCE * H, x * H, (FENCE - 0.15) * H, this.thick(0.0028, 0.8), this.thick(0.0022, 0.7), wood)], this.lighting, 0.5)
@@ -851,45 +881,41 @@ class Halloween extends Canvas {
     if (light === 1 && look.style === "front") this.shape([ell(l.x, l.y, l.r * 0.9, l.r, 0, [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5])], this.lighting, 0.5)
   }
 
-  private drawScarecrow(arms: boolean) {
+  // The scarecrow on its post in the patch: a patched coat, straw at the cuffs, a jack-o'-lantern head and a floppy
+  // pointed hat. In teeming its right arm is drawn each frame, to wave.
+  private drawScarecrow() {
     const { H } = this
     const { x, y } = this.scarecrow
     const wood = this.paint([0.3, 0.2, 0.12])
-    const coat = this.paint([0.32, 0.2, 0.36])
+    const coat = this.paint([0.42, 0.22, 0.46])
     const straw = this.paint([0.85, 0.66, 0.25])
     const S = 0.13
     this.shape([cap(x * H, y * H, x * H, (y - S * 0.95) * H, this.thick(0.0025, 0.8), this.thick(0.0025, 0.8), wood)], this.lighting, 0.5)
-    if (arms) this.drawScarecrowArm(false)
-    this.shape([cap(x * H, (y - S * 0.42) * H, x * H, (y - S * 0.72) * H, 0.017 * H, 0.014 * H, coat), ell(x * H, (y - S * 0.4) * H, 0.02 * H, 0.012 * H, 0, coat)], this.lighting, 0.7)
+    this.drawArm(-1, 0)
+    if (this.activity !== "teeming") this.drawArm(1, 0)
+    this.shape([cap(x * H, (y - S * 0.42) * H, x * H, (y - S * 0.7) * H, 0.018 * H, 0.015 * H, coat), ell(x * H, (y - S * 0.4) * H, 0.021 * H, 0.012 * H, 0, coat)], this.lighting, 0.7)
+    this.shape([ell((x + 0.006) * H, (y - S * 0.5) * H, 0.006 * H, 0.006 * H, 0.3, this.paint([0.85, 0.45, 0.12]))], this.lighting, 0.4)
     for (const s of [-1, 1]) this.shape([cap((x + s * 0.008) * H, (y - S * 0.36) * H, (x + s * 0.012) * H, (y - S * 0.27) * H, 0.003 * H, 0.0015 * H, straw)], this.lighting, 0.3)
-    // A pumpkin head under a floppy pointed hat.
-    this.pumpkins.push({ x: x * H, y: (y - S * 0.72) * H, r: 0.014 * H, carved: true, seed: 500, flare: 0 })
+    this.pumpkins.push({ x: x * H, y: (y - S * 0.7) * H, r: 0.015 * H, carved: true, seed: 500, flare: 0 })
     const hat = this.paint([0.14, 0.1, 0.12])
-    const hy = (y - S * 0.72 - 0.023) * H
-    this.ellipse(x * H, hy, 0.024 * H, 0.004 * H, hat[0], hat[1], hat[2], 1)
-    this.polygon([[(x - 0.012) * H, hy], [(x + 0.012) * H, hy], [(x + 0.016) * H, hy - 0.025 * H], [(x + 0.026) * H, hy - 0.02 * H]], hat)
+    const hy = (y - S * 0.7 - 0.024) * H
+    this.ellipse(x * H, hy, 0.025 * H, 0.0045 * H, hat[0], hat[1], hat[2], 1)
+    this.polygon([[(x - 0.012) * H, hy], [(x + 0.012) * H, hy], [(x + 0.016) * H, hy - 0.026 * H], [(x + 0.027) * H, hy - 0.02 * H]], hat)
   }
 
-  // The scarecrow's straw-stuffed arms on their crossbar; in teeming the right one waves now and then.
-  private drawScarecrowArm(moving: boolean) {
+  // One of the scarecrow's straw-stuffed arms along its crossbar, raised by wave (0 to 1) and waggling.
+  private drawArm(side: number, wave: number) {
     const { H } = this
     const { x, y } = this.scarecrow
-    const S = 0.13
-    const coat = this.paint([0.32, 0.2, 0.36])
+    const coat = this.paint([0.42, 0.22, 0.46])
     const straw = this.paint([0.85, 0.66, 0.25])
-    const sy = (y - S * 0.66) * H
-    const wave = moving ? smoothstep(0, 1, Math.sin((this.time / 22) * TAU) * 2 - 1) : 0
-    const a = -wave * (1.1 + 0.35 * Math.sin(this.time * 5))
+    const sy = y - 0.13 * 0.64
+    const a = side > 0 ? -wave * (1.15 + 0.3 * Math.sin(this.time * 5)) : Math.PI
     const L = 0.05
-    const parts: Part[] = []
-    if (!moving) parts.push(cap(x * H, sy, (x - L) * H, sy + 0.004 * H, 0.006 * H, 0.005 * H, coat))
     const ex = x + Math.cos(a) * L
-    const ey = sy / H + Math.sin(a) * L + 0.004
-    parts.push(cap(x * H, sy, ex * H, ey * H, 0.006 * H, 0.005 * H, coat))
-    if (!moving || wave > 0.01 || true) this.shape(parts, this.lighting, 0.6)
-    const hands: Part[] = [cap(ex * H, ey * H, (ex + Math.cos(a) * 0.012) * H, (ey + Math.sin(a) * 0.012 + 0.004) * H, 0.004 * H, 0.002 * H, straw)]
-    if (!moving) hands.push(cap((x - L) * H, sy + 0.004 * H, (x - L - 0.012) * H, sy + 0.008 * H, 0.004 * H, 0.002 * H, straw))
-    this.shape(hands, this.lighting, 0.3)
+    const ey = sy + Math.sin(a) * L * (side > 0 ? 1 : 0) + 0.004
+    this.shape([cap(x * H, sy * H, ex * H, ey * H, 0.0065 * H, 0.0055 * H, coat)], this.lighting, 0.6)
+    this.shape([cap(ex * H, ey * H, (ex + Math.cos(a) * 0.013) * H, (ey + Math.sin(a) * 0.013 + 0.004) * H, 0.0045 * H, 0.002 * H, straw)], this.lighting, 0.3)
   }
 
   // Bats loop around the moon, the tree and the spire; ghosts haunt the hill and the churchyard; the cat sits on the
@@ -1266,11 +1292,11 @@ class Halloween extends Canvas {
       const mx = (ax + bx) / 2
       const facing = clamp(((lx - mx) / this.H) * 2, -1, 1)
       if (facing <= 0.05 && Math.abs(ay - by) > Math.abs(ax - bx)) continue
-      parts.push(cap(ax, ay, bx, by, r, r, look.light))
+      parts.push(cap(ax, ay, bx, by, r, r, this.light))
     }
     if (!parts.length) return
     const k = look.night ? 0.12 : 0.22
-    const c: RGB = [look.light[0] * k, look.light[1] * k, look.light[2] * k]
+    const c: RGB = [this.light[0] * k, this.light[1] * k, this.light[2] * k]
     this.shape(parts.map((p) => ({ ...p, color: c })), this.lighting, 0)
   }
 }
