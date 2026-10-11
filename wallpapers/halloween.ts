@@ -303,7 +303,6 @@ class Halloween extends Canvas {
   private leaves: Leaf[] = []
   private cat = { x: 0.3, y: 0.7, blink: 0 }
   private scarecrow = { x: 0.4, y: 0.7 }
-  private flare = 0
   private witch = { t: -1, wait: rand(20, 50), dir: 1, y: 0.2 }
   private rider = { wait: eggWait() * TIME_SCALE, t: -1, dir: 1, gait: gait() as Gait }
 
@@ -335,7 +334,6 @@ class Halloween extends Canvas {
     this.weather.step(dt)
     driftClouds(this.clouds, this.A, dt * 0.4)
     if (this.gloom > 0) driftClouds(this.storm, this.A, dt)
-    this.flare = Math.max(0, this.flare - dt * 0.25)
     for (const p of this.pumpkins) p.flare = Math.max(0, p.flare - dt * 0.35)
     this.burst = flyAway(this.burst, dt, this.A)
     this.stepLeaves(dt)
@@ -413,8 +411,8 @@ class Halloween extends Canvas {
     this.paintFallen()
     this.paintFences()
     this.paintCorners()
-    for (const p of this.pumpkins) this.drawPumpkin(p, 1)
-    for (const l of this.lanterns) this.drawLantern(l, 1)
+    for (const p of this.pumpkins) this.drawPumpkin(p, 1, true)
+    for (const l of this.lanterns) this.drawLantern(l, 1, true)
     if (this.px !== 1) return
     // Real-size pass: what render() needs.
     this.fore = new Uint8Array(W * H)
@@ -534,7 +532,6 @@ class Halloween extends Canvas {
     const { H, look } = this
     const P = (u: number, v: number): [number, number] => [(x + u + lean * (v / h)) * H, (by - v) * H]
     const wall = look.walls[color % look.walls.length]
-    const front = look.style === "front" ? wall : wall
     const sideK = look.style === "front" ? (side > 0 ? 0.72 : 0.92) : 0.6
     const d = w * 0.45
     const sx = side * w * 0.5
@@ -552,7 +549,7 @@ class Halloween extends Canvas {
     this.polygon([[cx - cw, cy + cw], [cx + cw, cy + cw], [cx + cw + 0.004 * H, cy - 0.05 * H], [cx - cw + 0.004 * H, cy - 0.05 * H]], [wall[0] * 0.7, wall[1] * 0.6, wall[2] * 0.6])
     this.polygon([[cx - cw * 1.4 + 0.004 * H, cy - 0.05 * H], [cx + cw * 1.4 + 0.004 * H, cy - 0.05 * H], [cx + cw * 1.4 + 0.004 * H, cy - 0.058 * H], [cx - cw * 1.4 + 0.004 * H, cy - 0.058 * H]], roof)
     // The front wall and gable.
-    this.polygon([P(-w / 2, 0), P(w / 2, 0), P(w / 2, h), apex, P(-w / 2, h)], front)
+    this.polygon([P(-w / 2, 0), P(w / 2, 0), P(w / 2, h), apex, P(-w / 2, h)], wall)
     // Roof edges overhanging the gable.
     const over = 0.014
     const left = P(-w / 2 - over, h - 0.016)
@@ -560,12 +557,11 @@ class Halloween extends Canvas {
     this.edge(left, apex, 0.008, roof)
     this.edge(apex, right, 0.008, roof)
     if (look.style === "rim") this.rimEdges([P(-w / 2, 0), P(-w / 2, h), apex, P(w / 2, h), P(w / 2, 0)])
-    // Windows: two rows, a round one in the gable, and a door.
+    // Windows in one or two rows, a round one in the gable, and a door.
     const rows = h > 0.16 ? 2 : 1
-    const cols = w > 0.1 ? 2 : 2
     for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) {
-        const u = (c - (cols - 1) / 2) * w * 0.45
+      for (let c = 0; c < 2; c++) {
+        const u = (c - 0.5) * w * 0.45
         const v = rows === 1 ? h - 0.03 : h - 0.035 - r * 0.07
         this.paintWindow(P, u, v, 0.016, 0.026, seed * 7 + r * 3 + c)
       }
@@ -574,13 +570,11 @@ class Halloween extends Canvas {
     const gc = lit ? look.window : look.glass
     this.disc(g[0], g[1], 0.011 * H, roof[0], roof[1], roof[2], 1)
     this.disc(g[0], g[1], 0.008 * H, gc[0], gc[1], gc[2], 1)
-    const du = 0
-    const door = [P(du - 0.013, 0), P(du + 0.013, 0), P(du + 0.013, 0.04), P(du, 0.048), P(du - 0.013, 0.04)]
-    this.polygon(door, this.paint([0.2, 0.1, 0.08]))
+    this.polygon([P(-0.013, 0), P(0.013, 0), P(0.013, 0.04), P(0, 0.048), P(-0.013, 0.04)], this.paint([0.2, 0.1, 0.08]))
     // A step and a jack-o'-lantern by the door.
-    this.polygon([P(du - 0.022, 0), P(du + 0.022, 0), P(du + 0.024, -0.008), P(du - 0.024, -0.008)], this.paint([0.36, 0.33, 0.33]))
-    this.pumpkins.push({ x: P(du + 0.034, 0)[0], y: (by + 0.004) * H, r: 0.011 * H, carved: true, seed: seed * 13 + 1, flare: 0 })
-    if (seed !== 1) this.pumpkins.push({ x: P(du - 0.03, 0)[0], y: (by + 0.006) * H, r: 0.008 * H, carved: seed === 0, seed: seed * 13 + 2, flare: 0 })
+    this.polygon([P(-0.022, 0), P(0.022, 0), P(0.024, -0.008), P(-0.024, -0.008)], this.paint([0.36, 0.33, 0.33]))
+    this.pumpkins.push({ x: P(0.034, 0)[0], y: (by + 0.004) * H, r: 0.011 * H, carved: true, seed: seed * 13 + 1, flare: 0 })
+    if (seed !== 1) this.pumpkins.push({ x: P(-0.03, 0)[0], y: (by + 0.006) * H, r: 0.008 * H, carved: seed === 0, seed: seed * 13 + 2, flare: 0 })
     return [left, right]
   }
 
@@ -840,13 +834,13 @@ class Halloween extends Canvas {
     for (const [i, x] of [0.68 * k, A - 0.74 * k].entries()) this.pumpkins.push({ x: x * H, y: (FENCE + 0.016) * H, r: 0.009 * H, carved: true, seed: 450 + i, flare: 0 })
   }
 
-  // A pumpkin: a ribbed body with a stem, its face glowing with candlelight scaled by light.
-  private drawPumpkin(p: Pumpkin, light: number) {
+  // A pumpkin: a ribbed body with a stem (unless only its candlelight is redrawn), its face glowing scaled by light.
+  private drawPumpkin(p: Pumpkin, light: number, body: boolean) {
     const look = this.look
     const { x, y, r } = p
     const cy = y - r * 0.85
     const skin: RGB = look.night || look.style === "rim" ? look.skin : this.paint(look.skin)
-    if (light === 1) {
+    if (body) {
       this.shape([ell(x, cy, r * 1.22, r * 0.86, 0, skin, 4)], this.lighting, 0.7)
       this.shape([cap(x, cy - r * 0.75, x + r * 0.18, cy - r * 1.15, Math.max(r * 0.16, 0.5 * this.px), Math.max(r * 0.11, 0.4 * this.px), this.paint([0.3, 0.32, 0.1]))], this.lighting, 0.4)
     }
@@ -873,14 +867,18 @@ class Halloween extends Canvas {
     this.polygon(mouth, c)
   }
 
-  private drawLantern(l: Lantern, light: number) {
+  // A paper lantern on its string: by day a shaded paper ball, after dark a glow scaled by light.
+  private drawLantern(l: Lantern, light: number, body: boolean) {
     const look = this.look
     const H = this.H
-    const g = (look.lit > 0.3 ? look.glow : 0.35) * light
     const c = l.color
-    this.shape([cap(l.x, l.y - l.r * 1.4, l.x, l.y - l.r * 0.9, Math.max(0.002 * H, 0.4 * this.px), Math.max(0.002 * H, 0.4 * this.px), this.paint([0.1, 0.08, 0.08]))], this.lighting, 0)
-    this.ellipse(l.x, l.y, l.r * 0.9, l.r, c[0] * g * 0.7, c[1] * g * 0.7, c[2] * g * 0.7, 1)
-    if (light === 1 && look.style === "front") this.shape([ell(l.x, l.y, l.r * 0.9, l.r, 0, [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5])], this.lighting, 0.5)
+    if (body) this.shape([cap(l.x, l.y - l.r * 1.4, l.x, l.y - l.r * 0.9, Math.max(0.002 * H, 0.4 * this.px), Math.max(0.002 * H, 0.4 * this.px), this.paint([0.1, 0.08, 0.08]))], this.lighting, 0)
+    if (look.style === "front") {
+      if (body) this.shape([ell(l.x, l.y, l.r * 0.9, l.r, 0, [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5])], this.lighting, 0.5)
+      return
+    }
+    const g = look.glow * light * 0.7
+    this.ellipse(l.x, l.y, l.r * 0.9, l.r, c[0] * g, c[1] * g, c[2] * g, 1)
   }
 
   // The scarecrow on its post in the patch: a patched coat, straw at the cuffs, a jack-o'-lantern head and a floppy
@@ -1006,8 +1004,7 @@ class Halloween extends Canvas {
     }
     if (look.night) lightPool(this.hdr, this.W, H, x, y, s * 1.6, s * 1.6, c, 0, 0.05 * fade)
     this.polygon(pts, c, a)
-    const eye = this.paint([0.05, 0.03, 0.08])
-    const e: RGB = look.night ? [0.01, 0.06, 0.06] : eye
+    const e: RGB = look.night ? [0.01, 0.06, 0.06] : this.paint([0.05, 0.03, 0.08])
     for (const sx of [-1, 1]) this.ellipse(x + sx * s * 0.17, y - s * 0.5, Math.max(s * 0.07, 0.7), Math.max(s * 0.11, 0.9), e[0], e[1], e[2], fade * 0.9)
     this.ellipse(x, y - s * 0.22, Math.max(s * 0.07, 0.6), Math.max(s * 0.09, 0.7), e[0], e[1], e[2], fade * 0.8)
   }
@@ -1044,13 +1041,13 @@ class Halloween extends Canvas {
     for (const p of this.pumpkins) {
       if (!p.carved) continue
       const f = (firelight(this.time * 2.2, p.seed) + p.flare) * dim
-      this.drawPumpkin(p, f)
+      this.drawPumpkin(p, f, false)
       const r = p.r * (5 + 3 * p.flare)
       this.lights.pool(p.x, p.y - p.r, r, r * 0.7, [1, 0.45, 0.1], (1.6 + 2 * p.flare) * night * f, 0.012 * (night + p.flare) * f)
     }
     for (const l of this.lanterns) {
       const f = (0.88 + 0.12 * Math.sin(this.time * 1.3 + l.seed * 2.1)) * dim
-      this.drawLantern(l, f)
+      this.drawLantern(l, f, false)
       if (look.lit > 0.3) this.lights.pool(l.x, l.y, 0.035 * H, 0.03 * H, l.color, 0.6 * night * f, 0.006 * night * f)
     }
     for (const c of this.candles) {
@@ -1266,8 +1263,7 @@ class Halloween extends Canvas {
     const [lx, ly] = P(0.17, -1.44 - rise)
     const f = firelight(this.time * 4, 9) * (look.night ? 1.4 : 1)
     const lantern = { x: lx, y: ly + 0.1 * S, r: 0.08 * S, carved: true, seed: 9, flare: 0 }
-    this.drawPumpkin(lantern, 1)
-    this.drawPumpkin(lantern, f * 1.5)
+    this.drawPumpkin(lantern, f * 1.5, true)
     this.lights.pool(lx, ly, 0.2 * H, 0.16 * H, [1, 0.42, 0.08], 3 * f, 0.02 * f)
   }
 
