@@ -63,116 +63,119 @@ interface Look {
 }
 
 const LOOKS: Record<Time, Look> = {
-  // A grim overcast afternoon: a low sickly green-gray sky with a pale sun behind it, the house gray and peeling.
+  // A grim afternoon under a storm-dark sky with a sickly band of light along the horizon: black trees, a dark
+  // peeling house, and warm lamplight in its windows even by day.
   day: {
     style: "front",
-    light: [0.9, 0.95, 0.8],
+    light: [0.85, 0.9, 0.75],
     sky: [
-      [0, [0.3, 0.34, 0.33]],
-      [0.35, [0.47, 0.52, 0.45]],
-      [HORIZON, [0.66, 0.7, 0.56]],
+      [0, [0.09, 0.105, 0.11]],
+      [0.3, [0.18, 0.2, 0.19]],
+      [0.5, [0.34, 0.36, 0.28]],
+      [HORIZON, [0.64, 0.6, 0.38]],
     ],
-    orb: { x: -0.32, y: 0.15, r: 0.055, core: [1.05, 1.1, 0.88], glow: [0.4, 0.45, 0.32], near: 0.22, wide: 0.12 },
+    orb: { x: -0.32, y: 0.15, r: 0.055, core: [0.95, 0.95, 0.72], glow: [0.32, 0.34, 0.24], near: 0.18, wide: 0.08 },
     stars: 0,
     clouds: [
-      [0.62, 0.66, 0.56],
-      [0.34, 0.38, 0.34],
+      [0.3, 0.32, 0.29],
+      [0.07, 0.08, 0.08],
     ],
     cloudKind: "stratus",
     ridge: [
-      [0.46, 0.5, 0.43],
-      [0.33, 0.37, 0.3],
+      [0.3, 0.31, 0.23],
+      [0.13, 0.14, 0.1],
     ],
-    grass: [0.27, 0.31, 0.2],
-    dirt: [0.3, 0.26, 0.2],
-    walls: [0.4, 0.4, 0.38],
-    trim: [0.24, 0.24, 0.24],
-    roof: [0.14, 0.14, 0.15],
-    stone: [0.28, 0.3, 0.27],
-    glass: [0.08, 0.09, 0.09],
-    window: [0.95, 0.75, 0.35],
-    glow: 0.5,
-    fog: [0.5, 0.56, 0.48],
-    fogAlpha: 0.24,
-    ghost: [0.7, 0.95, 0.82],
-    zombie: [0.45, 0.58, 0.36],
-    skin: [0.82, 0.4, 0.07],
-    tint: [0.85, 0.9, 0.85],
+    grass: [0.11, 0.13, 0.075],
+    dirt: [0.14, 0.11, 0.075],
+    walls: [0.15, 0.145, 0.14],
+    trim: [0.06, 0.06, 0.06],
+    roof: [0.045, 0.045, 0.055],
+    stone: [0.14, 0.15, 0.13],
+    glass: [0.035, 0.035, 0.04],
+    window: [1.3, 0.68, 0.18],
+    glow: 1.3,
+    fog: [0.26, 0.29, 0.23],
+    fogAlpha: 0.16,
+    ghost: [0.6, 0.95, 0.78],
+    zombie: [0.42, 0.56, 0.32],
+    skin: [0.85, 0.38, 0.06],
+    tint: [0.55, 0.58, 0.52],
     night: false,
   },
-  // A blood-orange sun sinking behind the house, the sky going purple overhead and everything in silhouette.
+  // A blood-orange sun sinking beside the house, the sky going purple overhead and everything in black silhouette.
   sunset: {
     style: "rim",
-    light: [1.4, 0.4, 0.12],
+    light: [1.6, 0.45, 0.12],
     sky: [
-      [0, [0.07, 0.02, 0.12]],
-      [0.25, [0.28, 0.05, 0.2]],
-      [0.45, [0.85, 0.18, 0.1]],
-      [HORIZON, [1.3, 0.42, 0.1]],
+      [0, [0.05, 0.012, 0.1]],
+      [0.25, [0.25, 0.04, 0.18]],
+      [0.45, [0.85, 0.16, 0.08]],
+      [HORIZON, [1.35, 0.42, 0.08]],
     ],
-    orb: { x: -0.42, y: 0.5, r: 0.11, core: [2.6, 0.55, 0.12], glow: [1, 0.26, 0.07], near: 0.55, wide: 0.35 },
+    orb: { x: -0.42, y: 0.5, r: 0.11, core: [3.2, 0.62, 0.12], glow: [1, 0.26, 0.06], near: 0.6, wide: 0.38 },
     stars: 10,
     clouds: [
-      [0.08, 0.02, 0.08],
-      [0.9, 0.25, 0.12],
+      [0.06, 0.015, 0.06],
+      [0.95, 0.25, 0.1],
     ],
     cloudKind: "stratus",
     ridge: [
-      [0.3, 0.07, 0.14],
-      [0.14, 0.035, 0.09],
+      [0.26, 0.055, 0.12],
+      [0.1, 0.022, 0.06],
     ],
-    grass: [0.07, 0.025, 0.05],
-    dirt: [0.09, 0.03, 0.05],
-    walls: [0.08, 0.03, 0.07],
-    trim: [0.05, 0.02, 0.05],
-    roof: [0.035, 0.012, 0.035],
-    stone: [0.14, 0.05, 0.1],
-    glass: [0.03, 0.01, 0.03],
-    window: [1.5, 0.62, 0.16],
-    glow: 0.95,
-    fog: [0.45, 0.13, 0.2],
-    fogAlpha: 0.32,
+    grass: [0.045, 0.014, 0.033],
+    dirt: [0.06, 0.018, 0.035],
+    walls: [0.045, 0.015, 0.04],
+    trim: [0.028, 0.009, 0.026],
+    roof: [0.018, 0.005, 0.018],
+    stone: [0.11, 0.035, 0.08],
+    glass: [0.02, 0.006, 0.02],
+    window: [1.9, 0.72, 0.15],
+    glow: 1.45,
+    fog: [0.42, 0.11, 0.18],
+    fogAlpha: 0.3,
     ghost: [0.4, 1, 0.72],
     zombie: [0.45, 0.58, 0.36],
-    skin: [0.5, 0.15, 0.03],
-    tint: [0.28, 0.1, 0.18],
+    skin: [0.5, 0.14, 0.03],
+    tint: [0.2, 0.065, 0.13],
     night: false,
   },
-  // Deep violet and indigo under a huge gold-orange moon behind the turret, the windows and pumpkins glowing.
+  // Deep violet and indigo under a huge gold-orange moon behind the turret, black silhouettes rimmed in its light, the
+  // windows and pumpkins glowing hot.
   night: {
     style: "rim",
-    light: [1, 0.58, 0.2],
+    light: [1.2, 0.68, 0.22],
     sky: [
-      [0, [0.01, 0.006, 0.04]],
-      [0.3, [0.04, 0.018, 0.12]],
-      [HORIZON, [0.12, 0.05, 0.24]],
+      [0, [0.01, 0.005, 0.04]],
+      [0.3, [0.06, 0.025, 0.17]],
+      [HORIZON, [0.18, 0.07, 0.34]],
     ],
-    orb: { x: -0.2, y: 0.2, r: 0.14, core: [1.7, 0.66, 0.15], glow: [0.75, 0.26, 0.06], near: 0.4, wide: 0.2, moon: true },
+    orb: { x: -0.2, y: 0.2, r: 0.14, core: [2.4, 0.95, 0.18], glow: [0.9, 0.32, 0.06], near: 0.5, wide: 0.32, moon: true },
     stars: 90,
     clouds: [
-      [0.02, 0.012, 0.06],
-      [0.1, 0.05, 0.2],
+      [0.015, 0.008, 0.05],
+      [0.1, 0.045, 0.2],
     ],
     cloudKind: "wisp",
     ridge: [
-      [0.065, 0.032, 0.14],
-      [0.032, 0.015, 0.075],
+      [0.06, 0.028, 0.13],
+      [0.022, 0.01, 0.055],
     ],
-    grass: [0.026, 0.02, 0.055],
-    dirt: [0.035, 0.02, 0.05],
-    walls: [0.05, 0.035, 0.1],
-    trim: [0.03, 0.02, 0.07],
-    roof: [0.018, 0.01, 0.04],
-    stone: [0.09, 0.07, 0.18],
-    glass: [0.02, 0.012, 0.04],
-    window: [1.6, 0.76, 0.2],
-    glow: 1.25,
-    fog: [0.14, 0.08, 0.3],
-    fogAlpha: 0.42,
+    grass: [0.016, 0.012, 0.04],
+    dirt: [0.025, 0.014, 0.04],
+    walls: [0.03, 0.02, 0.07],
+    trim: [0.018, 0.012, 0.045],
+    roof: [0.008, 0.005, 0.02],
+    stone: [0.08, 0.06, 0.17],
+    glass: [0.014, 0.008, 0.03],
+    window: [2, 0.88, 0.2],
+    glow: 1.9,
+    fog: [0.13, 0.07, 0.28],
+    fogAlpha: 0.4,
     ghost: [0.22, 1.1, 0.78],
     zombie: [0.25, 0.55, 0.3],
     skin: [0.32, 0.1, 0.02],
-    tint: [0.1, 0.06, 0.18],
+    tint: [0.07, 0.045, 0.14],
     night: true,
   },
 }
@@ -283,7 +286,13 @@ class HauntedHouse extends Canvas {
   private windows: Window[] = []
   private rooms = 0
   private stones: Stone[] = []
-  private lantern = { x: 0, y: 0, len: 0.05 }
+  private lanterns: { x: number; y: number; len: number; seed: number }[] = []
+  private raven = { x: 0, y: 0 }
+  private spider = { x: 0, y: 0 }
+  private eyes: { x: number; y: number; phase: number; green: boolean }[] = []
+  private wisps: { x: number; y: number; phase: number }[] = []
+  // A dark figure crossing one lit window: which window, how far across, and the wait for the next.
+  private passer = { win: -1, t: 0, wait: rand(8, 20) }
   private swing = { x: 0, y: 0, len: 0.12 }
   private grave = { x: 0.3, y: 0.92 }
   private bats: Bat[] = []
@@ -339,6 +348,25 @@ class HauntedHouse extends Canvas {
     this.stepLightning(dt)
     this.stepWitch(dt, cdt)
     this.stepDance(dt)
+    this.stepPasser(dt)
+  }
+
+  // Lively and teeming: now and then a figure glides past behind one of the lit windows.
+  private stepPasser(dt: number) {
+    const p = this.passer
+    if (p.win >= 0) {
+      p.t += dt * 0.12
+      if (p.t > 1) p.win = -1
+      return
+    }
+    if (this.activity === "calm") return
+    p.wait -= dt
+    if (p.wait > 0) return
+    p.wait = rand(15, 35)
+    const lit = this.windows.map((w, i) => [w, i] as const).filter(([w]) => w.kind === "glow" || w.kind === "candle")
+    if (!lit.length) return
+    p.win = lit[Math.floor(Math.random() * lit.length)][1]
+    p.t = 0
   }
 
   render() {
@@ -357,11 +385,15 @@ class HauntedHouse extends Canvas {
     this.drawWindows()
     for (const g of this.ghosts) this.drawGhost(g)
     this.drawSwing()
+    if (this.activity !== "calm") this.drawSpider()
     if (this.ghoul.t >= 0) this.drawGhoul()
     if (this.hand.t >= 0) this.drawHand(this.grave.x, this.grave.y, this.hand.t)
     creep(hdr, W, H, this.fog, this.fogY0, this.fogRows, this.time * 1.6, this.time * 1.1, look.fog, look.fogAlpha)
     touch(hdr, 0, this.fogY0, W - 1, this.fogY0 + this.fogRows - 1)
     this.drawPumpkins()
+    this.drawEyes()
+    this.drawRaven()
+    this.drawWisps()
     if (this.activity === "teeming") this.drawZombie(this.zombie.x, this.zombie.y, this.zombie.dir, this.zombie.phase, 0, 1)
     if (this.dance.t >= 0) this.drawDance()
     this.lights.apply(hdr)
@@ -426,11 +458,13 @@ class HauntedHouse extends Canvas {
     this.weather.cover(hdr, W, H)
     const sky = hdr.slice()
     this.paintLand()
+    this.paintForest()
     this.paintHouse()
-    this.paintTree()
     this.paintFences()
     this.paintCrypt()
     this.paintGraves()
+    this.paintTrees()
+    this.paintUndergrowth()
     for (const p of this.pumpkins) this.drawPumpkin(p, 1, true)
     if (this.px !== 1) return
     // Real-size pass: what render() needs.
@@ -642,6 +676,10 @@ class HauntedHouse extends Canvas {
     for (let u = -0.11; u < 0.158; u += this.cells ? 0.02 : 0.012) if ((u < -0.065 || u > 0.08) && Math.abs(u - 0.115) > 0.008) rail.push(cap(...L(u, 0.008), ...L(u, 0.03), rr, rr, trim))
     rail.push(cap(...L(0.112, 0.008), ...L(0.124, 0.022), rr, rr, trim))
     this.shape(rail, this.lighting, 0)
+    // Webs in the porch's top corners; a spider hangs from the right one.
+    this.paintWeb(...L(-0.12, 0.068), 0.03 * S * H, -0.1, Math.PI / 2 + 0.1)
+    this.paintWeb(...L(0.158, 0.064), 0.026 * S * H, Math.PI / 2 - 0.1, Math.PI + 0.1)
+    this.spider = { x: L(0.15, 0.064)[0] / H, y: L(0.15, 0.064)[1] / H }
     // Jack-o'-lanterns on the steps and the porch rail.
     const p = (u: number, v: number, r: number, seed: number) => this.pumpkins.push({ x: L(u, v)[0], y: Y(v), r: r * S * H, seed, flare: 0 })
     p(-0.03, -0.01, 0.011, 1)
@@ -699,17 +737,15 @@ class HauntedHouse extends Canvas {
     this.edge([(a[0] + d[0]) / 2, (a[1] + d[1]) / 2], [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2], 0.0008, frame)
   }
 
-  // The dead tree framing the house on the left, a swing hanging from its long low limb and a lantern from another.
-  private paintTree() {
+  // A dead, twisted tree standing at (x, y) in screen heights, z times the size of the near ones' parts below (screen
+  // heights at z = 1): twisted roots, a gnarled trunk, and the given limbs ([u, v, angle, length, radius, depth, seed]
+  // from the trunk) splitting into clawing branches. extra adds limbs of the caller's own, in the tree's units.
+  // Returns the tips of its smallest branches, for moss, in screen heights.
+  private paintDeadTree(x: number, y: number, z: number, color: RGB, limbs: number[][], light: number, extra: (P: (u: number, v: number) => Point) => Part[] = () => []) {
     const { H } = this
-    const k = this.k
-    // The tree's size: its parts below are in screen heights at z = 1.
-    const z = 1.35
-    const x = 0.13 * k
-    const y = 0.86
-    const bark = this.paint([0.2, 0.16, 0.13])
-    const groups: Part[][] = []
-    const min = this.cells ? 0.7 * this.px : 0.3 * this.px
+    const min = (this.cells ? 0.7 : 0.3) * this.px * Math.min(1, z * 1.2)
+    const groups: Part[][] = [[]]
+    const tips: Point[] = []
     const grow = (px: number, py: number, angle: number, len: number, r: number, depth: number, seed: number, parts: Part[]) => {
       let ax = px
       let ay = py
@@ -718,11 +754,14 @@ class HauntedHouse extends Canvas {
         a += (hash(seed * 3.1 + s) - 0.5) * 0.9
         const bx = ax + Math.cos(a) * (len / 3)
         const by = ay + Math.sin(a) * (len / 3)
-        parts.push(cap(ax * H, ay * H, bx * H, by * H, Math.max(r * (1 - 0.18 * s) * H, min), Math.max(r * (1 - 0.18 * (s + 1)) * H, min), bark))
+        parts.push(cap(ax * H, ay * H, bx * H, by * H, Math.max(r * (1 - 0.18 * s) * H, min), Math.max(r * (1 - 0.18 * (s + 1)) * H, min), color))
         ax = bx
         ay = by
       }
-      if (depth === 0) return
+      if (depth === 0) {
+        tips.push([ax, ay])
+        return
+      }
       const kids = depth > 2 ? 3 : 2
       for (let i = 0; i < kids; i++) {
         const spread = (i - (kids - 1) / 2) * (0.55 + 0.25 * hash(seed + i * 7.7)) + (hash(seed * 1.9 + i) - 0.5) * 0.4
@@ -730,20 +769,254 @@ class HauntedHouse extends Canvas {
         grow(ax, ay, a + spread + droop, len * (0.62 + 0.12 * hash(seed * 4.3 + i)), r * 0.62, depth - 1, seed * 3 + i + 1, depth >= 4 ? (groups[groups.push([]) - 1] as Part[]) : parts)
       }
     }
-    const P = (u: number, v: number) => [(x + u * z) * H, (y + v * z) * H] as const
-    const trunk: Part[] = []
-    groups.push(trunk)
-    trunk.push(cap(...P(-0.035, 0.004), ...P(0, -0.02), 0.008 * z * H, 0.015 * z * H, bark), cap(...P(0.038, 0.006), ...P(0, -0.02), 0.007 * z * H, 0.015 * z * H, bark))
-    trunk.push(cap(...P(0, 0), ...P(-0.01, -0.1), 0.02 * z * H, 0.016 * z * H, bark), cap(...P(-0.01, -0.1), ...P(0.004, -0.17), 0.016 * z * H, 0.012 * z * H, bark))
-    // The swing's limb reaches out level to the right; the lantern's to the left.
-    trunk.push(cap(...P(-0.008, -0.15), ...P(0.08, -0.172), 0.009 * z * H, 0.007 * z * H, bark), cap(...P(0.08, -0.172), ...P(0.17, -0.16), 0.007 * z * H, 0.004 * z * H, bark))
+    const P = (u: number, v: number): Point => [(x + u * z) * H, (y + v * z) * H]
+    const trunk = groups[0]
+    // Roots twisting out over the ground, then the trunk.
+    for (const [u, v, s] of [
+      [-0.05, 0.006, -1],
+      [0.05, 0.008, 1],
+      [-0.02, 0.012, -1],
+    ]) trunk.push(cap(...P(0, -0.018), ...P(u * 0.5, v * 0.3 - 0.004), 0.012 * z * H, 0.008 * z * H, color), cap(...P(u * 0.5, v * 0.3 - 0.004), ...P(u, v), 0.008 * z * H, Math.max(0.003 * z * H, min), color), cap(...P(u, v), ...P(u + s * 0.02, v + 0.002), Math.max(0.003 * z * H, min), min, color))
+    trunk.push(cap(...P(0, 0), ...P(-0.01, -0.1), 0.02 * z * H, 0.016 * z * H, color), cap(...P(-0.01, -0.1), ...P(0.004, -0.17), 0.016 * z * H, 0.012 * z * H, color), ...extra(P))
+    for (const [u, v, angle, len, r, depth, seed] of limbs) grow(x + u * z, y + v * z, angle, len * z, r * z, depth, seed, trunk)
+    for (const g of groups) if (g.length) this.shape(g, this.lighting, light)
+    return tips
+  }
+
+  // Grey moss hanging in ragged strands from some of the tips.
+  private paintMoss(tips: Point[], z: number, share: number) {
+    const H = this.H
+    const moss = this.paint([0.36, 0.4, 0.28], this.look.night ? 1.6 : 1)
+    const w = this.thick(0.0012 * z, 0.5)
+    const parts: Part[] = []
+    for (const [i, [x, y]] of tips.entries()) {
+      if (hash(i * 7.3 + x * 3) > share) continue
+      const len = (0.025 + 0.04 * hash(i * 2.1)) * z
+      let px = x
+      let py = y
+      for (let s = 1; s <= 4; s++) {
+        const nx = x + Math.sin(s * 1.7 + i) * 0.004 * z
+        const ny = y + (len * s) / 4
+        parts.push(cap(px * H, py * H, nx * H, ny * H, w, w * 0.8, moss))
+        px = nx
+        py = ny
+      }
+    }
+    if (parts.length) this.shape(parts, this.lighting, 0)
+  }
+
+  // A spider web strung across a corner at (x, y) in pixels: spokes fanning from angle a0 to a1 and sagging rings.
+  private paintWeb(x: number, y: number, r: number, a0: number, a1: number) {
+    const look = this.look
+    const c = look.night ? this.paint([0.6, 0.62, 0.7], 3) : this.paint([0.62, 0.64, 0.6], 1.3)
+    const w = this.thick(0.0005, 0.4)
+    const parts: Part[] = []
+    const n = 5
+    const at = (i: number, f: number): Point => {
+      const a = lerp(a0, a1, i / (n - 1))
+      return [x + Math.cos(a) * r * f, y + Math.sin(a) * r * f]
+    }
+    for (let i = 0; i < n; i++) parts.push(cap(x, y, ...at(i, 1), w, w, c))
+    for (const f of [0.35, 0.65, 0.95]) for (let i = 0; i + 1 < n; i++) parts.push(cap(...at(i, f), ...at(i + 1, f * 0.92), w, w, c))
+    this.shape(parts, this.lighting, 0)
+  }
+
+  // The dead forest around the house: a far row of small dark trees along the ridge and a nearer row on the rise,
+  // thinning where the house stands, a few draped in moss.
+  private paintForest() {
+    const { A, look } = this
+    const S = this.S
+    const [far, near] = look.ridge
+    const ridgeY = (x: number) => HORIZON - 0.03 - (fbm1(x * 2.2, 11) - 0.5) * 0.06 + 0.008
+    const farC: RGB = [far[0] * 0.62, far[1] * 0.62, far[2] * 0.66]
+    for (let x = -0.04, i = 0; x < A + 0.05; x += 0.05 + 0.06 * hash(i * 3.7), i++) {
+      const z = 0.2 + 0.12 * hash(i * 1.9)
+      const a = (hash(i * 5.1) - 0.5) * 0.5
+      this.paintDeadTree(x, ridgeY(x), z, farC, [[0.004, -0.17, -Math.PI / 2 - 0.5 + a, 0.15, 0.01, 2, i * 3 + 1], [0.004, -0.17, -Math.PI / 2 + 0.5 + a, 0.15, 0.01, 2, i * 3 + 2]], 0)
+    }
+    const nearC: RGB = [near[0] * 0.55, near[1] * 0.55, near[2] * 0.6]
+    for (let x = 0.02, i = 0; x < A; x += 0.13 + 0.1 * hash(i * 2.3), i++) {
+      if (x > this.hx - 0.24 * S && x < this.hx + 0.26 * S) continue
+      const z = 0.5 + 0.25 * hash(i * 4.1)
+      const tips = this.paintDeadTree(x, this.riseY(x) + 0.006, z, nearC, [[0.004, -0.17, -Math.PI / 2 - 0.6, 0.15, 0.01, 3, i * 7 + 40], [0.004, -0.17, -Math.PI / 2 + 0.5, 0.16, 0.01, 3, i * 7 + 41]], 0.2)
+      if (hash(i * 9.7) < 0.4) this.paintMoss(tips, z, 0.35)
+    }
+  }
+
+  // The near trees framing the house: the big one on the left with a swing on its long low limb and a lantern on
+  // another, and a clawing one at the right edge with moss and a lantern of its own; webs in their forks.
+  private paintTrees() {
+    const { A, H } = this
+    const k = this.k
+    const bark = this.paint([0.15, 0.12, 0.1])
+    const z = 1.35
+    const x = 0.13 * k
+    const y = 0.86
+    this.lanterns = []
+    const tips = this.paintDeadTree(
+      x,
+      y,
+      z,
+      bark,
+      [
+        [0.004, -0.17, -Math.PI / 2 - 0.6, 0.15, 0.01, 4, 3],
+        [0.004, -0.17, -Math.PI / 2 + 0.45, 0.16, 0.01, 4, 11],
+        [-0.008, -0.13, -Math.PI / 2 - 1.2, 0.1, 0.007, 3, 23],
+      ],
+      0.6,
+      (P) => [cap(...P(-0.008, -0.15), ...P(0.08, -0.172), 0.009 * z * H, 0.007 * z * H, bark), cap(...P(0.08, -0.172), ...P(0.17, -0.16), 0.007 * z * H, 0.004 * z * H, bark), cap(...P(-0.006, -0.12), ...P(-0.09, -0.17), 0.007 * z * H, 0.004 * z * H, bark)],
+    )
     this.swing = { x: x + 0.11 * z, y: y - 0.172 * z, len: 0.13 * z }
-    trunk.push(cap(...P(-0.006, -0.12), ...P(-0.09, -0.17), 0.007 * z * H, 0.004 * z * H, bark))
-    this.lantern = { x: x - 0.075 * z, y: y - 0.162 * z, len: 0.035 * z }
-    grow(x + 0.004 * z, y - 0.17 * z, -Math.PI / 2 - 0.6, 0.15 * z, 0.01 * z, 4, 3, trunk)
-    grow(x + 0.004 * z, y - 0.17 * z, -Math.PI / 2 + 0.45, 0.16 * z, 0.01 * z, 4, 11, trunk)
-    grow(x - 0.008 * z, y - 0.13 * z, -Math.PI / 2 - 1.2, 0.1 * z, 0.007 * z, 3, 23, trunk)
-    for (const g of groups) if (g.length) this.shape(g, this.lighting, 0.6)
+    this.lanterns.push({ x: x - 0.075 * z, y: y - 0.162 * z, len: 0.035 * z, seed: 77 })
+    this.paintMoss(tips, z, 0.22)
+    this.paintWeb((x + 0.002 * z) * H, (y - 0.17 * z) * H, 0.03 * z * H, -Math.PI * 0.9, -Math.PI * 0.15)
+    // The right one leans in over the graves from beyond the edge.
+    const rz = 1.5
+    const rx = A + 0.02
+    const ry = 0.95
+    const right = this.paintDeadTree(
+      rx,
+      ry,
+      rz,
+      bark,
+      [
+        [0.004, -0.17, -Math.PI / 2 - 0.85, 0.16, 0.011, 4, 61],
+        [0.004, -0.17, -Math.PI / 2 - 0.2, 0.14, 0.01, 4, 67],
+        [-0.008, -0.11, -Math.PI + 0.25, 0.13, 0.008, 3, 71],
+      ],
+      0.6,
+    )
+    this.paintMoss(right, rz, 0.3)
+    this.lanterns.push({ x: rx - 0.14 * rz, y: ry - 0.13 * rz, len: 0.03 * rz, seed: 78 })
+    this.paintWeb((rx - 0.004 * rz) * H, (ry - 0.15 * rz) * H, 0.028 * rz * H, -Math.PI * 0.85, -Math.PI * 0.2)
+  }
+
+  // Dead bushes of bare twigs about the knoll and the graves, and thorny brambles creeping in from the bottom corners.
+  private paintUndergrowth() {
+    const { A, H } = this
+    const S = this.S
+    const twig = this.paint([0.14, 0.11, 0.09])
+    const w = this.thick(0.0012, 0.55)
+    const bush = (x: number, y: number, size: number, seed: number) => {
+      const parts: Part[] = []
+      for (let i = 0; i < 7; i++) {
+        const a = -Math.PI / 2 + (i / 6 - 0.5) * 2.2 + (hash(seed + i) - 0.5) * 0.3
+        const len = size * (0.6 + 0.4 * hash(seed * 2 + i))
+        const mx = x + Math.cos(a) * len * 0.55
+        const my = y + Math.sin(a) * len * 0.55
+        parts.push(cap(x * H, y * H, mx * H, my * H, w * 1.4, w, twig), cap(mx * H, my * H, (x + Math.cos(a) * len) * H, (y + Math.sin(a) * len) * H, w, w * 0.7, twig))
+        const b = a + (hash(seed * 3 + i) < 0.5 ? -0.6 : 0.6)
+        parts.push(cap(mx * H, my * H, (mx + Math.cos(b) * len * 0.35) * H, (my + Math.sin(b) * len * 0.35) * H, w * 0.8, w * 0.6, twig))
+      }
+      this.shape(parts, this.lighting, 0.2)
+    }
+    const spots: [number, number, number][] = [
+      [this.hx - 0.27 * S, this.hy + 0.01, 0.05],
+      [this.hx + 0.3 * S, this.hy + 0.012, 0.045],
+      [this.hx - 0.36 * S, this.riseY(this.hx - 0.36 * S) + 0.01, 0.035],
+      [this.hx + 0.42 * S, this.riseY(this.hx + 0.42 * S) + 0.01, 0.04],
+      [0.3 * this.k, 0.83, 0.04],
+      [A - 0.36 * this.k, 0.84, 0.04],
+    ]
+    for (const [i, [x, y, s]] of spots.entries()) bush(x, y, s, i * 11 + 5)
+    // Brambles: thorny stems arching up out of the bottom corners.
+    const thorn = this.paint([0.12, 0.09, 0.08])
+    const stem = this.thick(0.0016, 0.6)
+    for (const side of [-1, 1]) {
+      const x0 = side < 0 ? 0 : A
+      const parts: Part[] = []
+      for (let j = 0; j < 4; j++) {
+        const reach = 0.09 + 0.05 * hash(j * 3.3 + side)
+        const lift = 0.05 + 0.05 * hash(j * 1.7 + side)
+        let px = x0
+        let py = 1.01
+        for (let i = 1; i <= 8; i++) {
+          const t = i / 8
+          const nx = x0 - side * reach * t
+          const ny = 1.01 - lift * Math.sin(t * Math.PI * 0.85) - j * 0.012
+          parts.push(cap(px * H, py * H, nx * H, ny * H, stem, stem, thorn))
+          if (i % 2 === 0 && !this.cells) parts.push(cap(nx * H, ny * H, (nx - side * 0.004) * H, (ny - 0.006) * H, stem, 0.3 * this.px, thorn))
+          px = nx
+          py = ny
+        }
+      }
+      this.shape(parts, this.lighting, 0)
+    }
+  }
+
+  // A skull grinning from a post top at (x, y), radius r, in screen heights.
+  private paintSkull(x: number, y: number, r: number) {
+    const H = this.H
+    const bone = this.paint([0.78, 0.74, 0.6], this.look.night ? 2.4 : 1)
+    const hole = this.paint([0.03, 0.02, 0.03])
+    this.shape([ell(x * H, (y - r * 1.1) * H, r * H, r * 0.95 * H, 0, bone), ell(x * H, (y - r * 0.3) * H, r * 0.6 * H, r * 0.4 * H, 0, bone)], this.lighting, 0.5)
+    for (const s of [-1, 1]) this.ellipse((x + s * r * 0.38) * H, (y - r * 1.0) * H, Math.max(r * 0.26 * H, 0.6), Math.max(r * 0.3 * H, 0.6), hole[0], hole[1], hole[2], 1)
+    this.ellipse(x * H, (y - r * 0.58) * H, Math.max(r * 0.1 * H, 0.4), Math.max(r * 0.14 * H, 0.4), hole[0], hole[1], hole[2], 0.9)
+  }
+
+  // A crooked warning sign by the gate: a board on a post, painted with a skull and crossed bones.
+  private paintSign(x: number) {
+    const H = this.H
+    const wood = this.paint([0.34, 0.24, 0.14])
+    const post = this.paint([0.22, 0.15, 0.09])
+    const y = FENCE + 0.02
+    this.shape([cap(x * H, y * H, (x + 0.004) * H, (y - 0.1) * H, this.thick(0.003, 0.8), this.thick(0.0025, 0.7), post)], this.lighting, 0.4)
+    const a = -0.18
+    const cx = x + 0.004
+    const cy = y - 0.085
+    const R = (u: number, v: number): Point => [(cx + u * Math.cos(a) - v * Math.sin(a)) * H, (cy + u * Math.sin(a) + v * Math.cos(a)) * H]
+    this.polygon([R(-0.04, -0.022), R(0.038, -0.024), R(0.042, 0.02), R(-0.036, 0.024)], wood)
+    this.polygon([R(0.02, -0.024), R(0.038, -0.024), R(0.042, 0.02), R(0.03, 0.021)], [wood[0] * 0.7, wood[1] * 0.7, wood[2] * 0.7])
+    const mark = this.paint([0.06, 0.03, 0.03])
+    const w = this.thick(0.0018, 0.6)
+    this.shape([cap(...R(-0.018, 0.016), ...R(0.016, -0.0), w, w, mark), cap(...R(-0.018, -0.0), ...R(0.016, 0.016), w, w, mark)], this.lighting, 0)
+    const [sx, sy] = R(-0.001, -0.004)
+    this.ellipse(sx, sy, 0.009 * H, 0.008 * H, mark[0], mark[1], mark[2], 1)
+    this.ellipse(sx, sy + 0.007 * H, 0.005 * H, 0.004 * H, mark[0], mark[1], mark[2], 1)
+    this.raven = { x: R(0.03, -0.024)[0] / H, y: R(0.03, -0.024)[1] / H }
+  }
+
+  // A coffin leaning against the crypt's side, its lid ajar.
+  private paintCoffin(x: number, y: number) {
+    const H = this.H
+    const wood = this.paint([0.24, 0.15, 0.1])
+    const a = 0.22
+    const R = (u: number, v: number): Point => [(x + u * Math.cos(a) + v * Math.sin(a)) * H, (y - v * Math.cos(a) + u * Math.sin(a)) * H]
+    const shapeOf = (s: number, du: number): Point[] => [R(-0.014 * s + du, 0), R(0.014 * s + du, 0), R(0.022 * s + du, 0.075), R(0.016 * s + du, 0.11), R(-0.016 * s + du, 0.11), R(-0.022 * s + du, 0.075)]
+    this.polygon(shapeOf(1, 0), [wood[0] * 0.5, wood[1] * 0.5, wood[2] * 0.5])
+    this.polygon(shapeOf(0.92, 0.008), wood)
+    this.edge(R(0.008, 0.08), R(0.008, 0.03), 0.0008, [wood[0] * 0.6, wood[1] * 0.6, wood[2] * 0.6])
+    this.edge(R(-0.006, 0.065), R(0.022, 0.065), 0.0008, [wood[0] * 0.6, wood[1] * 0.6, wood[2] * 0.6])
+  }
+
+  // The reaper: a tall hooded figure in a ragged cloak standing among the graves, a scythe in hand and only darkness
+  // under its hood.
+  private paintReaper(x: number, y: number) {
+    const H = this.H
+    const s = 0.2
+    const cloak = this.paint([0.05, 0.045, 0.06])
+    const P = (u: number, v: number): Point => [(x + u * s) * H, (y - v * s) * H]
+    const hem: Point[] = []
+    for (let i = 0; i <= 6; i++) hem.push(P(0.2 - (i / 6) * 0.42, (i % 2) * 0.03))
+    this.polygon([...hem, P(-0.16, 0.5), P(-0.11, 0.78), P(-0.02, 0.9), P(0.09, 0.82), P(0.14, 0.55)], cloak)
+    this.polygon([P(-0.02, 0.9), P(0.11, 0.86), P(0.13, 0.72), P(0.06, 0.66), P(-0.06, 0.7)], [cloak[0] * 1.3, cloak[1] * 1.3, cloak[2] * 1.4])
+    this.ellipse(...P(0.055, 0.76), 0.038 * s * H * 1.2, 0.055 * s * H, 0.008, 0.005, 0.01, 1)
+    // The scythe: a long crooked snath and a curved blade.
+    const wood = this.paint([0.2, 0.15, 0.1])
+    const w = this.thick(0.0022, 0.7)
+    this.shape([cap(...P(0.18, -0.02), ...P(0.26, 1.08), w, w, wood), cap(...P(0.14, 0.52), ...P(0.22, 0.54), w * 1.8, w * 1.6, cloak)], this.lighting, 0.3)
+    const blade = this.paint([0.55, 0.56, 0.6], this.look.night ? 1.8 : 1)
+    const arc: Point[] = []
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8
+      arc.push(P(0.26 - t * 0.34, 1.08 + Math.sin(t * Math.PI) * 0.06 - t * 0.1))
+    }
+    for (let i = 8; i >= 0; i--) {
+      const t = i / 8
+      arc.push(P(0.26 - t * 0.3, 1.06 + Math.sin(t * Math.PI) * 0.025 - t * 0.09))
+    }
+    this.polygon(arc, blade)
+    if (this.look.style === "rim") this.rimEdges([P(-0.16, 0.5), P(-0.11, 0.78), P(-0.02, 0.9), P(0.09, 0.82)])
   }
 
   // The graveyard's iron fence across the front of the knoll, with a gate ajar where the path comes down from the
@@ -755,6 +1028,14 @@ class HauntedHouse extends Canvas {
     const half = 0.045
     this.paintFence(-0.02, gate - half, 0.05)
     this.paintFence(gate + half, A + 0.02, 0.05)
+    // Skulls on the gate posts and on every other post along the fence.
+    const post = this.paint([0.08, 0.07, 0.09])
+    for (const side of [-1, 1])
+      for (let x = gate + side * half, i = 0; x > 0.02 && x < A - 0.02; x += side * 0.28, i++) {
+        if (i > 0) this.polygon([[(x - 0.005) * H, FENCE * H], [(x + 0.005) * H, FENCE * H], [(x + 0.005) * H, (FENCE - 0.062) * H], [(x - 0.005) * H, (FENCE - 0.062) * H]], post)
+        if (i % 2 === 0) this.paintSkull(x, FENCE - 0.062, 0.011)
+      }
+    this.paintSign(gate - half - 0.1)
     const path = this.paint(look.dirt, look.night ? 2 : 1.3)
     this.polygon([[(gate - half) * H, (FENCE + 0.004) * H], [(gate + half) * H, (FENCE + 0.004) * H], [(this.hx + 0.05 * S) * H, (this.hy + 0.03 * S) * H], [(this.hx - 0.02 * S) * H, (this.hy + 0.03 * S) * H]], path, 0.45)
     // The gate's two leaves, one swung half open.
@@ -817,6 +1098,7 @@ class HauntedHouse extends Canvas {
     this.polygon([Q(-w - 0.01, -0.008), Q(w + 0.01, -0.008), Q(w + 0.01, 0), Q(-w - 0.01, 0)], dark)
     this.edge(Q(-0.035, 0.07), Q(-0.02, 0.04), 0.0008, dark)
     if (look.style === "rim") this.rimEdges([Q(-w - 0.008, 0.083), Q(0, 0.125), Q(w + 0.008, 0.083)])
+    this.paintCoffin(x - (w + 0.02) * z - 0.02, y)
   }
 
   // Tilted gravestones spreading through the graveyard in front of the house, with mounds; an open grave with a spade
@@ -842,12 +1124,26 @@ class HauntedHouse extends Canvas {
       if (stones.some((o) => Math.abs(o.x - x) < (o.s + s) * 1.1 && Math.abs(o.y - y) < 0.04)) continue
       stones.push({ x, y, s, tilt: (hash(i * 7.9) - 0.5) * 0.5, kind: Math.floor(hash(i * 3.3) * 4) })
     }
-    stones.sort((a, b) => a.y - b.y)
-    this.stones = stones
+    // Lively and teeming: the reaper stands among the stones, in front of those behind it and behind those in front.
+    const reaper = this.activity === "calm" ? undefined : { x: Math.max(0.24, this.hx - 0.42 * S), y: 0.905 }
+    this.stones = stones.filter((s) => !reaper || Math.abs(s.x - reaper.x) > 0.06 || s.y < reaper.y - 0.07 || s.y > reaper.y + 0.01).sort((a, b) => a.y - b.y)
     const mound = this.paint(look.dirt, 0.8)
-    for (const s of stones) {
+    let stood = !reaper
+    for (const s of this.stones) {
+      if (!stood && reaper && s.y > reaper.y) {
+        this.paintReaper(reaper.x, reaper.y)
+        stood = true
+      }
       if (hash(s.x * 13.1) < 0.6) this.ellipse(s.x * H, (s.y + s.s * 0.5) * H, s.s * 1.6 * H, s.s * 0.45 * H, mound[0], mound[1], mound[2], 0.6)
       this.drawStone(s)
+    }
+    if (!stood && reaper) this.paintReaper(reaper.x, reaper.y)
+    // Mist pooling low between the stones.
+    const mist = look.fog
+    for (let i = 0; i < 12; i++) {
+      const x = hash(i * 4.3 + 0.7) * A
+      const y = lerp(FENCE + 0.03, 0.97, hash(i * 2.9))
+      this.ellipse(x * H, y * H, (0.06 + 0.05 * hash(i * 1.3)) * H, (0.008 + 0.006 * hash(i * 6.1)) * H, mist[0], mist[1], mist[2], 0.22)
     }
     // The open grave: a dark pit, a heap of earth and a spade.
     const ox = open.x
@@ -945,6 +1241,15 @@ class HauntedHouse extends Canvas {
       if (g.x === 0) g.x = lerp(x0, x1, hash(i * 3.7 + 1))
       g.y = i === 0 ? this.hy - 0.13 * S : 0.86
     }
+    // Eyes glinting in the woods either side of the house, and will-o'-wisps over the graves.
+    const eyes = { calm: 1, lively: 3, teeming: 5 }[this.activity]
+    this.eyes = Array.from({ length: eyes }, (_, i) => {
+      const left = i % 2 === 0
+      const x = left ? lerp(0.04, Math.max(0.08, this.hx - 0.3 * S), hash(i * 3.9)) : lerp(Math.min(A - 0.08, this.hx + 0.34 * S), A - 0.04, hash(i * 3.9))
+      return { x, y: this.riseY(x) - 0.012 - 0.04 * hash(i * 7.1), phase: hash(i * 5.3) * 40, green: i % 3 === 1 }
+    })
+    const wisps = { calm: 1, lively: 3, teeming: 5 }[this.activity]
+    this.wisps = Array.from({ length: wisps }, (_, i) => ({ x: lerp(0.08, A - 0.08, hash(i * 2.3 + 0.4)), y: lerp(0.84, 0.95, hash(i * 6.7)), phase: hash(i * 1.7) * TAU }))
     const z = this.zombie
     if (z.x === 0.5) Object.assign(z, { x: A * 0.3, y: lerp(WALK0, WALK1, 0.5) })
   }
@@ -966,19 +1271,21 @@ class HauntedHouse extends Canvas {
       this.drawMuntins(w)
       if (w.kind === "candle") this.drawCandle(w, dim)
       if (w.flash > 0.7) this.drawFigure(w)
+      if (this.windows[this.passer.win] === w) this.drawPasser(w, this.passer.t)
       if (look.style === "rim" || k > 0.4) this.lights.pool(w.x, w.y + w.h, w.w * 4, w.h * 1.5, [1, 0.55, 0.15], 1.2 * k, 0.006 * k)
     }
-    // The lantern hanging from the tree, swaying a little.
-    const sway = Math.sin(this.time * 0.7) * 0.15 + gust(this.lantern.x, this.time) * 0.25
-    const lx = (this.lantern.x + Math.sin(sway) * this.lantern.len) * H
-    const ly = (this.lantern.y + Math.cos(sway) * this.lantern.len) * H
-    this.shape([cap(this.lantern.x * H, this.lantern.y * H, lx, ly - 0.008 * H, this.thick(0.0008, 0.45), this.thick(0.0008, 0.45), this.paint([0.1, 0.08, 0.06]))], this.lighting, 0)
-    const f = firelight(this.time * 2.4, 77) * dim
-    const frame = this.paint([0.12, 0.1, 0.08])
-    this.polygon([[lx - 0.007 * H, ly - 0.012 * H], [lx + 0.007 * H, ly - 0.012 * H], [lx + 0.006 * H, ly + 0.01 * H], [lx - 0.006 * H, ly + 0.01 * H]], frame)
-    const lg = look.glow * f * (look.style === "front" ? 0.6 : 1)
-    this.ellipse(lx, ly, 0.0045 * H, 0.008 * H, CANDLE[0] * lg, CANDLE[1] * lg, CANDLE[2] * lg, 1)
-    this.lights.pool(lx, ly, 0.08 * H, 0.07 * H, [1, 0.5, 0.12], 2 * f * (look.style === "front" ? 0.3 : 1), 0.012 * f)
+    // The lanterns hanging from the trees, swaying a little.
+    for (const l of this.lanterns) {
+      const sway = Math.sin(this.time * 0.7 + l.seed) * 0.15 + gust(l.x, this.time) * 0.25
+      const lx = (l.x + Math.sin(sway) * l.len) * H
+      const ly = (l.y + Math.cos(sway) * l.len) * H
+      this.shape([cap(l.x * H, l.y * H, lx, ly - 0.008 * H, this.thick(0.0008, 0.45), this.thick(0.0008, 0.45), this.paint([0.1, 0.08, 0.06]))], this.lighting, 0)
+      const f = firelight(this.time * 2.4, l.seed) * dim
+      this.polygon([[lx - 0.008 * H, ly - 0.013 * H], [lx + 0.008 * H, ly - 0.013 * H], [lx + 0.007 * H, ly + 0.011 * H], [lx - 0.007 * H, ly + 0.011 * H]], this.paint([0.12, 0.1, 0.08]))
+      const lg = look.glow * f * 1.2
+      this.ellipse(lx, ly, 0.005 * H, 0.009 * H, CANDLE[0] * lg, CANDLE[1] * lg, CANDLE[2] * lg, 1)
+      this.lights.pool(lx, ly, 0.09 * H, 0.08 * H, [1, 0.5, 0.12], 2 * f * (look.style === "front" ? 0.5 : 1), 0.014 * f)
+    }
   }
 
   // A candle on the sill: a little flame bending in drafts.
@@ -991,6 +1298,20 @@ class HauntedHouse extends Canvas {
     const lean = Math.sin(this.time * 1.7 + w.seed) * 0.002 * H
     this.ellipse(x + lean, y - 0.016 * H, 0.0028 * H, 0.0065 * H * f, CANDLE[0] * 1.3 * f, CANDLE[1] * 1.3 * f, CANDLE[2] * f, 1)
     this.lights.pool(x, y - 0.015 * H, 0.05 * H, 0.04 * H, [1, 0.5, 0.12], 1.5 * f, 0.01 * f)
+  }
+
+  // A dark figure gliding past behind a lit window, t from 0 to 1 across it, kept within the glass.
+  private drawPasser(w: Window, t: number) {
+    const c = this.paint([0.02, 0.015, 0.03])
+    const x = w.x + (t * 2.6 - 1.3) * w.w
+    const y = w.y + w.h * 0.5
+    const x0 = w.x - w.w
+    const x1 = w.x + w.w
+    const X = (u: number) => clamp(x + u * w.w, x0, x1)
+    if (X(-0.7) >= X(0.7)) return
+    this.polygon([[X(-0.7), y], [X(0.7), y], [X(0.45), y - w.h * 0.5], [X(-0.45), y - w.h * 0.5]], c)
+    const hx = x
+    if (hx - w.w * 0.3 > x0 && hx + w.w * 0.3 < x1) this.ellipse(hx, y - w.h * 0.66, w.w * 0.3, w.h * 0.19, c[0], c[1], c[2], 1)
   }
 
   // A dark figure standing in a flashing window, head and shoulders against the light.
@@ -1059,6 +1380,68 @@ class HauntedHouse extends Canvas {
       const c = this.paint(l.color, k)
       this.shape([ell(l.x * H, l.y * H, r, Math.max(r * 0.55 * Math.abs(Math.cos(l.spin)) + 0.3, this.cells ? 0.7 : 0.4), l.spin * 0.6, c)], this.lighting, 0.3)
     }
+  }
+
+  // The raven perched on the warning sign: still for long spells, then turning its head to look the other way, its
+  // eye glinting after dark.
+  private drawRaven() {
+    const { H, look } = this
+    const x = this.raven.x * H
+    const y = this.raven.y * H
+    const s = 0.03 * H
+    const turn = Math.sin(this.time * 0.25) > 0.3 ? -1 : 1
+    const black = this.paint([0.04, 0.035, 0.05])
+    this.shape([ell(x, y - s * 0.38, s * 0.3, s * 0.22, -0.4 * turn, black), cap(x - turn * s * 0.2, y - s * 0.3, x - turn * s * 0.55, y - s * 0.05, s * 0.1, s * 0.04, black), ell(x + turn * s * 0.2, y - s * 0.62, s * 0.14, s * 0.13, 0, black), cap(x - s * 0.04, y - s * 0.18, x - s * 0.05, y, s * 0.03, s * 0.025, black), cap(x + s * 0.06, y - s * 0.18, x + s * 0.07, y, s * 0.03, s * 0.025, black)], this.lighting, 0.4)
+    this.polygon([[x + turn * s * 0.3, y - s * 0.66], [x + turn * s * 0.52, y - s * 0.6], [x + turn * s * 0.3, y - s * 0.57]], this.paint([0.12, 0.1, 0.08]))
+    const eye: RGB = look.style === "front" ? [0.5, 0.35, 0.08] : [1.6, 0.9, 0.12]
+    this.disc(x + turn * s * 0.25, y - s * 0.65, Math.max(s * 0.04, 0.5), eye[0], eye[1], eye[2], 1)
+  }
+
+  // Pairs of eyes in the dark woods: one opens now and then, blinks, stares a while and closes again.
+  private drawEyes() {
+    const H = this.H
+    const look = this.look
+    const k = look.style === "front" ? 0.45 : 1
+    for (const e of this.eyes) {
+      const t = (this.time + e.phase) % 40
+      if (t > 14) continue
+      const open = smoothstep(0, 1.5, t) * (1 - smoothstep(12.5, 14, t)) * (Math.abs(t - 6) < 0.15 ? 0.1 : 1)
+      if (open < 0.05) continue
+      const c: RGB = e.green ? [0.5, 1.5, 0.3] : [1.6, 1.0, 0.12]
+      for (const sx of [-1, 1]) this.ellipse((e.x + sx * 0.006) * H, e.y * H, Math.max(0.003 * H, 0.7), Math.max(0.0022 * H * open, 0.4), c[0] * k, c[1] * k, c[2] * k, open)
+    }
+  }
+
+  // Will-o'-wisps: pale glowing orbs bobbing and wandering low over the graves, swelling and fading.
+  private drawWisps() {
+    const H = this.H
+    const c = this.look.ghost
+    const k = this.look.style === "front" ? 0.6 : 1
+    for (const w of this.wisps) {
+      const t = this.creatureTime * 0.6 + w.phase
+      const x = (w.x + Math.sin(t * 1.3) * 0.05 + Math.sin(t * 0.37) * 0.04) * H
+      const y = (w.y + Math.sin(t * 2.1) * 0.012) * H
+      const pulse = (0.55 + 0.45 * Math.sin(this.time * 1.4 + w.phase * 3)) * k
+      lightPool(this.hdr, this.W, H, x, y, 0.045 * H, 0.03 * H, c, 0.8 * pulse, 0.05 * pulse)
+      this.disc(x, y, Math.max(0.005 * H, 0.9), c[0] * 1.2 * pulse, c[1] * 1.2 * pulse, c[2] * 1.2 * pulse, 1)
+    }
+  }
+
+  // A spider letting itself down on a thread from the porch's web and climbing back up.
+  private drawSpider() {
+    const H = this.H
+    const x = this.spider.x * H
+    const top = this.spider.y * H
+    const drop = (0.5 - 0.5 * Math.cos(this.creatureTime * 1.5)) * 0.045 * this.S * H
+    const silk = this.look.night ? this.paint([0.6, 0.62, 0.7], 3) : this.paint([0.62, 0.64, 0.6], 1.3)
+    const w = this.thick(0.0005, 0.4)
+    const y = top + drop
+    this.shape([cap(x, top, x, y, w, w, silk)], this.lighting, 0)
+    const body = this.paint([0.05, 0.04, 0.05])
+    const s = 0.006 * this.S * H
+    const legs: Part[] = []
+    for (const side of [-1, 1]) for (let i = 0; i < 4; i++) legs.push(cap(x, y + s * 0.5, x + side * s * 1.6, y + s * (i * 0.6 - 0.3), Math.max(s * 0.12, 0.4), Math.max(s * 0.08, 0.3), body))
+    this.shape([...legs, ell(x, y + s * 0.6, s * 0.7, s * 0.8, 0, body), ell(x, y, s * 0.45, s * 0.45, 0, body)], this.lighting, 0.3)
   }
 
   // Lively and teeming: now and then bats pour out of the turret's top window and scatter over the sky.
@@ -1401,9 +1784,9 @@ class HauntedHouse extends Canvas {
 
   // A thin line of rim light along an outline (pixels), on the edges facing the sun or moon.
   private rimEdges(pts: Point[]) {
-    const r = this.thick(0.0012, 0.45)
+    const r = this.thick(0.0022, 0.75)
     const lx = this.orb.x * this.W
-    const k = this.look.night ? 0.12 : 0.22
+    const k = this.look.night ? 0.35 : 0.4
     const c: RGB = [this.light[0] * k, this.light[1] * k, this.light[2] * k]
     const parts: Part[] = []
     for (let i = 0; i + 1 < pts.length; i++) {
