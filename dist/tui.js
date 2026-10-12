@@ -8639,8 +8639,639 @@ var farm = {
   create: (settings) => new Farm(settings)
 };
 
-// wallpapers/haunted-house.ts
+// wallpapers/flowerbox.ts
 var TIME_SCALE6 = 0.35;
+var N2 = 14;
+var G = N2 + 3;
+var CAMERA = 5;
+var SS = 2;
+var CUBE = 0;
+var BALLS = 1;
+var STAR = 2;
+var PILLOW = 3;
+var CYCLE = [CUBE, BALLS, STAR, PILLOW];
+var CALM_CYCLE = [CUBE, BALLS, PILLOW];
+var MORPH = 0.45;
+var WARP = 6;
+var WARP_STARS = 220;
+var TRAIL = 8;
+var PATCHES = [
+  [0.85, 0.05, 0.62],
+  [0.8, 0.64, 0.04],
+  [0.04, 0.6, 0.85],
+  [0.1, 0.72, 0.1],
+  [0.14, 0.24, 1],
+  [0.85, 0.3, 0.03]
+];
+var SPIKE = [0.85, 0.035, 0.6];
+var LOOKS6 = {
+  day: {
+    sky: [
+      [0, [0.004, 0.04, 0.046]],
+      [0.5, [0.006, 0.07, 0.075]],
+      [1, [0.003, 0.035, 0.04]]
+    ],
+    key: [1.05, 1, 0.95],
+    ambient: 0.16,
+    glint: [1, 0.96, 0.88],
+    glintTint: 0.25,
+    fill: [0.05, 0.25, 0.28],
+    trail: 0.05
+  },
+  sunset: {
+    sky: [
+      [0, [0.05, 0.01, 0.042]],
+      [0.55, [0.022, 0.005, 0.02]],
+      [1, [0.004, 0.001, 0.004]]
+    ],
+    key: [1, 0.72, 0.5],
+    ambient: 0.12,
+    glint: [1, 0.62, 0.32],
+    glintTint: 0.4,
+    fill: [0.3, 0.05, 0.25],
+    trail: 0.06
+  },
+  night: {
+    sky: [
+      [0, [0.003, 0.005, 0.02]],
+      [1, [0.0005, 0.001, 0.004]]
+    ],
+    key: [0.8, 0.85, 1],
+    ambient: 0.1,
+    glint: [0.2, 0.4, 1.1],
+    glintTint: 0.6,
+    fill: [0.02, 0.15, 0.3],
+    trail: 0.07
+  }
+};
+var DIRS = new Float32Array(6 * G * G * 3);
+var TRIS = [];
+for (let f = 0;f < 6; f++) {
+  const axis = f >> 1;
+  const s = f & 1 ? -1 : 1;
+  const e1 = s > 0 ? (axis + 1) % 3 : (axis + 2) % 3;
+  const e2 = s > 0 ? (axis + 2) % 3 : (axis + 1) % 3;
+  for (let j = 0;j < G; j++)
+    for (let i = 0;i < G; i++) {
+      const u = Math.tan((-1 + 2 * (i - 1) / N2) * (Math.PI / 4));
+      const v = Math.tan((-1 + 2 * (j - 1) / N2) * (Math.PI / 4));
+      const q = [0, 0, 0];
+      q[axis] = s;
+      q[e1] = u;
+      q[e2] = v;
+      const l = Math.hypot(q[0], q[1], q[2]);
+      const o = ((f * G + j) * G + i) * 3;
+      DIRS[o] = q[0] / l;
+      DIRS[o + 1] = q[1] / l;
+      DIRS[o + 2] = q[2] / l;
+    }
+  for (let j = 1;j <= N2; j++)
+    for (let i = 1;i <= N2; i++) {
+      const p = (f * G + j) * G + i;
+      TRIS.push(p, p + 1, p + G + 1, p, p + G + 1, p + G);
+    }
+}
+var TRI = Int32Array.from(TRIS);
+var VERTS = 6 * G * G;
+
+class FlowerBox extends Canvas {
+  time = 0;
+  activity;
+  look;
+  blobs = [];
+  burst = 0;
+  placed = false;
+  warp = { wait: eggWait() * TIME_SCALE6, t: -1, stars: [] };
+  model = new Float32Array(VERTS * 3);
+  view = new Float32Array(VERTS * 3);
+  normals = new Float32Array(VERTS * 3);
+  colors = new Float32Array(VERTS * 3);
+  occlusion = new Float32Array(VERTS);
+  screen = new Float32Array(VERTS * 3);
+  samples = new Float32Array(0);
+  depth = new Float32Array(0);
+  shade = new Float32Array(16);
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.activity = settings.activity;
+    this.look = LOOKS6[settings.time];
+    const sizes = settings.activity === "teeming" ? [0.17, 0.12, 0.085] : [0.175];
+    this.blobs = sizes.map((r, i) => this.blob(r, i));
+  }
+  blob(r, i, life = Infinity) {
+    const speed = { calm: 0.03, lively: 0.04, teeming: 0.035 }[this.activity] * (1 + 0.2 * i);
+    const heading = rand(0, TAU);
+    const spin = { calm: 0.2, lively: 0.27, teeming: 0.2 }[this.activity];
+    return {
+      x: 0,
+      y: 0,
+      vx: Math.cos(heading) * speed,
+      vy: Math.sin(heading) * speed,
+      kx: 0,
+      ky: 0,
+      r,
+      z: -i,
+      a: rand(0, TAU),
+      b: rand(0, TAU),
+      ra: spin * rand(0.8, 1.2),
+      rb: spin * rand(0.45, 0.7),
+      phase: i + rand(0, 0.5),
+      rate: 1 / ({ calm: 30, lively: 20, teeming: 18 }[this.activity] * rand(0.9, 1.1)),
+      life,
+      age: 0,
+      trail: [],
+      trailWait: 0,
+      color: [0, 0, 0]
+    };
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE6;
+    this.time += dt;
+    this.stepGloom(dt);
+    const slow = 1 - 0.55 * this.gloom;
+    const burst = 1 + 7 * smoothstep(0, 0.5, this.burst);
+    this.burst = Math.max(0, this.burst - dt);
+    const A = this.A;
+    for (const b of this.blobs) {
+      const k = dt * slow;
+      b.age += dt;
+      b.x += (b.vx + b.kx) * k;
+      b.y += (b.vy + b.ky) * k;
+      const decay = Math.exp(-dt / 2.5);
+      b.kx *= decay;
+      b.ky *= decay;
+      const m = b.r * 1.15;
+      if (b.x < m || b.x > A - m) {
+        const side = b.x < m ? 1 : -1;
+        b.vx = side * Math.abs(b.vx);
+        b.kx = side * Math.abs(b.kx);
+        b.x = clamp(b.x, m, Math.max(m, A - m));
+      }
+      if (b.y < m || b.y > 1 - m) {
+        const side = b.y < m ? 1 : -1;
+        b.vy = side * Math.abs(b.vy);
+        b.ky = side * Math.abs(b.ky);
+        b.y = clamp(b.y, m, 1 - m);
+      }
+      b.a += b.ra * k * (lerp(1, 2.5, (burst - 1) / 7) + 6 * Math.hypot(b.kx, b.ky));
+      b.b += b.rb * k;
+      b.phase += b.rate * k * burst;
+      if (this.activity !== "teeming")
+        continue;
+      b.trailWait -= dt;
+      if (b.trailWait > 0)
+        continue;
+      b.trailWait = 0.4;
+      b.trail.unshift({ x: b.x, y: b.y });
+      b.trail.length = Math.min(b.trail.length, TRAIL);
+    }
+    this.blobs = this.blobs.filter((b) => b.age < b.life);
+    this.stepWarp(dt);
+  }
+  render() {
+    this.restore();
+    if (this.warp.t >= 0)
+      this.drawWarp();
+    const order = [...this.blobs].sort((p, q) => p.z - q.z);
+    if (this.activity === "teeming")
+      for (const b of order)
+        this.drawTrail(b);
+    for (const b of order)
+      this.drawBlob(b);
+    this.finish();
+  }
+  visit() {
+    this.burst = 2.5;
+    const main = this.blobs[0];
+    if (!main || this.blobs.length > 4)
+      return;
+    for (const side of [-1, 1]) {
+      const b = this.blob(main.r * 0.45, 1, 9);
+      b.x = main.x + side * main.r * 0.5;
+      b.y = main.y;
+      b.kx = side * 0.12;
+      b.ky = rand(-0.06, 0.06);
+      b.z = main.z - 0.5;
+      this.blobs.push(b);
+    }
+  }
+  poke(x, y) {
+    let pushed = false;
+    for (const b2 of this.blobs) {
+      const d = Math.hypot(b2.x - x, b2.y - y);
+      if (d > b2.r * 2.2)
+        continue;
+      const k = 0.14 / Math.max(d, 0.02);
+      b2.kx += (b2.x - x) * k;
+      b2.ky += (b2.y - y) * k;
+      pushed = true;
+    }
+    if (pushed || this.blobs.length > 5)
+      return;
+    const b = this.blob(0.06, 1, 10);
+    b.x = clamp(x, 0.08, this.A - 0.08);
+    b.y = clamp(y, 0.08, 0.92);
+    b.z = 1;
+    this.blobs.push(b);
+  }
+  layout() {
+    const { W, H, A, hdr, look } = this;
+    for (const b of this.blobs) {
+      const m = b.r * 1.15;
+      if (!this.placed)
+        [b.x, b.y] = this.openSpot(m, Math.max(m, A - m), m, 1 - m);
+      b.x = clamp(b.x, m, Math.max(m, A - m));
+      b.y = clamp(b.y, m, 1 - m);
+    }
+    this.placed = true;
+    const stops = look.sky;
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      const i = stops.findIndex(([at]) => at >= v);
+      const [a, from] = stops[Math.max(0, i - 1)];
+      const [b, to] = stops[i < 0 ? stops.length - 1 : i];
+      const k = b > a ? smoothstep(a, b, v) : 1;
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(from[0], to[0], k);
+        hdr[o + 1] = lerp(from[1], to[1], k);
+        hdr[o + 2] = lerp(from[2], to[2], k);
+      }
+    }
+  }
+  drawBlob(b) {
+    const H = this.H;
+    const grow = b.life === Infinity ? 1 : smoothstep(0, 1, b.age) * smoothstep(b.life, b.life - 1.5, b.age);
+    if (grow <= 0.01)
+      return;
+    const cycle = this.activity === "calm" ? CALM_CYCLE : CYCLE;
+    const turn = (b.phase % cycle.length + cycle.length) % cycle.length;
+    const from = cycle[Math.floor(turn)];
+    const to = cycle[(Math.floor(turn) + 1) % cycle.length];
+    const blend = smoothstep(1 - MORPH, 1, turn - Math.floor(turn));
+    surface(this.model, this.colors, this.occlusion, from, to, blend);
+    const ca = Math.cos(b.a);
+    const sa = Math.sin(b.a);
+    const tilt = b.b + 0.4 * Math.sin(b.a * 0.37);
+    const cb = Math.cos(tilt);
+    const sb = Math.sin(tilt);
+    const R = b.r * grow * H;
+    const gloom = 1 - 0.55 * this.gloom;
+    const look = this.look;
+    const s = this.shade;
+    s.set([look.key[0] * gloom, look.key[1] * gloom, look.key[2] * gloom, look.ambient, look.glint[0] * gloom, look.glint[1] * gloom, look.glint[2] * gloom, look.glintTint, look.fill[0] * gloom, look.fill[1] * gloom, look.fill[2] * gloom]);
+    const box = project(this.model, this.view, this.normals, this.screen, ca, sa, cb, sb, b.x * H, b.y * H, R);
+    const x0 = Math.max(0, Math.floor(box[0]));
+    const y0 = Math.max(0, Math.floor(box[1]));
+    const x1 = Math.min(this.W - 1, Math.ceil(box[2]));
+    const y1 = Math.min(H - 1, Math.ceil(box[3]));
+    if (x1 < x0 || y1 < y0)
+      return;
+    const n = (x1 - x0 + 1) * (y1 - y0 + 1) * SS * SS;
+    if (this.depth.length < n) {
+      this.depth = new Float32Array(n * 2);
+      this.samples = new Float32Array(n * 6);
+    }
+    raster(this.hdr, this.W, this.screen, this.normals, this.colors, this.occlusion, this.samples, this.depth, s, x0, y0, x1, y1, b.color);
+    touch(this.hdr, x0, y0, x1, y1);
+  }
+  drawTrail(b) {
+    const H = this.H;
+    const c = b.color;
+    for (const [i, p] of b.trail.entries()) {
+      const k = this.look.trail * (1 - i / TRAIL) * (1 - 0.55 * this.gloom);
+      lightPool(this.hdr, this.W, H, p.x * H, p.y * H, b.r * H * 1.1, b.r * H * 1.1, c, 0, k);
+    }
+  }
+  stepWarp(dt) {
+    const w = this.warp;
+    if (w.t < 0) {
+      w.wait -= dt;
+      if (w.wait > 0)
+        return;
+      w.t = 0;
+      w.stars = Array.from({ length: WARP_STARS }, () => ({ a: rand(0, TAU), z: rand(0.05, 1), tint: STAR_TINTS[Math.floor(Math.random() * STAR_TINTS.length)] }));
+      return;
+    }
+    w.t += dt;
+    const speed = 0.25 + 1.2 * smoothstep(0, 2, w.t) * smoothstep(WARP, WARP - 1.5, w.t);
+    for (const s of w.stars) {
+      s.z -= speed * dt * 0.6;
+      if (s.z > 0.03)
+        continue;
+      s.z += 1;
+      s.a = rand(0, TAU);
+    }
+    if (w.t < WARP)
+      return;
+    w.t = -1;
+    w.stars = [];
+    w.wait = eggWait(true) * TIME_SCALE6;
+  }
+  drawWarp() {
+    const w = this.warp;
+    const { W, H } = this;
+    const fade = smoothstep(0, 1, w.t) * smoothstep(WARP, WARP - 1, w.t);
+    const cx = W / 2;
+    const cy = H / 2;
+    const reach = Math.hypot(W, H) * 0.08;
+    for (const s of w.stars) {
+      const d = reach / s.z;
+      const k = fade * smoothstep(1, 0.6, s.z) * 1.6;
+      for (let i = 0;i < 4; i++) {
+        const di = d * (1 - i * 0.08 * (1 - s.z));
+        const x = cx + Math.cos(s.a) * di;
+        const y = cy + Math.sin(s.a) * di * 0.9;
+        if (x < 0 || y < 0 || x >= W - 1 || y >= H - 1)
+          continue;
+        const t = s.tint;
+        this.splat(x, y, t[0] * k * (1 - i * 0.22), t[1] * k * (1 - i * 0.22), t[2] * k * (1 - i * 0.22));
+      }
+    }
+  }
+}
+function surface(model, colors, occlusion, from, to, blend) {
+  const out = [0, 0, 0, 0, 0];
+  for (let p = 0;p < VERTS; p++) {
+    const o = p * 3;
+    const dx = DIRS[o];
+    const dy = DIRS[o + 1];
+    const dz = DIRS[o + 2];
+    form(from, dx, dy, dz, out);
+    let x = out[0];
+    let y = out[1];
+    let z = out[2];
+    let spike = out[3];
+    let occ = out[4];
+    if (blend > 0) {
+      form(to, dx, dy, dz, out);
+      x = lerp(x, out[0], blend);
+      y = lerp(y, out[1], blend);
+      z = lerp(z, out[2], blend);
+      spike = lerp(spike, out[3], blend);
+      occ = lerp(occ, out[4], blend);
+    }
+    model[o] = x;
+    model[o + 1] = y;
+    model[o + 2] = z;
+    occlusion[p] = occ;
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    const az = Math.abs(dz);
+    const c = PATCHES[ax >= ay && ax >= az ? dx > 0 ? 0 : 1 : ay >= az ? dy > 0 ? 2 : 3 : dz > 0 ? 4 : 5];
+    colors[o] = lerp(c[0], SPIKE[0], spike);
+    colors[o + 1] = lerp(c[1], SPIKE[1], spike);
+    colors[o + 2] = lerp(c[2], SPIKE[2], spike);
+  }
+}
+function form(kind, dx, dy, dz, out) {
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  const az = Math.abs(dz);
+  out[3] = 0;
+  out[4] = 1;
+  if (kind === CUBE) {
+    const r = 0.72 / Math.pow(ax ** 10 + ay ** 10 + az ** 10, 0.1);
+    out[0] = dx * r;
+    out[1] = dy * r;
+    out[2] = dz * r;
+    return;
+  }
+  if (kind === BALLS) {
+    const r = Math.max(ball(ax, 0.45, 0.52), ball(ay, 0.45, 0.52), ball(az, 0.45, 0.52));
+    out[0] = dx * r;
+    out[1] = dy * r;
+    out[2] = dz * r;
+    out[4] = 0.35 + 0.65 * smoothstep(0.62, 0.97, r);
+    return;
+  }
+  if (kind === STAR) {
+    const lobe = Math.max(ball(ax, 0.3, 0.36), ball(ay, 0.3, 0.36), ball(az, 0.3, 0.36));
+    const angle = Math.acos(Math.min(1, (ax + ay + az) / Math.sqrt(3)));
+    const spike = 0.3 + 0.98 * Math.max(0, 1 - angle / 0.42) ** 1.6;
+    const r = Math.max(lobe, spike);
+    out[0] = dx * r;
+    out[1] = dy * r;
+    out[2] = dz * r;
+    out[3] = smoothstep(lobe - 0.02, lobe + 0.12, spike);
+    out[4] = 0.45 + 0.55 * smoothstep(0.32, 0.6, r);
+    return;
+  }
+  const m = Math.max(ax, ay, az);
+  const cx = dx / m;
+  const cy = dy / m;
+  const cz = dz / m;
+  const puff = (1 - cx * cx) * (1 - cy * cy);
+  out[0] = cx * 0.88 * (1 - 0.14 * (1 - cy * cy));
+  out[1] = cy * 0.88 * (1 - 0.14 * (1 - cx * cx));
+  out[2] = cz * (0.04 + 0.36 * puff);
+  out[4] = 0.75 + 0.25 * Math.sqrt(puff);
+}
+function ball(a, c, r) {
+  return c * a + Math.sqrt(r * r - c * c * (1 - a * a));
+}
+function project(model, view2, normals, screen, ca, sa, cb, sb, cx, cy, R) {
+  const m00 = ca;
+  const m01 = 0;
+  const m02 = sa;
+  const m10 = sb * sa;
+  const m11 = cb;
+  const m12 = -sb * ca;
+  const m20 = -cb * sa;
+  const m21 = sb;
+  const m22 = cb * ca;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let p = 0;p < VERTS; p++) {
+    const o = p * 3;
+    const x = model[o];
+    const y = model[o + 1];
+    const z = model[o + 2];
+    const vx = m00 * x + m01 * y + m02 * z;
+    const vy = m10 * x + m11 * y + m12 * z;
+    const vz = m20 * x + m21 * y + m22 * z;
+    view2[o] = vx;
+    view2[o + 1] = vy;
+    view2[o + 2] = vz;
+    const k = CAMERA / (CAMERA - vz) * R;
+    const sx = cx + vx * k;
+    const sy = cy + vy * k;
+    screen[o] = sx;
+    screen[o + 1] = sy;
+    screen[o + 2] = vz;
+    const i = p % G;
+    const j = Math.floor(p / G) % G;
+    if (i === 0 || j === 0 || i === G - 1 || j === G - 1)
+      continue;
+    x0 = Math.min(x0, sx);
+    y0 = Math.min(y0, sy);
+    x1 = Math.max(x1, sx);
+    y1 = Math.max(y1, sy);
+  }
+  for (let p = 0;p < VERTS; p++) {
+    const i = p % G;
+    const j = Math.floor(p / G) % G;
+    if (i === 0 || j === 0 || i === G - 1 || j === G - 1)
+      continue;
+    const a = (p + 1) * 3;
+    const b = (p - 1) * 3;
+    const c = (p + G) * 3;
+    const d = (p - G) * 3;
+    const ux = view2[a] - view2[b];
+    const uy = view2[a + 1] - view2[b + 1];
+    const uz = view2[a + 2] - view2[b + 2];
+    const wx = view2[c] - view2[d];
+    const wy = view2[c + 1] - view2[d + 1];
+    const wz = view2[c + 2] - view2[d + 2];
+    const nx = uy * wz - uz * wy;
+    const ny = uz * wx - ux * wz;
+    const nz = ux * wy - uy * wx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    const o = p * 3;
+    normals[o] = nx / l;
+    normals[o + 1] = ny / l;
+    normals[o + 2] = nz / l;
+  }
+  return [x0 - 1, y0 - 1, x1 + 1, y1 + 1];
+}
+function raster(hdr, W, screen, normals, colors, occlusion, samples, depth2, shade, x0, y0, x1, y1, mean) {
+  const sw = (x1 - x0 + 1) * SS;
+  const sh = (y1 - y0 + 1) * SS;
+  depth2.fill(-Infinity, 0, sw * sh);
+  const lx = -0.45;
+  const ly = -0.6;
+  const lz = 0.66;
+  const hl = Math.hypot(lx, ly, lz + 1);
+  const hx = lx / hl;
+  const hy = ly / hl;
+  const hz = (lz + 1) / hl;
+  for (let t = 0;t < TRI.length; t += 3) {
+    const a = TRI[t] * 3;
+    const b = TRI[t + 1] * 3;
+    const c = TRI[t + 2] * 3;
+    const ax = (screen[a] - x0) * SS;
+    const ay = (screen[a + 1] - y0) * SS;
+    const bx = (screen[b] - x0) * SS;
+    const by = (screen[b + 1] - y0) * SS;
+    const cx = (screen[c] - x0) * SS;
+    const cy = (screen[c + 1] - y0) * SS;
+    const area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    if (area2 <= 0.000001)
+      continue;
+    const sx0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)));
+    const sy0 = Math.max(0, Math.floor(Math.min(ay, by, cy)));
+    const sx1 = Math.min(sw - 1, Math.ceil(Math.max(ax, bx, cx)));
+    const sy1 = Math.min(sh - 1, Math.ceil(Math.max(ay, by, cy)));
+    const inv = 1 / area2;
+    for (let y = sy0;y <= sy1; y++) {
+      const py = y + 0.5;
+      for (let x = sx0;x <= sx1; x++) {
+        const px = x + 0.5;
+        const wa = ((bx - px) * (cy - py) - (by - py) * (cx - px)) * inv;
+        const wb = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) * inv;
+        const wc = 1 - wa - wb;
+        if (wa < 0 || wb < 0 || wc < 0)
+          continue;
+        const z = wa * screen[a + 2] + wb * screen[b + 2] + wc * screen[c + 2];
+        const s = y * sw + x;
+        if (z <= depth2[s])
+          continue;
+        depth2[s] = z;
+        let nx = wa * normals[a] + wb * normals[b] + wc * normals[c];
+        let ny = wa * normals[a + 1] + wb * normals[b + 1] + wc * normals[c + 1];
+        let nz = wa * normals[a + 2] + wb * normals[b + 2] + wc * normals[c + 2];
+        const nl = 1 / (Math.hypot(nx, ny, nz) || 1);
+        nx *= nl;
+        ny *= nl;
+        nz *= nl;
+        const occ = wa * occlusion[a / 3] + wb * occlusion[b / 3] + wc * occlusion[c / 3];
+        const diffuse = Math.max(0, (nx * lx + ny * ly + nz * lz + 0.3) / 1.3);
+        const sp0 = Math.max(0, nx * hx + ny * hy + nz * hz);
+        const sp2 = sp0 * sp0;
+        const sp8 = sp2 * sp2 * sp2 * sp2;
+        const spec = sp8 * sp8 * sp8 * sp8 * 0.9 + sp8 * 0.12;
+        const rim = Math.max(0, 1 - Math.abs(nz)) ** 2 * Math.max(0, 0.3 + ny);
+        const o = s * 3;
+        for (let k2 = 0;k2 < 3; k2++) {
+          const col = wa * colors[a + k2] + wb * colors[b + k2] + wc * colors[c + k2];
+          const glint = lerp(shade[4 + k2], shade[4 + k2] * col * 1.6, shade[7]);
+          samples[o + k2] = col * (shade[3] + shade[k2] * diffuse) * occ + glint * spec * occ + shade[8 + k2] * rim * occ;
+        }
+      }
+    }
+  }
+  let sr = 0;
+  let sg = 0;
+  let sb = 0;
+  let count = 0;
+  const area = 1 / (SS * SS);
+  for (let y = y0;y <= y1; y++)
+    for (let x = x0;x <= x1; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let j = 0;j < SS; j++)
+        for (let i = 0;i < SS; i++) {
+          const s = ((y - y0) * SS + j) * sw + (x - x0) * SS + i;
+          if (depth2[s] === -Infinity)
+            continue;
+          r += samples[s * 3];
+          g += samples[s * 3 + 1];
+          b += samples[s * 3 + 2];
+          n++;
+        }
+      if (!n)
+        continue;
+      const cov = n * area;
+      const o = (y * W + x) * 3;
+      hdr[o] += (r / n - hdr[o]) * cov;
+      hdr[o + 1] += (g / n - hdr[o + 1]) * cov;
+      hdr[o + 2] += (b / n - hdr[o + 2]) * cov;
+      sr += r;
+      sg += g;
+      sb += b;
+      count += n;
+    }
+  const k = count ? 1 / count : 0;
+  mean[0] = sr * k;
+  mean[1] = sg * k;
+  mean[2] = sb * k;
+}
+var flowerbox = {
+  id: "flowerbox",
+  name: "Flower Box",
+  description: "The old 3D screensaver: a glossy box of colored patches spinning and bouncing, morphing into balls, a star and a pillow",
+  activity: {
+    calm: "One object drifting and turning slowly, morphing between a cube, a cluster of balls and a pillow",
+    lively: "A little quicker, through the full morph cycle with the spiky star",
+    teeming: "Three objects of different sizes bouncing independently, with faint phosphor trails"
+  },
+  scrim: {
+    day: [
+      [0, 34, 38],
+      [0, 42, 46],
+      [0, 30, 34]
+    ],
+    sunset: [
+      [34, 8, 28],
+      [22, 6, 18],
+      [8, 2, 7]
+    ],
+    night: [
+      [2, 4, 14],
+      [1, 3, 10],
+      [0, 1, 4]
+    ]
+  },
+  create: (settings) => new FlowerBox(settings)
+};
+
+// wallpapers/haunted-house.ts
+var TIME_SCALE7 = 0.35;
 var CREATURE_SPEED6 = 0.25;
 var HORIZON5 = 0.62;
 var FENCE = 0.8;
@@ -8651,7 +9282,7 @@ var ZOMBIE_STRIDE = 0.05;
 var WITCH_GAP = [70, 140];
 var ROOM = 5;
 var DANCE = 45;
-var LOOKS6 = {
+var LOOKS7 = {
   day: {
     style: "front",
     light: [0.85, 0.9, 0.75],
@@ -8821,11 +9452,11 @@ class HauntedHouse extends Canvas {
   zombie = { x: 0.5, y: 0.87, dir: 1, phase: 0 };
   flash = { t: -1, wait: 0, x: 0.5 };
   witch = { t: -1, wait: rand(20, 50), dir: 1, y: 0.2 };
-  dance = { wait: eggWait() * TIME_SCALE6, t: -1 };
+  dance = { wait: eggWait() * TIME_SCALE7, t: -1 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS6[settings.time];
+    this.look = LOOKS7[settings.time];
     this.orb = this.look.orb;
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON5);
     this.stars = makeStars(this.look.stars, 0.5);
@@ -8841,7 +9472,7 @@ class HauntedHouse extends Canvas {
     this.ghosts = Array.from({ length: ghosts }, (_, i) => ({ x: 0, y: 0, x0: 0, x1: 0, dir: i ? -1 : 1, phase: rand(0, TAU) }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE6;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE7;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED6;
     this.creatureTime += cdt;
@@ -10234,7 +10865,7 @@ class HauntedHouse extends Canvas {
     if (e.t < DANCE)
       return;
     e.t = -1;
-    e.wait = eggWait(true) * TIME_SCALE6;
+    e.wait = eggWait(true) * TIME_SCALE7;
   }
   drawDance() {
     const t = this.dance.t;
@@ -10350,13 +10981,13 @@ var hauntedHouse = {
 };
 
 // wallpapers/jungle.ts
-var TIME_SCALE7 = 0.35;
+var TIME_SCALE8 = 0.35;
 var CREATURE_SPEED7 = 0.25;
 var CHORUS = 3;
 var RAY_N2 = 1024;
 var SLOTH = 24;
 var MONKEY = 0.38;
-var LOOKS7 = {
+var LOOKS8 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.75],
@@ -10437,7 +11068,7 @@ class Jungle extends Canvas {
   monkey = { kick: 0, swing: 0 };
   jaguarHead = { p: 0, v: 0 };
   liana = { x: 0, length: 0, phase: 0 };
-  sloth = { wait: eggWait() * TIME_SCALE7, t: -1 };
+  sloth = { wait: eggWait() * TIME_SCALE8, t: -1 };
   vines = new SwayLayer;
   mist = 0;
   constructor(settings) {
@@ -10445,7 +11076,7 @@ class Jungle extends Canvas {
     this.activity = settings.activity;
     const rainy = settings.season === "summer" || settings.season === "autumn";
     this.rainy = rainy;
-    const look = LOOKS7[settings.time];
+    const look = LOOKS8[settings.time];
     this.shade = sunShade(settings.time, { x: 0.85, y: -0.15 }, true);
     const wet = RAINY_MIST[settings.time];
     this.look = rainy ? { ...look, mist: [mixRGB(look.mist[0], wet, 0.55), mixRGB(look.mist[1], wet, 0.4), look.mist[2]], far: mixRGB(look.far, wet, 0.4), shafts: look.shafts * 0.25 } : look;
@@ -10458,7 +11089,7 @@ class Jungle extends Canvas {
     this.glowers = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.3 + Math.random() * 0.62, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE7;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE8;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED7;
     this.creatureTime += cdt;
@@ -10500,7 +11131,7 @@ class Jungle extends Canvas {
     if (sl.t < SLOTH)
       return;
     sl.t = -1;
-    sl.wait = eggWait(true) * TIME_SCALE7;
+    sl.wait = eggWait(true) * TIME_SCALE8;
   }
   visit() {
     if (this.look.night)
@@ -11030,7 +11661,7 @@ var jungle = {
 };
 
 // wallpapers/megacity.ts
-var TIME_SCALE8 = 0.35;
+var TIME_SCALE9 = 0.35;
 var CREATURE_SPEED8 = 0.25;
 var HORIZON6 = 0.6;
 var CAM = 0.1;
@@ -11044,7 +11675,7 @@ var TAIL = 0.36 * BIKE2;
 var FADE2 = 0.4;
 var DOME_Z = 13;
 var DOME = 40;
-var LOOKS8 = {
+var LOOKS9 = {
   day: {
     style: "front",
     light: [1, 0.96, 0.88],
@@ -11237,16 +11868,16 @@ class Megacity extends Canvas {
   warm = false;
   bursts = [];
   craft = { x: -9, dir: 1, next: rand(10, 30), y: 1.6 };
-  dome = { wait: eggWait() * TIME_SCALE8, t: -1 };
+  dome = { wait: eggWait() * TIME_SCALE9, t: -1 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS8[settings.time];
+    this.look = LOOKS9[settings.time];
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON6);
     this.gap = rand(...TRAFFIC2[this.activity]) * 0.3;
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE8;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE9;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED8;
     this.creatureTime += cdt;
@@ -11740,7 +12371,7 @@ class Megacity extends Canvas {
     if (d.t < DOME)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE8;
+    d.wait = eggWait(true) * TIME_SCALE9;
   }
   drawDome() {
     const { W, H, hdr, depth: depth2, look } = this;
@@ -11878,7 +12509,7 @@ function paintCity(hdr, W, H, px, city2, look, depth2, win) {
         const cover = clamp((hitY1[j] - Y) / dv + 0.5, 0, 1) * clamp((Y - hitY0[j]) / dv + 0.5, 0, 1) * hitCover[j];
         if (cover <= 0)
           continue;
-        const w = surface(city2, look, j, Y, Z, dv, dx, sy);
+        const w = surface2(city2, look, j, Y, Z, dv, dx, sy);
         r += rest * cover * shade[0];
         g += rest * cover * shade[1];
         b += rest * cover * shade[2];
@@ -11981,7 +12612,7 @@ function farHeight(X, width, low2, span, seed) {
   const i = Math.floor(X / width);
   return low2 + hash(i * 1.37 + seed) ** 1.5 * span;
 }
-function surface(city2, look, j, Y, Z, dv, dx, sy) {
+function surface2(city2, look, j, Y, Z, dv, dx, sy) {
   const kind = hitKind[j];
   if (kind === 3) {
     const c2 = look.facades[0];
@@ -12191,7 +12822,7 @@ var megacity = {
 
 // wallpapers/ocean.ts
 var SURFACE = 0.065;
-var TIME_SCALE9 = 0.35;
+var TIME_SCALE10 = 0.35;
 var CREATURE_SCALE = 0.7;
 var CREATURE_SPEED9 = 0.25;
 var CAUS_N = 128;
@@ -12223,7 +12854,7 @@ class Ocean extends Canvas {
   nightRow = new Float32Array(0);
   snow = [];
   whale = { x: -9, dir: 1, next: 14, y: 0.4 };
-  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE9, spin: 0 };
+  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE10, spin: 0 };
   activity;
   timeOfDay;
   constructor(settings) {
@@ -12247,7 +12878,7 @@ class Ocean extends Canvas {
       this.snow.push({ x: Math.random() * 4, y: Math.random(), z: Math.random(), s: Math.random() });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE9;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
     this.time += dt;
     for (const s of this.snow) {
       s.x += (0.006 + s.z * 0.012) * dt;
@@ -12481,7 +13112,7 @@ class Ocean extends Canvas {
       this.water = new Float32Array(W * H * 3);
       this.mask = new Float32Array(W * H);
       this.nightRow = new Float32Array(H * 3);
-      const surface2 = [0.01, 0.13, 0.32];
+      const surface3 = [0.01, 0.13, 0.32];
       const mid2 = [0.004, 0.045, 0.13];
       const deep2 = [0.003, 0.022, 0.075];
       for (let y = 0;y < H; y++) {
@@ -12489,7 +13120,7 @@ class Ocean extends Canvas {
         const upper = v < 0.45;
         const k = upper ? Math.pow(smoothstep(0.03, 0.45, v), 0.8) : smoothstep(0.45, 1, v);
         for (let c = 0;c < 3; c++)
-          this.nightRow[y * 3 + c] = lerp(upper ? surface2[c] : mid2[c], upper ? mid2[c] : deep2[c], k);
+          this.nightRow[y * 3 + c] = lerp(upper ? surface3[c] : mid2[c], upper ? mid2[c] : deep2[c], k);
       }
     }
     this.floorPx = new Float32Array(W);
@@ -12628,7 +13259,7 @@ class Ocean extends Canvas {
     if (s.x > -0.4 && s.x < this.A + 0.4)
       return;
     s.x = -9;
-    s.wait = eggWait(true) * TIME_SCALE9;
+    s.wait = eggWait(true) * TIME_SCALE10;
   }
   subPoint(u, v) {
     const s = this.sub;
@@ -13630,7 +14261,7 @@ var ocean = {
 };
 
 // wallpapers/prehistoric.ts
-var TIME_SCALE10 = 0.35;
+var TIME_SCALE11 = 0.35;
 var CREATURE_SPEED10 = 0.25;
 var HORIZON7 = 0.6;
 var VENT_X = 0.4;
@@ -13639,7 +14270,7 @@ var SMOKE_LIFE = 14;
 var SMOKE_PUFFS = 32;
 var DELOREAN = 14;
 var FLASH = 1.2;
-var LOOKS9 = {
+var LOOKS10 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.8],
@@ -13771,11 +14402,11 @@ class Prehistoric extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   birds = [];
-  delorean = { wait: eggWait() * TIME_SCALE10, t: -1, x0: 0 };
+  delorean = { wait: eggWait() * TIME_SCALE11, t: -1, x0: 0 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS9[settings.time];
+    this.look = LOOKS10[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.night = settings.time === "night";
@@ -13790,7 +14421,7 @@ class Prehistoric extends Canvas {
     this.dragonflies = Array.from({ length: 4 }, () => ({ x: Math.random() * 1.5, y: rand(0.75, 0.95), tx: 0, ty: 0, rest: rand(0, 3), face: 1, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED10;
     this.creatureTime += cdt;
@@ -13901,7 +14532,7 @@ class Prehistoric extends Canvas {
     paintSky(this.hdr, W, H, look.sky, look.orb, px);
     this.weather.cover(this.hdr, W, H);
     const sky = this.hdr.slice();
-    const day = look === LOOKS9.day;
+    const day = look === LOOKS10.day;
     for (const [i, c] of this.ash.entries())
       c.x = lerp(this.plumeTop(), A + c.w, (i + 0.3) / this.ash.length);
     const vx = A - VENT_X;
@@ -14532,7 +15163,7 @@ class Prehistoric extends Canvas {
     if (d.t < DELOREAN + 6)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE10;
+    d.wait = eggWait(true) * TIME_SCALE11;
   }
   drawDelorean() {
     const H = this.H;
@@ -14752,7 +15383,7 @@ var prehistoric = {
 };
 
 // wallpapers/rider.ts
-var TIME_SCALE11 = 0.35;
+var TIME_SCALE12 = 0.35;
 var CREATURE_SPEED11 = 0.25;
 var BIKE_Y = 0.2;
 var BIKE_L = 0.6;
@@ -14760,13 +15391,13 @@ var RIDER_S = 0.28;
 var STRIDE = 0.1;
 var LIVELY = { up: 1.4, look: 1.6, turn: 0.45, down: 1.4, rest: 1, back: 0.45 };
 var TEEMING = { up: 1.9, wait: 0.4, mount: 0.9, idle: 0.8, off: 1.7, away: 2.2, slide: 2.2, settle: 0.6, dismount: 0.9, turn: 0.45, down: 1.9, rest: 0.6, back: 0.45 };
-var START = 1 - 45 * TIME_SCALE11 * CREATURE_SPEED11;
+var START = 1 - 45 * TIME_SCALE12 * CREATURE_SPEED11;
 var PSYCHIC = { rise: 3, hold: 26, drop: 28, gone: 46 };
 function unit(x, y, z) {
   const l = Math.hypot(x, y, z);
   return [x / l, y / l, z / l];
 }
-var LOOKS10 = {
+var LOOKS11 = {
   day: {
     style: "front",
     dir: unit(-0.45, -0.6, 0.66),
@@ -14865,7 +15496,7 @@ class Rider extends Canvas {
   creatureTime = 0;
   activity;
   look;
-  lighting = { style: "front", dir: LOOKS10.day.dir };
+  lighting = { style: "front", dir: LOOKS11.day.dir };
   shade;
   weather;
   k = 1;
@@ -14882,12 +15513,12 @@ class Rider extends Canvas {
   bits = [];
   dust = [];
   visitor;
-  psychic = { wait: eggWait() * TIME_SCALE11, t: -1, x: 1, y: 0.8, chunks: [] };
+  psychic = { wait: eggWait() * TIME_SCALE12, t: -1, x: 1, y: 0.8, chunks: [] };
   crater;
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS10[settings.time];
+    this.look = LOOKS11[settings.time];
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, 0);
     const shade2 = sunShade(settings.time, this.look.sun, this.weather.covered);
     this.shade = { ...shade2, cast: Math.min(0.9, shade2.cast * 1.3) };
@@ -14904,7 +15535,7 @@ class Rider extends Canvas {
       this.bits.push({ x: Math.random() * 2, y: rand(0.35, 0.97), vx: 0, vy: 0, spin: Math.random() * TAU, size: rand(0.004, 0.007), paper: false, age: 0, life: Infinity });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED11;
     this.creatureTime += cdt;
@@ -15231,7 +15862,7 @@ class Rider extends Canvas {
     if (e.t < PSYCHIC.gone)
       return;
     e.t = -1;
-    e.wait = eggWait(true) * TIME_SCALE11;
+    e.wait = eggWait(true) * TIME_SCALE12;
   }
   makeCrack(x, y, branches, min, max, life) {
     const lines = [];
@@ -15611,14 +16242,14 @@ var rider = {
 };
 
 // wallpapers/space.ts
-var TIME_SCALE12 = 0.35;
+var TIME_SCALE13 = 0.35;
 var CREATURE_SPEED12 = 0.25;
 var TW = 512;
 var TH = 256;
 var PLANET = { x: 0.52, y: 1.1, r: 0.58 };
 var RING2 = { tilt: 0.42, flat: 0.24, inner: 1.25, outer: 2.1 };
 var METEOR = 1.2;
-var LOOKS11 = {
+var LOOKS12 = {
   day: {
     sun: normalize(-0.55, -0.55, 0.62),
     starK: 0.35,
@@ -15696,11 +16327,11 @@ class Space extends Canvas {
   satellite = { x: 1.4, y: 0.15, dir: -1, wait: 0 };
   rocks = [];
   meteors = [];
-  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE12 };
+  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE13 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS11[settings.time];
+    this.look = LOOKS12[settings.time];
     if (settings.time === "day")
       this.frame = 0.25;
     if (settings.activity === "teeming")
@@ -15716,7 +16347,7 @@ class Space extends Canvas {
       }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED12;
     this.creatureTime += cdt;
@@ -15745,7 +16376,7 @@ class Space extends Canvas {
       ship.x -= 0.1 * cdt;
       if (ship.x < -0.4) {
         ship.x = -9;
-        ship.wait = eggWait(true) * TIME_SCALE12;
+        ship.wait = eggWait(true) * TIME_SCALE13;
       }
     }
     if (this.activity !== "calm") {
@@ -16305,12 +16936,12 @@ var space = {
 };
 
 // wallpapers/tundra.ts
-var TIME_SCALE13 = 0.35;
+var TIME_SCALE14 = 0.35;
 var CREATURE_SPEED13 = 0.25;
 var HORIZON8 = 0.55;
 var YETI = 12;
 var HOP = 0.2;
-var LOOKS12 = {
+var LOOKS13 = {
   day: {
     style: "front",
     light: [1, 0.97, 0.9],
@@ -16403,14 +17034,14 @@ class Tundra extends Canvas {
   fox;
   bear;
   fisher = { tug: 0, next: 8 };
-  yeti = { wait: eggWait() * TIME_SCALE13, t: -1, x: 0 };
+  yeti = { wait: eggWait() * TIME_SCALE14, t: -1, x: 0 };
   weather;
   pines = new SwayLayer;
   lights = new LightMap;
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS12[settings.time];
+    this.look = LOOKS13[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.stars = makeStars(this.look.stars, 0.45);
@@ -16427,7 +17058,7 @@ class Tundra extends Canvas {
       this.bear = walker(0.7, 0.655);
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED13;
     this.creatureTime += cdt;
@@ -16476,7 +17107,7 @@ class Tundra extends Canvas {
     if (y.t < YETI)
       return;
     y.t = -1;
-    y.wait = eggWait(true) * TIME_SCALE13;
+    y.wait = eggWait(true) * TIME_SCALE14;
   }
   poke(x, y) {
     const order2 = [...this.penguins].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
@@ -16543,12 +17174,12 @@ class Tundra extends Canvas {
       for (let y = Math.max(0, Math.floor(drift[x]));y < H; y++) {
         const v = y / H;
         const waves = 0.5 + 0.5 * Math.sin(x / H * 6 + v * 40 + fbm1(x / px * 0.02, 3) * 4);
-        const k = smoothstep(0.3, 1, waves) * (look === LOOKS12.day ? 0.2 : 0.35) * (1 - (v - 0.6) * 0.8);
-        const c = lerpRGB2(look.snow, look.shade, look === LOOKS12.day ? Math.min(1, k + smoothstep(0.7, 1.1, v) * 0.45) : k);
+        const k = smoothstep(0.3, 1, waves) * (look === LOOKS13.day ? 0.2 : 0.35) * (1 - (v - 0.6) * 0.8);
+        const c = lerpRGB2(look.snow, look.shade, look === LOOKS13.day ? Math.min(1, k + smoothstep(0.7, 1.1, v) * 0.45) : k);
         const edge = look.style === "rim" ? Math.exp(-(y + 0.5 - drift[x]) / (2 * px)) * 0.3 : 0;
         this.blend((y * W + x) * 3, c[0] + look.light[0] * edge, c[1] + look.light[1] * edge, c[2] + look.light[2] * edge, clamp(y + 1 - drift[x], 0, 1));
       }
-    if (look === LOOKS12.day) {
+    if (look === LOOKS13.day) {
       mottle(this.hdr, W, H, 0.6, 1, 0.7, [1.04, 1, 0.9], [0.5, 0.66, 1]);
       haze(this.hdr, sky, W, H, 0.6, 0.8, 0.15, 0);
     }
@@ -17037,12 +17668,12 @@ var tundra = {
 };
 
 // wallpapers/zen.ts
-var TIME_SCALE14 = 0.35;
+var TIME_SCALE15 = 0.35;
 var CREATURE_SPEED14 = 0.25;
 var HORIZON9 = 0.52;
 var GROUND2 = 0.565;
 var TANUKI = { arrive: 15, leave: 38, gone: 62 };
-var LOOKS13 = {
+var LOOKS14 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.85],
@@ -17184,12 +17815,12 @@ class Zen extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   sparrows = [];
-  tanuki = { wait: eggWait() * TIME_SCALE14, t: -1 };
+  tanuki = { wait: eggWait() * TIME_SCALE15, t: -1 };
   trees = new SwayLayer(-1);
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS13[settings.time];
+    this.look = LOOKS14[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.season = settings.season ?? "spring";
@@ -17207,7 +17838,7 @@ class Zen extends Canvas {
     this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.58 + Math.random() * 0.36, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE15;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED14;
     this.creatureTime += cdt;
@@ -17328,11 +17959,11 @@ class Zen extends Canvas {
     this.weather.cover(this.hdr, W, H);
     const clear = this.hdr.slice();
     this.drawHills();
-    if (look === LOOKS13.day)
+    if (look === LOOKS14.day)
       haze(this.hdr, clear, W, H, HORIZON9, GROUND2, 0.15);
     const sky = this.hdr.slice();
     this.drawGround();
-    if (look === LOOKS13.day)
+    if (look === LOOKS14.day)
       mottle(this.hdr, W, H, GROUND2, 1, 0.5, [1.08, 1, 0.84], [0.76, 0.84, 0.96]);
     const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
     ground(0.07 * A, 0.66, 0.1, 0.4, 1.6);
@@ -18020,7 +18651,7 @@ class Zen extends Canvas {
     if (k.t < TANUKI.gone)
       return;
     k.t = -1;
-    k.wait = eggWait(true) * TIME_SCALE14;
+    k.wait = eggWait(true) * TIME_SCALE15;
   }
   drawTanuki() {
     const { A, H } = this;
@@ -18210,7 +18841,7 @@ var zen = {
 };
 
 // wallpapers/index.ts
-var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse];
+var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox];
 
 // tui.tsx
 var tui_default = Plugin.define({
