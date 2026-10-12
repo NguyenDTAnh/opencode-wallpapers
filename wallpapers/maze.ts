@@ -105,9 +105,9 @@ const LOOKS: Record<Time, Look> = {
 // How the camera walks, in scene seconds: top speed in cells per second, how long a quarter turn takes, the rest after
 // a run and the pause looking down the new corridor after a turn.
 const PACE: Record<Activity, { speed: number; turn: number; rest: number; look: number }> = {
-  calm: { speed: 0.5, turn: 2, rest: 0.4, look: 18 },
-  lively: { speed: 0.9, turn: 1.4, rest: 0.3, look: 6 },
-  teeming: { speed: 1.2, turn: 1.1, rest: 0.25, look: 4.5 },
+  calm: { speed: 0.3, turn: 2.4, rest: 0.4, look: 18 },
+  lively: { speed: 0.9, turn: 1, rest: 0.3, look: 5 },
+  teeming: { speed: 1.2, turn: 0.8, rest: 0.25, look: 4 },
 }
 
 // A spinning polyhedron floating in a corridor: its cell, spin angles and rates, how grown it is, and whether it is

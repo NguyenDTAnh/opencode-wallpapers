@@ -34,11 +34,13 @@ let slowest = { ms: -1, name: "" }
 let busiest = { flicker: -1, name: "" }
 // Wallpapers whose whole view moves now and then, such as the maze's walking camera, change hundreds of cells a frame
 // while moving and almost none while still, so 16 seconds say more about where the run lands than about the scene.
-// They play for two minutes instead (not under --verify-dirty), held to the same flicker limit.
+// They play for two minutes instead, held to the same flicker limit; --verify-dirty, which keeps every frame of its
+// shorter scripted run, checks only their cells.
 const LONG = ["maze"]
 const runs = (ids.length ? wallpapers.filter((w) => ids.includes(w.id)) : wallpapers).flatMap((w) => ACTIVITIES.flatMap((activity) => TIMES.map((time) => ({ wallpaper: w, activity, time }))))
 for (const { wallpaper, activity, time } of runs) {
-  const frames = LONG.includes(wallpaper.id) && !verify ? 1800 : 240
+  const long = LONG.includes(wallpaper.id)
+  const frames = long && !verify ? 1800 : 240
   const reference = verify ? play(wallpaper, activity, time, "0", frames).recording : undefined
   const result = play(wallpaper, activity, time, "1", frames, reference)
   const errors = (await Bun.file(debug).exists()) ? (await Bun.file(debug).text()).split("\n").filter((l) => l.startsWith("error:")) : []
@@ -48,7 +50,7 @@ for (const { wallpaper, activity, time } of runs) {
   if (result.flicker > busiest.flicker) busiest = { flicker: result.flicker, name }
   const problems = [
     errors.length && `${errors.length} errors`,
-    result.flicker > maxFlicker && `flicker over ${maxFlicker}`,
+    result.flicker > maxFlicker && !(long && verify) && `flicker over ${maxFlicker}`,
     result.ms > maxMs && `slower than ${maxMs} ms`,
     result.mismatches && `${result.mismatches} cells differ from a full refit, first ${result.first}`,
     result.uncovered && `${result.uncovered} pixels drawn outside the touched boxes, first ${result.where}`,
