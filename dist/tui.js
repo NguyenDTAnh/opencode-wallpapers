@@ -837,6 +837,12 @@ function fitCover(samples, n, cover, at) {
 
 // src/wallpaper.ts
 var AGENT_EVENTS = ["busy", "idle", "done", "error"];
+function collectionOf(wallpaper) {
+  return wallpaper.collection ?? (wallpaper.fixedTime ? "Classics" : "Landscapes");
+}
+function settingsFor(wallpaper, settings) {
+  return wallpaper.fixedTime ? { ...settings, time: wallpaper.fixedTime, season: undefined, weather: undefined } : settings;
+}
 var ACTIVITIES = ["calm", "lively", "teeming"];
 var TIMES = ["day", "sunset", "night"];
 var SEASONS = ["spring", "summer", "autumn", "winter"];
@@ -2099,7 +2105,8 @@ function createEngine(context, options = {}) {
     get wallpaper() {
       return wallpaper;
     },
-    start(next, chosen, seconds = FADE) {
+    start(next, requested, seconds = FADE) {
+      const chosen = settingsFor(next, requested);
       const shows = (w, s) => w === next && s?.activity === chosen.activity && s.time === chosen.time && s.season === chosen.season && s.weather === chosen.weather;
       if (shows(wallpaper, settings)) {
         settings = chosen;
@@ -2310,6 +2317,10 @@ function problem(value, taken) {
   const activity = w.activity;
   if (!ACTIVITIES.every((a) => typeof activity?.[a] === "string"))
     return `${w.id}: activity needs a description for each of ${ACTIVITIES.join(", ")}`;
+  if (w.collection !== undefined && (typeof w.collection !== "string" || !w.collection.trim()))
+    return `${w.id}: collection must be a name`;
+  if (w.fixedTime !== undefined && !TIMES.some((t) => t === w.fixedTime))
+    return `${w.id}: fixedTime must be one of ${TIMES.join(", ")}`;
   const scrim2 = w.scrim;
   const isScrim = (s) => Array.isArray(s) && s.length === 3 && s.every((c) => Array.isArray(c) && c.length === 3 && c.every((v) => typeof v === "number"));
   if (!TIMES.every((t) => isScrim(scrim2?.[t])))
@@ -2632,6 +2643,14 @@ class Canvas {
       this.hdr.set(background);
     this.touched.length = 0;
     this.restored = true;
+  }
+  rebake() {
+    this.stillExposure = NaN;
+  }
+  hold() {
+    this.background = this.hdr.slice();
+    this.still = this.background;
+    this.stillExposure = NaN;
   }
   touch(x0, y0, x1, y1) {
     addBox(this.touched, x0, y0, x1, y1);
@@ -4996,6 +5015,7 @@ var beach = {
   id: "beach",
   name: "Beach",
   description: "Waves washing up a sandy beach between swaying palms, with a sailboat on the horizon now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Sea, waves, sand and palm trees",
     lively: "Adds leaping dolphins and seagulls",
@@ -6016,6 +6036,7 @@ var city = {
   id: "city",
   name: "City",
   description: "A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Skyline, river and light traffic on the highway",
     lively: "Adds a train crossing the bridge and more traffic",
@@ -6927,6 +6948,7 @@ var desert = {
   id: "desert",
   name: "Desert",
   description: "Mesas and dunes with a saguaro, a cow skull, and a tumbleweed now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Mesas, a saguaro and a skull",
     lively: "Adds a soaring eagle (an owl at night) and a rattlesnake",
@@ -7621,6 +7643,8 @@ var dome = {
   id: "dome",
   name: "Dome",
   description: "A vast black energy dome over a ruined city, its foot blazing with light under a ring of clouds, with a gunship crossing now and then",
+  collection: "Akira",
+  fixedTime: "night",
   activity: {
     calm: "The dome, its slowly breathing light and the creeping cloud ring",
     lively: "Light pulses out along the streets, rubble floats up and the sky's ripples spread",
@@ -8614,6 +8638,7 @@ var farm = {
   id: "farm",
   name: "Farm",
   description: "Rolling fields with a red barn, a turning windmill and swaying corn, and a tractor now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Barn, windmill, fields and corn",
     lively: "Adds grazing cows and pecking chickens",
@@ -9245,6 +9270,8 @@ var flowerbox = {
   id: "flowerbox",
   name: "Flower Box",
   description: "The old 3D screensaver: a glossy box of colored patches spinning and bouncing, morphing into balls, a star and a pillow",
+  collection: "Classics",
+  fixedTime: "night",
   activity: {
     calm: "One object drifting and turning slowly, morphing between a cube, a cluster of balls and a pillow",
     lively: "A little quicker, through the full morph cycle with the spiky star",
@@ -9270,8 +9297,322 @@ var flowerbox = {
   create: (settings) => new FlowerBox(settings)
 };
 
-// wallpapers/haunted-house.ts
+// wallpapers/flying-opencode.ts
 var TIME_SCALE7 = 0.35;
+var BLOCK = 0.03;
+var FAR = 7;
+var NEAR = 0.3;
+var GIANT = 3.2;
+var SURGE = 3.5;
+var EXTRAS = 40;
+var LOOKS7 = {
+  day: {
+    sky: [
+      [0, [0.002, 0.002, 0.003]],
+      [1, [0.001, 0.001, 0.002]]
+    ],
+    colors: [
+      [1, 0.08, 0.06],
+      [0.1, 0.85, 0.12],
+      [0.06, 0.78, 1],
+      [0.95, 0.12, 0.85],
+      [1, 0.78, 0.08],
+      [0.2, 0.36, 1],
+      [0.72, 0.84, 0.95]
+    ],
+    fill: 0.32
+  },
+  sunset: {
+    sky: [
+      [0, [0.045, 0.008, 0.04]],
+      [0.6, [0.02, 0.004, 0.018]],
+      [1, [0.006, 0.001, 0.006]]
+    ],
+    colors: [
+      [1, 0.45, 0.04],
+      [1, 0.18, 0.12],
+      [1, 0.16, 0.45],
+      [1, 0.72, 0.12],
+      [0.68, 0.18, 0.95],
+      [0.95, 0.12, 0.75],
+      [1, 0.56, 0.32]
+    ],
+    fill: 0.3
+  },
+  night: {
+    sky: [
+      [0, [0.003, 0.005, 0.022]],
+      [1, [0.0008, 0.0012, 0.006]]
+    ],
+    colors: [
+      [0.16, 0.3, 1],
+      [0.04, 0.72, 0.66],
+      [0.5, 0.22, 1],
+      [0.05, 0.75, 1],
+      [0.82, 0.12, 0.78],
+      [0.12, 0.8, 0.36],
+      [0.32, 0.52, 1]
+    ],
+    fill: 0.3
+  }
+};
+var STREAM = {
+  calm: { count: 7, speed: 0.22, spin: 0.4 },
+  lively: { count: 20, speed: 0.6, spin: 0.65 },
+  teeming: { count: 30, speed: 0.85, spin: 0.65 }
+};
+
+class FlyingOpenCode extends Canvas {
+  activity;
+  look;
+  marks = [];
+  surge = 0;
+  egg = eggWait() * TIME_SCALE7;
+  shade = new Float32Array(6);
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.activity = settings.activity;
+    this.look = LOOKS7[settings.time];
+  }
+  spawn(z) {
+    const A = this.A;
+    const margin = BLOCK * 3;
+    let x = 0;
+    let y = 0;
+    for (let i = 0;i < 20; i++) {
+      x = rand(-A / 2, A / 2) * z;
+      y = rand(-0.5, 0.5) * z;
+      if (Math.abs(x) > A / 2 * NEAR + margin || Math.abs(y) > 0.5 * NEAR + margin)
+        break;
+    }
+    const colors = this.look.colors;
+    return {
+      x,
+      y,
+      z,
+      vx: 0,
+      vy: 0,
+      turn: rand(0, TAU),
+      spin: STREAM[this.activity].spin * rand(0.7, 1.3) * (Math.random() < 0.5 ? -1 : 1),
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 1,
+      extra: false
+    };
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE7;
+    this.stepGloom(dt);
+    this.surge = Math.max(0, this.surge - dt);
+    const speed = STREAM[this.activity].speed * (1 - 0.65 * this.gloom) * (1 + 5 * this.warp());
+    const A = this.A;
+    const decay = Math.exp(-dt / 1.5);
+    for (const [i, m] of this.marks.entries()) {
+      m.z -= speed * dt;
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+      m.vx *= decay;
+      m.vy *= decay;
+      m.turn += m.spin * dt * (1 + this.warp());
+      const reach = BLOCK * 3 * m.size / Math.max(m.z, 0.01);
+      const gone = m.z < (m.size > 1 ? 0.12 : NEAR * 0.5) || Math.abs(m.x / m.z) > A / 2 + reach || Math.abs(m.y / m.z) > 0.5 + reach;
+      if (!gone)
+        continue;
+      if (!m.extra)
+        this.marks[i] = this.spawn(FAR);
+      if (m.extra)
+        m.size = 0;
+    }
+    this.marks = this.marks.filter((m) => m.size > 0);
+    this.egg -= dt;
+    if (this.egg > 0)
+      return;
+    this.egg = eggWait(true) * TIME_SCALE7;
+    this.marks.push({ ...this.spawn(FAR), x: 0, y: 0, spin: 0.35, size: GIANT, extra: true });
+  }
+  warp() {
+    return smoothstep(0, 0.8, this.surge) * smoothstep(SURGE, SURGE - 0.6, this.surge);
+  }
+  render() {
+    this.restore();
+    const { W, H, look, shade } = this;
+    const order = [...this.marks].sort((a, b) => b.z - a.z);
+    const dim = 1 - 0.55 * this.gloom;
+    const warp = this.warp();
+    const streak2 = Math.max(this.activity === "teeming" ? 0.35 : 0, warp);
+    const reach = lerp(1.4, 5, warp);
+    const speed = STREAM[this.activity].speed * (1 - 0.65 * this.gloom) * (1 + 5 * warp);
+    for (const m of order) {
+      const fade = smoothstep(FAR, FAR * 0.55, m.z) * (m.size > 1 ? smoothstep(0.12, 0.4, m.z) : 1) * dim;
+      if (fade <= 0.002)
+        continue;
+      const c = m.color;
+      const f = look.fill;
+      const facing = Math.abs(Math.cos(m.turn));
+      const lit = fade * (0.7 + 0.35 * facing + 0.3 * facing ** 24);
+      shade.set([c[0] * lit, c[1] * lit, c[2] * lit, c[0] * f * lit, c[1] * f * lit, c[2] * f * lit]);
+      const b = BLOCK * m.size;
+      const tall = b * 5 * H / m.z;
+      if (streak2 > 0 && m.z < reach)
+        this.streak(m, streak2 * smoothstep(reach, reach * 0.4, m.z) * fade, speed);
+      if (tall < 2) {
+        const area = b * H / m.z;
+        const k = area * area * (0.25 + 0.75 * facing) / 20;
+        this.splat(W / 2 + m.x / m.z * H, H / 2 + m.y / m.z * H, shade[0] * 14 * k + shade[3] * 4 * k, shade[1] * 14 * k + shade[4] * 4 * k, shade[2] * 14 * k + shade[5] * 4 * k);
+        continue;
+      }
+      const box = drawMark(this.hdr, W, H, m.x, m.y, m.z, Math.cos(m.turn), Math.sin(m.turn), b, shade, tall < 16 ? 4 : 3);
+      if (box)
+        this.touch(box[0], box[1], box[2], box[3]);
+    }
+    this.finish();
+  }
+  streak(m, k, speed) {
+    const { W, H } = this;
+    const back = m.z + speed * 0.25;
+    const x0 = W / 2 + m.x / m.z * H;
+    const y0 = H / 2 + m.y / m.z * H;
+    const x1 = W / 2 + m.x / back * H;
+    const y1 = H / 2 + m.y / back * H;
+    const n = Math.min(80, Math.ceil(Math.hypot(x1 - x0, y1 - y0)));
+    const c = m.color;
+    for (let i = 1;i <= n; i++) {
+      const t = i / (n + 1);
+      const w = k * 0.5 * (1 - t);
+      this.splat(lerp(x0, x1, t), lerp(y0, y1, t), c[0] * w, c[1] * w, c[2] * w);
+    }
+  }
+  visit() {
+    this.surge = SURGE;
+  }
+  poke(x, y) {
+    const room = EXTRAS - this.marks.filter((m) => m.extra).length;
+    for (let i = 0;i < Math.min(10, room); i++) {
+      const z = rand(2.2, 2.8);
+      const a = rand(0, TAU);
+      const push = rand(0.25, 0.55);
+      this.marks.push({ ...this.spawn(z), x: (x - this.A / 2) * z, y: (y - 0.5) * z, vx: Math.cos(a) * push, vy: Math.sin(a) * push, extra: true });
+    }
+  }
+  layout() {
+    const { W, H, hdr } = this;
+    const count = Math.round(STREAM[this.activity].count * clamp(this.A / (16 / 9), 0.6, 1.6));
+    const stream = this.marks.filter((m) => !m.extra);
+    this.marks = [...stream.slice(0, count), ...Array.from({ length: Math.max(0, count - stream.length) }, () => this.spawn(rand(NEAR * 2, FAR))), ...this.marks.filter((m) => m.extra)];
+    const stops = this.look.sky;
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      const i = stops.findIndex(([at]) => at >= v);
+      const [a, from] = stops[Math.max(0, i - 1)];
+      const [b, to] = stops[i < 0 ? stops.length - 1 : i];
+      const k = b > a ? smoothstep(a, b, v) : 1;
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(from[0], to[0], k);
+        hdr[o + 1] = lerp(from[1], to[1], k);
+        hdr[o + 2] = lerp(from[2], to[2], k);
+      }
+    }
+  }
+}
+function drawMark(hdr, W, H, mx, my, mz, c, s, b, shade, ss) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const u of [-2 * b, 2 * b])
+    for (const v of [-2.5 * b, 2.5 * b]) {
+      const z = mz + u * s;
+      if (z <= 0.01)
+        return;
+      const px = W / 2 + (mx + u * c) / z * H;
+      const py = H / 2 + (my + v) / z * H;
+      x0 = Math.min(x0, px);
+      y0 = Math.min(y0, py);
+      x1 = Math.max(x1, px);
+      y1 = Math.max(y1, py);
+    }
+  const bx0 = Math.max(0, Math.floor(x0));
+  const by0 = Math.max(0, Math.floor(y0));
+  const bx1 = Math.min(W - 1, Math.floor(x1));
+  const by1 = Math.min(H - 1, Math.floor(y1));
+  if (bx1 < bx0 || by1 < by0)
+    return;
+  const nm = -s * mx + c * mz;
+  const inv = 1 / b;
+  const step = 1 / ss;
+  const share = 1 / (ss * ss);
+  for (let y = by0;y <= by1; y++)
+    for (let x = bx0;x <= bx1; x++) {
+      let r = 0;
+      let g = 0;
+      let bl = 0;
+      let n = 0;
+      for (let j = 0;j < ss; j++) {
+        const dy = (y + (j + 0.5) * step - H / 2) / H;
+        for (let i = 0;i < ss; i++) {
+          const dx = (x + (i + 0.5) * step - W / 2) / H;
+          const nd = c - s * dx;
+          if (Math.abs(nd) < 0.000001)
+            continue;
+          const t = nm / nd;
+          const U = (c * (t * dx - mx) + s * (t - mz)) * inv;
+          const V = (t * dy - my) * inv;
+          if (U < -2 || U > 2 || V < -2.5 || V > 2.5)
+            continue;
+          const counter = U > -1 && U < 1 && V > -1.5 && V < 1.5;
+          if (counter && V < -0.5)
+            continue;
+          const k = counter ? 3 : 0;
+          r += shade[k];
+          g += shade[k + 1];
+          bl += shade[k + 2];
+          n++;
+        }
+      }
+      if (!n)
+        continue;
+      const cov = n * share;
+      const o = (y * W + x) * 3;
+      hdr[o] += (r / n - hdr[o]) * cov;
+      hdr[o + 1] += (g / n - hdr[o + 1]) * cov;
+      hdr[o + 2] += (bl / n - hdr[o + 2]) * cov;
+    }
+  return [bx0, by0, bx1, by1];
+}
+var flyingOpenCode = {
+  id: "flying-opencode",
+  name: "Flying OpenCode",
+  description: "The old flying-logos screensaver with OpenCode marks: colored marks stream out of the dark toward you, flapping as they fly",
+  collection: "Classics",
+  fixedTime: "night",
+  activity: {
+    calm: "A few marks drifting slowly out of the middle",
+    lively: "The classic stream of colored marks flying past",
+    teeming: "A denser, quicker stream, the nearest marks trailing faint warp streaks"
+  },
+  scrim: {
+    day: [
+      [4, 4, 6],
+      [3, 3, 5],
+      [2, 2, 3]
+    ],
+    sunset: [
+      [30, 7, 26],
+      [18, 4, 16],
+      [6, 1, 6]
+    ],
+    night: [
+      [2, 4, 16],
+      [1, 3, 11],
+      [0, 1, 5]
+    ]
+  },
+  create: (settings) => new FlyingOpenCode(settings)
+};
+
+// wallpapers/haunted-house.ts
+var TIME_SCALE8 = 0.35;
 var CREATURE_SPEED6 = 0.25;
 var HORIZON5 = 0.62;
 var FENCE = 0.8;
@@ -9282,7 +9623,7 @@ var ZOMBIE_STRIDE = 0.05;
 var WITCH_GAP = [70, 140];
 var ROOM = 5;
 var DANCE = 45;
-var LOOKS7 = {
+var LOOKS8 = {
   day: {
     style: "front",
     light: [0.85, 0.9, 0.75],
@@ -9452,11 +9793,11 @@ class HauntedHouse extends Canvas {
   zombie = { x: 0.5, y: 0.87, dir: 1, phase: 0 };
   flash = { t: -1, wait: 0, x: 0.5 };
   witch = { t: -1, wait: rand(20, 50), dir: 1, y: 0.2 };
-  dance = { wait: eggWait() * TIME_SCALE7, t: -1 };
+  dance = { wait: eggWait() * TIME_SCALE8, t: -1 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS7[settings.time];
+    this.look = LOOKS8[settings.time];
     this.orb = this.look.orb;
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON5);
     this.stars = makeStars(this.look.stars, 0.5);
@@ -9472,7 +9813,7 @@ class HauntedHouse extends Canvas {
     this.ghosts = Array.from({ length: ghosts }, (_, i) => ({ x: 0, y: 0, x0: 0, x1: 0, dir: i ? -1 : 1, phase: rand(0, TAU) }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE7;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE8;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED6;
     this.creatureTime += cdt;
@@ -10865,7 +11206,7 @@ class HauntedHouse extends Canvas {
     if (e.t < DANCE)
       return;
     e.t = -1;
-    e.wait = eggWait(true) * TIME_SCALE7;
+    e.wait = eggWait(true) * TIME_SCALE8;
   }
   drawDance() {
     const t = this.dance.t;
@@ -10955,6 +11296,7 @@ var hauntedHouse = {
   id: "haunted-house",
   name: "Haunted House",
   description: "A crooked Victorian haunted house on a rise above a foggy graveyard under a huge moon, with a witch flying by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "The candle and jack-o'-lanterns flicker, fog creeps, a bat or two flits and the swing sways",
     lively: "Adds bats pouring from the turret, ghosts drifting by and a ghoul peeking out from behind a gravestone",
@@ -10981,13 +11323,13 @@ var hauntedHouse = {
 };
 
 // wallpapers/jungle.ts
-var TIME_SCALE8 = 0.35;
+var TIME_SCALE9 = 0.35;
 var CREATURE_SPEED7 = 0.25;
 var CHORUS = 3;
 var RAY_N2 = 1024;
 var SLOTH = 24;
 var MONKEY = 0.38;
-var LOOKS8 = {
+var LOOKS9 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.75],
@@ -11068,7 +11410,7 @@ class Jungle extends Canvas {
   monkey = { kick: 0, swing: 0 };
   jaguarHead = { p: 0, v: 0 };
   liana = { x: 0, length: 0, phase: 0 };
-  sloth = { wait: eggWait() * TIME_SCALE8, t: -1 };
+  sloth = { wait: eggWait() * TIME_SCALE9, t: -1 };
   vines = new SwayLayer;
   mist = 0;
   constructor(settings) {
@@ -11076,7 +11418,7 @@ class Jungle extends Canvas {
     this.activity = settings.activity;
     const rainy = settings.season === "summer" || settings.season === "autumn";
     this.rainy = rainy;
-    const look = LOOKS8[settings.time];
+    const look = LOOKS9[settings.time];
     this.shade = sunShade(settings.time, { x: 0.85, y: -0.15 }, true);
     const wet = RAINY_MIST[settings.time];
     this.look = rainy ? { ...look, mist: [mixRGB(look.mist[0], wet, 0.55), mixRGB(look.mist[1], wet, 0.4), look.mist[2]], far: mixRGB(look.far, wet, 0.4), shafts: look.shafts * 0.25 } : look;
@@ -11089,7 +11431,7 @@ class Jungle extends Canvas {
     this.glowers = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.3 + Math.random() * 0.62, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE8;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE9;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED7;
     this.creatureTime += cdt;
@@ -11131,7 +11473,7 @@ class Jungle extends Canvas {
     if (sl.t < SLOTH)
       return;
     sl.t = -1;
-    sl.wait = eggWait(true) * TIME_SCALE8;
+    sl.wait = eggWait(true) * TIME_SCALE9;
   }
   visit() {
     if (this.look.night)
@@ -11635,6 +11977,7 @@ var jungle = {
   id: "jungle",
   name: "Jungle",
   description: "A misty rainforest with a waterfall, light through the canopy, and a toucan flying by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Trees, vines, a waterfall and swaying leaves",
     lively: "Adds a swinging spider monkey and blue morpho butterflies",
@@ -11660,22 +12003,850 @@ var jungle = {
   create: (settings) => new Jungle(settings)
 };
 
+// wallpapers/maze.ts
+var TIME_SCALE10 = 0.35;
+var MAZE = 12;
+var WALL = 0.8;
+var EYE = WALL / 2;
+var COURSE = WALL / 4;
+var BRICK = 0.4;
+var MORTAR = 0.035;
+var TILES = 3;
+var SEAM = 0.07;
+var DX = [1, 0, -1, 0];
+var DY = [0, 1, 0, -1];
+var COL = 12;
+var FLIPPED = 25;
+var LOOKS10 = {
+  day: {
+    brick: [0.3, 0.012, 0.01],
+    mortar: [0.62, 0.6, 0.58],
+    ceiling: [0.5, 0.5, 0.52],
+    seam: [0.3, 0.3, 0.33],
+    floor: [0.46, 0.25, 0.014],
+    fog: [0.3, 0.27, 0.25],
+    haze: 0.03,
+    lamp: 0,
+    ambient: 1,
+    side: 0.78,
+    solid: [0.11, 0.11, 0.12],
+    flip: [0.5, 0.03, 0.3],
+    face: [0.62, 0.48, 0.02],
+    ink: [0.03, 0.02, 0.01]
+  },
+  sunset: {
+    brick: [0.3, 0.025, 0.006],
+    mortar: [0.6, 0.38, 0.2],
+    ceiling: [0.5, 0.34, 0.2],
+    seam: [0.3, 0.17, 0.08],
+    floor: [0.5, 0.2, 0.01],
+    fog: [0.3, 0.1, 0.025],
+    haze: 0.42,
+    lamp: 0.12,
+    ambient: 0.4,
+    side: 0.74,
+    solid: [0.06, 0.035, 0.03],
+    flip: [0.5, 0.04, 0.24],
+    face: [0.66, 0.42, 0.02],
+    ink: [0.04, 0.012, 0.005]
+  },
+  night: {
+    brick: [0.26, 0.01, 0.026],
+    mortar: [0.16, 0.21, 0.54],
+    ceiling: [0.17, 0.23, 0.58],
+    seam: [0.06, 0.08, 0.28],
+    floor: [0.36, 0.17, 0.012],
+    fog: [0.002, 0.004, 0.02],
+    haze: 0.2,
+    lamp: 1.4,
+    ambient: 0.04,
+    side: 0.72,
+    solid: [0.03, 0.06, 0.24],
+    flip: [0.4, 0.02, 0.32],
+    face: [0.6, 0.4, 0.02],
+    ink: [0.02, 0.006, 0.04]
+  }
+};
+var PACE = {
+  calm: { speed: 0.3, turn: 2.4, rest: 0.4, look: 18 },
+  lively: { speed: 0.9, turn: 1, rest: 0.3, look: 5.5 },
+  teeming: { speed: 1.2, turn: 0.8, rest: 0.25, look: 4.5 }
+};
+var PHI = (1 + Math.sqrt(5)) / 2;
+var ICOSAHEDRON = hull([-1, 1].flatMap((s) => [-1, 1].flatMap((t) => [[0, s, t * PHI], [s, t * PHI, 0], [t * PHI, 0, s]])));
+var OCTAHEDRON = hull([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]);
+
+class Maze extends Canvas {
+  time = 0;
+  activity;
+  look;
+  calmPace;
+  seeking = false;
+  vwall = new Uint8Array((MAZE + 1) * MAZE);
+  hwall = new Uint8Array(MAZE * (MAZE + 1));
+  exit = 0;
+  smile = -1;
+  route = new Int8Array(MAZE * MAZE).fill(-1);
+  picks = new Int8Array(MAZE * MAZE * 4).fill(-1);
+  cx = 0;
+  cy = 0;
+  heading = 0;
+  x = 0.5;
+  y = 0.5;
+  angle = 0;
+  mode = "pause";
+  turned = true;
+  t = 0;
+  dur = 1;
+  from = 0;
+  to = 0;
+  goal = 0;
+  s = 0;
+  v = 0;
+  nudge = 0;
+  fade = 1;
+  solids = [];
+  flip = 0;
+  flipTo = 0;
+  flipLeft = 0;
+  egg = eggWait() * TIME_SCALE10;
+  cols = new Float32Array(0);
+  rows = new Float32Array(0);
+  params = new Float32Array(32);
+  last = new Float64Array(5).fill(NaN);
+  kept = false;
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.activity = settings.activity;
+    this.look = LOOKS10[settings.time];
+    this.calmPace = PACE[settings.activity];
+    this.build();
+    this.dur = rand(0.5, 2);
+    if (this.activity !== "teeming")
+      return;
+    this.spawn(false);
+    this.spawn(false);
+    for (const o of this.solids)
+      o.grow = 1;
+  }
+  build() {
+    this.vwall.fill(1);
+    this.hwall.fill(1);
+    const seen2 = new Uint8Array(MAZE * MAZE);
+    const start = Math.floor(Math.random() * MAZE * MAZE);
+    const stack = [start];
+    seen2[start] = 1;
+    while (stack.length) {
+      const k = Math.random() < 0.7 ? stack.length - 1 : Math.floor(Math.random() * stack.length);
+      const c = stack[k];
+      const x = c % MAZE;
+      const y = Math.floor(c / MAZE);
+      const ways = [0, 1, 2, 3].filter((h2) => {
+        const nx = x + DX[h2];
+        const ny = y + DY[h2];
+        return nx >= 0 && ny >= 0 && nx < MAZE && ny < MAZE && !seen2[ny * MAZE + nx];
+      });
+      if (!ways.length) {
+        stack.splice(k, 1);
+        continue;
+      }
+      const h = ways[Math.floor(Math.random() * ways.length)];
+      this.setWall(x, y, h, 0);
+      const n = (y + DY[h]) * MAZE + x + DX[h];
+      seen2[n] = 1;
+      stack.push(n);
+    }
+    const far = this.distances(start);
+    this.placeExit(far.reduce((best, d, i) => d > far[best] ? i : best, 0));
+    this.cx = start % MAZE;
+    this.cy = Math.floor(start / MAZE);
+    this.heading = [0, 1, 2, 3].find((h) => this.open(this.cx, this.cy, h)) ?? 0;
+    this.angle = this.heading * TAU / 4;
+    this.x = this.cx + 0.5;
+    this.y = this.cy + 0.5;
+    this.route.fill(-1);
+    this.picks.fill(-1);
+    this.solids = [];
+    this.turned = true;
+    this.mode = "pause";
+    this.t = 0;
+    this.dur = this.pace.look;
+    this.seeking = false;
+  }
+  placeExit(c) {
+    const x = c % MAZE;
+    const y = Math.floor(c / MAZE);
+    this.exit = c;
+    this.smile = this.edge(x, y, (([0, 1, 2, 3].find((h) => this.open(x, y, h)) ?? 0) + 2) % 4);
+  }
+  distances(from) {
+    const d = new Int32Array(MAZE * MAZE).fill(-1);
+    d[from] = 0;
+    const queue = [from];
+    for (let i = 0;i < queue.length; i++) {
+      const c = queue[i];
+      for (let h = 0;h < 4; h++) {
+        if (!this.open(c % MAZE, Math.floor(c / MAZE), h))
+          continue;
+        const n = c + DX[h] + DY[h] * MAZE;
+        if (d[n] >= 0)
+          continue;
+        d[n] = d[c] + 1;
+        queue.push(n);
+      }
+    }
+    return d;
+  }
+  edge(x, y, h) {
+    if (h === 0)
+      return y * (MAZE + 1) + x + 1;
+    if (h === 2)
+      return y * (MAZE + 1) + x;
+    return (MAZE + 1) * MAZE + (h === 1 ? y + 1 : y) * MAZE + x;
+  }
+  setWall(x, y, h, on) {
+    const e = this.edge(x, y, h);
+    if (e < (MAZE + 1) * MAZE)
+      this.vwall[e] = on;
+    else
+      this.hwall[e - (MAZE + 1) * MAZE] = on;
+  }
+  open(x, y, h) {
+    const e = this.edge(x, y, h);
+    return e < (MAZE + 1) * MAZE ? !this.vwall[e] : !this.hwall[e - (MAZE + 1) * MAZE];
+  }
+  choose(x, y, h) {
+    const c = y * MAZE + x;
+    if (c === this.exit)
+      return (h + 2) % 4;
+    if (this.route[c] >= 0)
+      return this.route[c];
+    if (this.nudge && this.open(x, y, (h + this.nudge + 4) % 4))
+      return (h + this.nudge + 4) % 4;
+    if (this.picks[c * 4 + h] < 0)
+      this.picks[c * 4 + h] = this.pick(x, y, h);
+    return this.picks[c * 4 + h];
+  }
+  pick(x, y, h) {
+    const ways = [h, (h + 1) % 4, (h + 3) % 4].filter((k) => this.open(x, y, k));
+    if (!ways.length)
+      return (h + 2) % 4;
+    const weights = ways.map((k) => this.reach(x + DX[k], y + DY[k], y * MAZE + x) * (k === h ? 2.5 : 1));
+    let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+    return ways.find((_, i) => (r -= weights[i]) < 0) ?? ways[0];
+  }
+  reach(x, y, from) {
+    const seen2 = new Uint8Array(MAZE * MAZE);
+    seen2[from] = 1;
+    seen2[y * MAZE + x] = 1;
+    const queue = [y * MAZE + x];
+    for (let i = 0;i < queue.length; i++)
+      for (let h = 0;h < 4; h++) {
+        const c = queue[i];
+        if (!this.open(c % MAZE, Math.floor(c / MAZE), h) || seen2[c + DX[h] + DY[h] * MAZE])
+          continue;
+        seen2[c + DX[h] + DY[h] * MAZE] = 1;
+        queue.push(c + DX[h] + DY[h] * MAZE);
+      }
+    return queue.length;
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    this.time += dt;
+    this.stepGloom(dt);
+    this.walk(dt);
+    this.stepSolids(dt);
+    this.stepFlip(dt);
+  }
+  get pace() {
+    const p = this.calmPace;
+    return this.seeking ? { speed: p.speed * 1.8, turn: p.turn * 0.6, rest: p.rest, look: Math.min(p.look, 1) } : p;
+  }
+  walk(dt) {
+    const pace = this.pace;
+    this.t += dt;
+    if (this.mode === "cheer") {
+      this.fade = smoothstep(this.dur, this.dur - 1.2, this.t);
+      if (this.t < this.dur)
+        return;
+      this.build();
+      this.t = -1.2;
+      return;
+    }
+    this.fade = Math.min(1, this.fade + dt / 1.2);
+    if (this.mode === "turn") {
+      this.angle = lerp(this.from, this.to, smoothstep(0, 1, this.t / this.dur));
+      if (this.t < this.dur)
+        return;
+      this.angle = this.heading * TAU / 4;
+      this.turned = true;
+      this.rest(pace.look);
+      return;
+    }
+    if (this.mode === "run") {
+      const accel = pace.speed * 0.8;
+      const left = this.goal - this.s;
+      this.v = Math.min(this.v + accel * dt, pace.speed, Math.sqrt(2 * accel * Math.max(0, left)) + 0.02);
+      this.s = Math.min(this.goal, this.s + this.v * dt);
+      this.x = this.cx + 0.5 + DX[this.heading] * this.s;
+      this.y = this.cy + 0.5 + DY[this.heading] * this.s;
+      if (this.s < this.goal)
+        return;
+      for (let k = 1;k < this.goal; k++) {
+        const c = (this.cy + DY[this.heading] * k) * MAZE + this.cx + DX[this.heading] * k;
+        this.picks.fill(-1, c * 4, c * 4 + 4);
+      }
+      this.cx += DX[this.heading] * this.goal;
+      this.cy += DY[this.heading] * this.goal;
+      this.s = 0;
+      this.v = 0;
+      this.turned = false;
+      this.rest(pace.rest);
+      return;
+    }
+    if (this.t < this.dur)
+      return;
+    this.decide();
+  }
+  rest(seconds) {
+    this.mode = "pause";
+    this.t = 0;
+    this.dur = seconds;
+  }
+  decide() {
+    const pace = this.pace;
+    if (this.cy * MAZE + this.cx === this.exit) {
+      this.mode = "cheer";
+      this.t = 0;
+      this.dur = 6;
+      this.route.fill(-1);
+      this.seeking = false;
+      return;
+    }
+    const c = this.cy * MAZE + this.cx;
+    const straight = this.turned && this.route[c] < 0 && !(this.nudge && this.open(this.cx, this.cy, (this.heading + this.nudge + 4) % 4));
+    const h = straight ? this.heading : this.choose(this.cx, this.cy, this.heading);
+    const turn = (h - this.heading + 4) % 4;
+    this.picks.fill(-1, c * 4, c * 4 + 4);
+    if (turn) {
+      if (turn === 1 || turn === 3)
+        this.nudge = 0;
+      this.mode = "turn";
+      this.t = 0;
+      this.from = this.angle;
+      this.to = this.angle + (turn === 3 ? -1 : turn) * (TAU / 4);
+      this.dur = pace.turn * (turn === 2 ? 1.6 : 1);
+      this.heading = h;
+      return;
+    }
+    let n = 1;
+    while (n < MAZE && this.choose(this.cx + DX[h] * n, this.cy + DY[h] * n, h) === h && (this.cy + DY[h] * n) * MAZE + this.cx + DX[h] * n !== this.exit)
+      n++;
+    this.mode = "run";
+    this.goal = n;
+    this.s = 0;
+    this.v = 0;
+  }
+  stepSolids(dt) {
+    for (const o of this.solids) {
+      o.a += o.ra * dt;
+      o.b += o.rb * dt;
+      o.grow = o.dying ? o.grow - dt * 3 : Math.min(1, o.grow + dt * 1.2);
+      if (o.dying || Math.hypot(this.x - o.cx - 0.5, this.y - o.cy - 0.5) > 0.3)
+        continue;
+      o.dying = true;
+      if (o.flip)
+        this.flipTo = 1 - this.flipTo;
+      if (o.flip)
+        this.flipLeft = FLIPPED;
+    }
+    this.solids = this.solids.filter((o) => o.grow > 0);
+    this.egg -= dt;
+    if (this.egg <= 0 && this.flipLeft <= 0 && this.flipTo === 0 && !this.solids.some((o) => o.flip)) {
+      this.egg = Infinity;
+      this.spawn(true);
+    }
+    if (this.activity !== "teeming" || this.mode === "cheer")
+      return;
+    if (this.solids.filter((o) => !o.dying).length < 3 && Math.random() < dt * 0.6)
+      this.spawn(false);
+  }
+  spawn(flip, near2 = false) {
+    const h = this.heading;
+    const sight = [];
+    for (let x = Math.floor(this.x), y = Math.floor(this.y);sight.length < MAZE && this.open(x, y, h); x += DX[h], y += DY[h])
+      sight.push([x + DX[h], y + DY[h]]);
+    const free = (cells) => cells.filter(([x, y]) => !this.solids.some((o) => o.cx === x && o.cy === y));
+    const view2 = free(sight.filter(([x, y]) => Math.hypot(x + 0.5 - this.x, y + 0.5 - this.y) > 0.9));
+    const pool = view2.length && (near2 || Math.random() < 0.7) ? view2 : free(this.ahead(12).slice(2));
+    const cell2 = pool[near2 ? 0 : Math.floor(Math.random() * Math.min(pool.length, 6))];
+    if (!cell2)
+      return;
+    this.solids.push({ cx: cell2[0], cy: cell2[1], a: rand(0, TAU), b: rand(0, TAU), ra: rand(0.5, 0.8), rb: rand(0.3, 0.5), grow: 0, dying: false, flip });
+  }
+  ahead(n) {
+    let x = this.cx;
+    let y = this.cy;
+    let h = this.heading;
+    const cells = [];
+    for (let i = 0;i < n; i++) {
+      if (i || !(this.turned || this.mode !== "pause"))
+        h = this.choose(x, y, h);
+      x += DX[h];
+      y += DY[h];
+      if (x < 0 || y < 0 || x >= MAZE || y >= MAZE)
+        break;
+      cells.push([x, y]);
+      if (y * MAZE + x === this.exit)
+        break;
+    }
+    return cells;
+  }
+  stepFlip(dt) {
+    this.flip = this.flipTo > this.flip ? Math.min(this.flipTo, this.flip + dt / 1.5) : Math.max(this.flipTo, this.flip - dt / 1.5);
+    if (this.flipLeft <= 0)
+      return;
+    this.flipLeft -= dt;
+    if (this.flipLeft > 0 || this.mode !== "pause")
+      return;
+    this.flipTo = 0;
+    this.egg = eggWait(true) * TIME_SCALE10;
+  }
+  visit() {
+    if (this.mode === "cheer")
+      return;
+    const here = this.distances(this.cy * MAZE + this.cx);
+    const ends = here.map((d, c) => d >= 4 && [0, 1, 2, 3].filter((h) => this.open(c % MAZE, Math.floor(c / MAZE), h)).length === 1 ? c : -1).filter((c) => c >= 0);
+    if (ends.length)
+      this.placeExit(ends.reduce((best, c) => Math.abs(here[c] - 8) < Math.abs(here[best] - 8) ? c : best));
+    this.seeking = true;
+    const to = this.distances(this.exit);
+    for (let c = 0;c < MAZE * MAZE; c++) {
+      if (c === this.exit)
+        continue;
+      const x = c % MAZE;
+      const y = Math.floor(c / MAZE);
+      this.route[c] = [0, 1, 2, 3].find((h) => this.open(x, y, h) && to[c + DX[h] + DY[h] * MAZE] === to[c] - 1) ?? -1;
+    }
+    if (this.mode === "pause")
+      this.t = this.dur;
+    if (this.mode === "run")
+      this.replan();
+  }
+  poke(x) {
+    const side = x < this.A / 3 ? -1 : x > this.A * 2 / 3 ? 1 : 0;
+    const h = this.heading;
+    const turn = (h + side + 4) % 4;
+    let can = false;
+    for (let k = 0;side && k < MAZE && !can; k++) {
+      const cx = this.cx + DX[h] * k;
+      const cy = this.cy + DY[h] * k;
+      can = this.open(cx, cy, turn);
+      if (!this.open(cx, cy, h))
+        break;
+    }
+    if (!can || this.mode === "turn" || this.mode === "cheer") {
+      if (this.solids.length < 6)
+        this.spawn(false, true);
+      return;
+    }
+    this.nudge = side;
+    if (this.mode === "pause" && this.open(this.cx, this.cy, turn))
+      this.t = this.dur;
+    if (this.mode === "run")
+      this.replan();
+  }
+  replan() {
+    const h = this.heading;
+    for (let k = Math.ceil(this.s + 0.05);k < this.goal; k++) {
+      if (this.choose(this.cx + DX[h] * k, this.cy + DY[h] * k, h) === h)
+        continue;
+      this.goal = k;
+      return;
+    }
+  }
+  layout() {
+    this.cols = new Float32Array(this.W * COL);
+    this.rows = new Float32Array(this.H);
+    this.last.fill(NaN);
+    this.kept = false;
+  }
+  render() {
+    const { W, H, look } = this;
+    const dip = this.gloom > 0.2 && hashStep(Math.floor(this.time / 0.12)) < 0.1 * this.gloom ? 0.55 : 1;
+    const light = Math.round((1 - 0.45 * this.gloom) * dip * this.fade * 32) / 32;
+    const roll = Math.cos(this.flip * Math.PI);
+    const view2 = [this.x, this.y, this.angle, roll, light];
+    const moved = view2.some((v, i) => v !== this.last[i]);
+    const f = Math.max(0.62 * H, 0.36 * W);
+    const fy = f * (Math.abs(roll) < 0.02 ? 0.02 * Math.sign(roll || 1) : roll);
+    const dirX = Math.cos(this.angle);
+    const dirY = Math.sin(this.angle);
+    if (moved || !this.kept) {
+      this.restore(undefined);
+      this.last.set(view2);
+      const p = this.params;
+      p.set([...look.brick, ...look.mortar, ...look.ceiling, ...look.seam, ...look.floor, ...look.fog, look.haze, look.lamp, look.ambient, light, ...look.face, ...look.ink, look.side, this.cells ? 9 : 2]);
+      castColumns(this.vwall, this.hwall, this.smile, this.x, this.y, dirX, dirY, -dirY * (W / 2 / f), dirX * (W / 2 / f), W, this.cols);
+      shadeView(this.hdr, W, H, this.cols, this.rows, f, fy, this.x, this.y, p);
+      touch(this.hdr, 0, 0, W - 1, H - 1);
+      if (!moved)
+        this.hold();
+      this.kept = !moved;
+    }
+    if (this.kept)
+      this.restore();
+    for (const o of this.solids)
+      this.drawSolid(o, f, fy, dirX, dirY, light);
+    this.finish(2);
+  }
+  drawSolid(o, f, fy, dirX, dirY, light) {
+    const { W, H, look } = this;
+    const ox = o.cx + 0.5;
+    const oy = o.cy + 0.5;
+    const depth2 = (ox - this.x) * dirX + (oy - this.y) * dirY;
+    if (depth2 < 0.25 || o.grow <= 0)
+      return;
+    const lat = (ox - this.x) * -dirY + (oy - this.y) * dirX;
+    if (Math.abs(lat / depth2) * f > W / 2 + f * 0.3 / depth2)
+      return;
+    const shape = o.flip ? OCTAHEDRON : ICOSAHEDRON;
+    const r = 0.16 * smoothstep(0, 1, o.grow) * (o.flip ? 1.2 : 1);
+    const ca = Math.cos(o.a);
+    const sa = Math.sin(o.a);
+    const cb = Math.cos(o.b);
+    const sb = Math.sin(o.b);
+    const pts = shape.verts.map(([vx, vy, vz]) => {
+      const x12 = vx * ca - vy * sa;
+      const y12 = vx * sa + vy * ca;
+      const y2 = y12 * cb - vz * sb;
+      const z2 = y12 * sb + vz * cb;
+      const wx = ox + x12 * r;
+      const wy = oy + y2 * r;
+      const wz = EYE + z2 * r;
+      const d = (wx - this.x) * dirX + (wy - this.y) * dirY;
+      const l = (wx - this.x) * -dirY + (wy - this.y) * dirX;
+      return [wx, wy, wz, W / 2 + f * l / d, H / 2 - fy * (wz - EYE) / d, d];
+    });
+    const lx = -dirX * 0.6 + dirY * 0.4;
+    const ly = -dirY * 0.6 - dirX * 0.4;
+    const lz = 0.7;
+    const ll = Math.hypot(lx, ly, lz);
+    const dist = Math.hypot(ox - this.x, oy - this.y);
+    const reach = (look.lamp ? look.ambient + (1 - look.ambient) / (1 + dist * dist * look.lamp) : 1) * light;
+    const fogk = veil(dist, look.haze);
+    const base = o.flip ? look.flip : look.solid;
+    const faces = shape.faces.map(([a, b, c]) => {
+      const [ax, ay, az] = pts[a];
+      const [bx, by, bz] = pts[b];
+      const [qx, qy, qz] = pts[c];
+      const ux = bx - ax;
+      const uy = by - ay;
+      const uz = bz - az;
+      const vx = qx - ax;
+      const vy = qy - ay;
+      const vz = qz - az;
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      const toward = (this.x - ax) * nx + (this.y - ay) * ny + (EYE - az) * nz;
+      return { a, b, c, nx, ny, nz, toward, d: pts[a][5] + pts[b][5] + pts[c][5] };
+    }).filter((t) => t.toward > 0).sort((p, q) => q.d - p.d);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const t of faces) {
+      const n = Math.hypot(t.nx, t.ny, t.nz) || 1;
+      const k = (0.3 + 1.1 * Math.max(0, (t.nx * lx + t.ny * ly + t.nz * lz) / (n * ll))) * reach * (1 - fogk);
+      const fog = look.fog;
+      const pa = pts[t.a];
+      const pb = pts[t.b];
+      const pc = pts[t.c];
+      fillTriangle(this.hdr, W, H, this.cols, depth2, pa[3], pa[4], pb[3], pb[4], pc[3], pc[4], base[0] * k + fog[0] * fogk * light, base[1] * k + fog[1] * fogk * light, base[2] * k + fog[2] * fogk * light);
+      x0 = Math.min(x0, pa[3], pb[3], pc[3]);
+      y0 = Math.min(y0, pa[4], pb[4], pc[4]);
+      x1 = Math.max(x1, pa[3], pb[3], pc[3]);
+      y1 = Math.max(y1, pa[4], pb[4], pc[4]);
+    }
+    if (faces.length)
+      this.touch(Math.floor(x0) - 2, Math.floor(y0) - 2, Math.ceil(x1) + 2, Math.ceil(y1) + 2);
+  }
+}
+function hashStep(n) {
+  const s = Math.sin(n * 91.7 + 17.3) * 43758.5453;
+  return s - Math.floor(s);
+}
+function hull(verts) {
+  const faces = [];
+  const n = verts.length;
+  for (let a = 0;a < n; a++)
+    for (let b = a + 1;b < n; b++)
+      for (let c = b + 1;c < n; c++) {
+        const [ax, ay, az] = verts[a];
+        const u = [verts[b][0] - ax, verts[b][1] - ay, verts[b][2] - az];
+        const v = [verts[c][0] - ax, verts[c][1] - ay, verts[c][2] - az];
+        const nx = u[1] * v[2] - u[2] * v[1];
+        const ny = u[2] * v[0] - u[0] * v[2];
+        const nz = u[0] * v[1] - u[1] * v[0];
+        const sides = verts.filter((_, i) => i !== a && i !== b && i !== c).map((p) => (p[0] - ax) * nx + (p[1] - ay) * ny + (p[2] - az) * nz);
+        if (sides.every((s) => s < -0.000001))
+          faces.push([a, b, c]);
+        if (sides.every((s) => s > 0.000001))
+          faces.push([a, c, b]);
+      }
+  const scale2 = Math.hypot(verts[0][0], verts[0][1], verts[0][2]);
+  return { verts: verts.map((p) => p.map((k) => k / scale2)), faces };
+}
+function lines(a, b, m) {
+  const fa = Math.floor(a);
+  const fb = Math.floor(b);
+  return (fb * m + Math.min(b - fb, m) - fa * m - Math.min(a - fa, m)) / (b - a);
+}
+function castColumns(vwall, hwall, smile, px, py, dirX, dirY, planeX, planeY, W, cols) {
+  for (let x = 0;x < W; x++) {
+    const cam = 2 * (x + 0.5) / W - 1;
+    const rx = dirX + planeX * cam;
+    const ry = dirY + planeY * cam;
+    let mx = Math.floor(px);
+    let my = Math.floor(py);
+    const ddx = Math.abs(1 / rx);
+    const ddy = Math.abs(1 / ry);
+    const sx = rx < 0 ? -1 : 1;
+    const sy = ry < 0 ? -1 : 1;
+    let tx = (rx < 0 ? px - mx : mx + 1 - px) * ddx;
+    let ty = (ry < 0 ? py - my : my + 1 - py) * ddy;
+    let dist = 0;
+    let side = 0;
+    let edge = -1;
+    for (let i = 0;i < 4 * MAZE; i++) {
+      if (tx < ty) {
+        const e2 = my * (MAZE + 1) + mx + (sx > 0 ? 1 : 0);
+        if (my < 0 || my >= MAZE || vwall[e2]) {
+          dist = tx;
+          side = 0;
+          edge = e2;
+          break;
+        }
+        mx += sx;
+        tx += ddx;
+        continue;
+      }
+      const e = (my + (sy > 0 ? 1 : 0)) * MAZE + mx;
+      if (mx < 0 || mx >= MAZE || hwall[e]) {
+        dist = ty;
+        side = 1;
+        edge = (MAZE + 1) * MAZE + e;
+        break;
+      }
+      my += sy;
+      ty += ddy;
+    }
+    const len = Math.hypot(rx, ry);
+    const o = x * COL;
+    cols[o] = Math.max(dist, 0.001);
+    cols[o + 3] = side ? px + rx * dist : py + ry * dist;
+    cols[o + 4] = side;
+    cols[o + 5] = edge === smile ? 1 : 0;
+    cols[o + 6] = Math.max(0.12, Math.abs(side ? ry : rx) / len);
+    cols[o + 7] = len;
+    cols[o + 8] = rx;
+    cols[o + 9] = ry;
+  }
+}
+function shadeView(hdr, W, H, cols, rows, f, fy, px, py, p) {
+  const horizon = H / 2;
+  const haze2 = p[18];
+  const lamp = p[19];
+  const ambient = p[20];
+  const light = p[21];
+  const side = p[28];
+  for (let x = 0;x < W; x++) {
+    const o = x * COL;
+    const d = cols[o];
+    const a = horizon + fy * (EYE - WALL) / d;
+    const b = horizon + fy * EYE / d;
+    cols[o + 1] = Math.min(a, b);
+    cols[o + 2] = Math.max(a, b);
+    cols[o + 10] = lit(d * cols[o + 7], lamp, ambient) * light;
+    cols[o + 11] = veil(d * cols[o + 7], haze2);
+  }
+  for (let y = 0;y < H; y++) {
+    const t = (y + 0.5 - horizon) / fy;
+    rows[y] = t > 0.0001 ? EYE / t : t < -0.0001 ? (WALL - EYE) / -t : 1e9;
+  }
+  const mh = MORTAR / COURSE;
+  const ml = MORTAR / BRICK;
+  for (let y = 0;y < H; y++) {
+    const rd = rows[y];
+    const floor = (y + 0.5 - horizon) / fy > 0;
+    const step = rd * rd / (Math.abs(fy) * (WALL - EYE));
+    for (let x = 0;x < W; x++) {
+      const o = x * COL;
+      const d = cols[o];
+      const cover = Math.min(y + 1, cols[o + 2]) - Math.max(y, cols[o + 1]);
+      const cov = cover < 0 ? 0 : cover > 1 ? 1 : cover;
+      let r = 0;
+      let g = 0;
+      let bl = 0;
+      if (cov > 0) {
+        const z = clamp(EYE - (y + 0.5 - horizon) * d / fy, 0, WALL);
+        const wz = d / Math.abs(fy) / COURSE;
+        const wu = d / f / cols[o + 6] / BRICK;
+        const sv = z / COURSE + mh / 2;
+        const course = Math.floor(z / COURSE);
+        const su = cols[o + 3] / BRICK + (course & 1) * 0.5 + ml / 2;
+        const ch = lines(sv - wz / 2, sv + wz / 2, mh);
+        const cv = lines(su - wu / 2, su + wu / 2, ml);
+        const crisp = clamp((1 / wz - p[29]) / p[29], 0, 1);
+        const mortar = lerp(1 - (1 - mh) * (1 - ml), 1 - (1 - ch) * (1 - cv), crisp);
+        const detail = clamp(1.5 - 2 * Math.max(wz, wu), 0, 1);
+        const tone = 1 + detail * (0.24 * cellNoise(Math.floor(su), course) - 0.12 + 0.16 * (z / COURSE - course) - 0.08);
+        const k = (1 - mortar) * tone;
+        const s = cols[o + 4] ? side : 1;
+        r = (p[0] * k + p[3] * mortar) * s;
+        g = (p[1] * k + p[4] * mortar) * s;
+        bl = (p[2] * k + p[5] * mortar) * s;
+        if (cols[o + 5]) {
+          const u = cols[o + 3];
+          const lu = u - Math.floor(u) - 0.5;
+          const lz = z - WALL / 2;
+          const aa = Math.max(wz * COURSE, wu * BRICK, 0.004);
+          const rr = Math.hypot(lu, lz);
+          const face = clamp((0.27 - rr) / aa + 0.5, 0, 1);
+          const eye = Math.max(clamp((0.045 - Math.hypot(Math.abs(lu) - 0.09, lz - 0.07)) / aa + 0.5, 0, 1), 0);
+          const grin = clamp((0.035 - Math.abs(rr - 0.16)) / aa + 0.5, 0, 1) * clamp(-(lz + 0.04) / aa + 0.5, 0, 1);
+          const rim = clamp((0.018 - Math.abs(rr - 0.27)) / aa + 0.5, 0, 1);
+          const ink = Math.max(eye, grin, rim);
+          r = lerp(lerp(r, p[22], face), p[25], ink);
+          g = lerp(lerp(g, p[23], face), p[26], ink);
+          bl = lerp(lerp(bl, p[24], face), p[27], ink);
+        }
+        const k2 = cols[o + 10];
+        const fog = cols[o + 11];
+        r = (r * k2 * (1 - fog) + p[15] * fog * light) * cov;
+        g = (g * k2 * (1 - fog) + p[16] * fog * light) * cov;
+        bl = (bl * k2 * (1 - fog) + p[17] * fog * light) * cov;
+      }
+      if (cov < 1) {
+        let fr = p[12];
+        let fg = p[13];
+        let fb = p[14];
+        if (!floor) {
+          const wx = (px + rd * cols[o + 8]) * TILES;
+          const wy = (py + rd * cols[o + 9]) * TILES;
+          const w = Math.max(rd * cols[o + 7] / f, step) * TILES;
+          const seam = 1 - (1 - lines(wx - w / 2 + SEAM / 2, wx + w / 2 + SEAM / 2, SEAM)) * (1 - lines(wy - w / 2 + SEAM / 2, wy + w / 2 + SEAM / 2, SEAM));
+          const tone = 1 + clamp(1 - w * 1.5, 0, 1) * 0.1 * (cellNoise(Math.floor(wx), Math.floor(wy)) - 0.5);
+          fr = lerp(p[6] * tone, p[9], seam);
+          fg = lerp(p[7] * tone, p[10], seam);
+          fb = lerp(p[8] * tone, p[11], seam);
+        }
+        const dd = rd * cols[o + 7];
+        const k2 = lit(dd, lamp, ambient) * light;
+        const fog = veil(dd, haze2);
+        const c = 1 - cov;
+        r += (fr * k2 * (1 - fog) + p[15] * fog * light) * c;
+        g += (fg * k2 * (1 - fog) + p[16] * fog * light) * c;
+        bl += (fb * k2 * (1 - fog) + p[17] * fog * light) * c;
+      }
+      const i = (y * W + x) * 3;
+      hdr[i] = r;
+      hdr[i + 1] = g;
+      hdr[i + 2] = bl;
+    }
+  }
+}
+function veil(dist, haze2) {
+  return dist * haze2 / (1 + dist * haze2);
+}
+function cellNoise(a, b) {
+  let h = Math.imul(a, 374761393) + Math.imul(b, 668265263);
+  h = Math.imul(h ^ h >>> 13, 1274126177);
+  return ((h ^ h >>> 16) >>> 0) / 4294967296;
+}
+function lit(dist, lamp, ambient) {
+  return lamp ? ambient + (1 - ambient) / (1 + dist * dist * lamp) : 1;
+}
+function fillTriangle(hdr, W, H, cols, depth2, ax, ay, bx, by, cx, cy, r, g, b) {
+  const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  if (Math.abs(area) < 0.000001)
+    return;
+  const s = area > 0 ? 1 : -1;
+  const lab = Math.hypot(bx - ax, by - ay) || 1;
+  const lbc = Math.hypot(cx - bx, cy - by) || 1;
+  const lca = Math.hypot(ax - cx, ay - cy) || 1;
+  const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx) - 1));
+  const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx) + 1));
+  const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy) - 1));
+  const y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by, cy) + 1));
+  for (let x = x0;x <= x1; x++) {
+    if (cols[x * COL] < depth2)
+      continue;
+    const qx = x + 0.5;
+    for (let y = y0;y <= y1; y++) {
+      const qy = y + 0.5;
+      const e0 = s * ((bx - ax) * (qy - ay) - (by - ay) * (qx - ax)) / lab;
+      const e1 = s * ((cx - bx) * (qy - by) - (cy - by) * (qx - bx)) / lbc;
+      const e2 = s * ((ax - cx) * (qy - cy) - (ay - cy) * (qx - cx)) / lca;
+      const cov = clamp(Math.min(e0, e1, e2) + 0.75, 0, 1);
+      if (cov <= 0)
+        continue;
+      const i = (y * W + x) * 3;
+      hdr[i] += (r - hdr[i]) * cov;
+      hdr[i + 1] += (g - hdr[i + 1]) * cov;
+      hdr[i + 2] += (b - hdr[i + 2]) * cov;
+    }
+  }
+}
+var maze = {
+  id: "maze",
+  name: "3D Maze",
+  description: "The old 3D maze screensaver: gliding through red brick corridors under a tiled ceiling, turning at every junction",
+  collection: "Classics",
+  fixedTime: "day",
+  activity: {
+    calm: "Long looks down each corridor between slow walks and turns",
+    lively: "Gliding down the corridors, pausing to look along each new one",
+    teeming: "A little quicker, with spinning polyhedra floating in the corridors"
+  },
+  scrim: {
+    day: [
+      [44, 42, 46],
+      [52, 12, 10],
+      [52, 34, 6]
+    ],
+    sunset: [
+      [46, 28, 16],
+      [50, 14, 6],
+      [44, 22, 4]
+    ],
+    night: [
+      [6, 8, 26],
+      [10, 4, 16],
+      [8, 6, 8]
+    ]
+  },
+  create: (settings) => new Maze(settings)
+};
+
 // wallpapers/megacity.ts
-var TIME_SCALE9 = 0.35;
+var TIME_SCALE11 = 0.35;
 var CREATURE_SPEED8 = 0.25;
 var HORIZON6 = 0.6;
 var CAM = 0.1;
 var ROAD2 = 0.22;
 var LAMPS = 0.26;
 var END = 9;
-var FAR = 16;
+var FAR2 = 16;
 var LAMP_STEP = 0.3;
 var BIKE2 = 0.065;
 var TAIL = 0.36 * BIKE2;
 var FADE2 = 0.4;
 var DOME_Z = 13;
 var DOME = 40;
-var LOOKS9 = {
+var LOOKS11 = {
   day: {
     style: "front",
     light: [1, 0.96, 0.88],
@@ -11868,16 +13039,16 @@ class Megacity extends Canvas {
   warm = false;
   bursts = [];
   craft = { x: -9, dir: 1, next: rand(10, 30), y: 1.6 };
-  dome = { wait: eggWait() * TIME_SCALE9, t: -1 };
+  dome = { wait: eggWait() * TIME_SCALE11, t: -1 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS9[settings.time];
+    this.look = LOOKS11[settings.time];
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON6);
     this.gap = rand(...TRAFFIC2[this.activity]) * 0.3;
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE9;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED8;
     this.creatureTime += cdt;
@@ -12343,12 +13514,12 @@ class Megacity extends Canvas {
     const s = 0.2 / Z * H;
     if (x < -s * 1.2 || x > this.W + s * 1.2)
       return;
-    const hull = this.paint([0.55, 0.56, 0.6]);
+    const hull2 = this.paint([0.55, 0.56, 0.6]);
     const d = c.dir;
     this.polygon([[x - d * s * 0.85, y], [x - d * s * 1.1, y - s * 0.28], [x - d * s * 1.02, y]], this.paint([0.3, 0.15, 0.15]));
-    this.shape([ell(x, y, s, s * 0.22, 0, hull), ell(x + d * s * 0.15, y + s * 0.24, s * 0.22, s * 0.07, 0, this.paint([0.25, 0.25, 0.3]))], this.lighting, 0.7);
-    const lit = look.night || look.lit > 0.1;
-    const band = lit ? [look.windows[0][0] * 0.8, look.windows[0][1] * 0.8, look.windows[0][2] * 0.8] : this.paint([0.2, 0.25, 0.35]);
+    this.shape([ell(x, y, s, s * 0.22, 0, hull2), ell(x + d * s * 0.15, y + s * 0.24, s * 0.22, s * 0.07, 0, this.paint([0.25, 0.25, 0.3]))], this.lighting, 0.7);
+    const lit2 = look.night || look.lit > 0.1;
+    const band = lit2 ? [look.windows[0][0] * 0.8, look.windows[0][1] * 0.8, look.windows[0][2] * 0.8] : this.paint([0.2, 0.25, 0.35]);
     this.ellipse(x + d * s * 0.1, y + s * 0.02, s * 0.55, Math.max(0.6, s * 0.035), band[0], band[1], band[2], 1);
     const blink = Math.max(0, Math.sin(this.time * 2.4)) ** 6;
     if (blink > 0.03) {
@@ -12371,7 +13542,7 @@ class Megacity extends Canvas {
     if (d.t < DOME)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE9;
+    d.wait = eggWait(true) * TIME_SCALE11;
   }
   drawDome() {
     const { W, H, hdr, depth: depth2, look } = this;
@@ -12596,7 +13767,7 @@ function columnHits(city2, dx, H, px) {
       add(m.z, m.y0, m.y1, 3, i, 0, 0, cover, 0);
   }
   add(END, 0, farHeight(dx * END, 0.16, 0.3, 0.75, 3), 4, 0, dx * END, END / H, 1, 0);
-  add(FAR, 0, farHeight(dx * FAR, 0.3, 0.8, 1.6, 11), 5, 0, dx * FAR, FAR / H, 1, 0);
+  add(FAR2, 0, farHeight(dx * FAR2, 0.3, 0.8, 1.6, 11), 5, 0, dx * FAR2, FAR2 / H, 1, 0);
   for (let k = 0;k < n; k++) {
     let m = k;
     order[k] = k;
@@ -12639,8 +13810,8 @@ function surface2(city2, look, j, Y, Z, dv, dx, sy) {
     const du2 = hitDu[j] / Math.max(0.25, facing);
     const tier = t.tiers.find(([, y0, y1]) => Y >= y0 - dv && Y <= y1 + dv) ?? t.tiers[0];
     const w2 = windows(look, hitN[j] + 1, Y - tier[1] - 0.012, du2, dv, 0.016, 0.02, 0.5, 0.6, t.seed + tier[1] * 100, tier[2] - tier[1] - 0.03, 1);
-    const lit2 = look.style === "front" ? 0.75 + 0.35 * clamp(-across * 0.8 + 0.4, 0, 1) : 0.75 + 0.25 * facing;
-    const k = lit2 * (1 - w2);
+    const lit3 = look.style === "front" ? 0.75 + 0.35 * clamp(-across * 0.8 + 0.4, 0, 1) : 0.75 + 0.25 * facing;
+    const k = lit3 * (1 - w2);
     shade[0] = c2[0] * k + shade[0] * w2;
     shade[1] = c2[1] * k + shade[1] * w2;
     shade[2] = c2[2] * k + shade[2] * w2;
@@ -12656,7 +13827,7 @@ function surface2(city2, look, j, Y, Z, dv, dx, sy) {
   const u = hitU[j];
   const du = hitDu[j];
   const c = look.facades[b.color % look.facades.length];
-  const lit = front ? [1, 1, 1] : look.sides[b.side < 0 ? 0 : 1];
+  const lit2 = front ? [1, 1, 1] : look.sides[b.side < 0 ? 0 : 1];
   const extent = front ? b.xo - b.xi : b.z1 - b.z0;
   const v = Y - b.y0;
   const height = b.y1 - b.y0;
@@ -12664,7 +13835,7 @@ function surface2(city2, look, j, Y, Z, dv, dx, sy) {
   const w = windows(look, u - 0.008, v - 0.045, du, dv, b.pu, b.pv, b.du, b.dv, b.seed * 3 + (front ? 0 : 1), height - 0.065, zone);
   const grade2 = look.style === "front" ? 0.9 + 0.15 * smoothstep(0, 1.5, Y) : 1;
   for (let i = 0;i < 3; i++)
-    shade[i] = c[i] * lit[i] * grade2 * (1 - w) + shade[i] * w;
+    shade[i] = c[i] * lit2[i] * grade2 * (1 - w) + shade[i] * w;
   if (b.shop >= 0 && b.y0 === 0 && !front) {
     const s = look.shops[b.shop % look.shops.length];
     const k = smoothstep(0.034, 0.028, v) * smoothstep(0.004, 0.008, v) * (0.5 + 0.5 * hash(Math.floor(u / 0.05) + b.seed)) * (b.shop < 4 ? 1 : 0.3);
@@ -12686,10 +13857,10 @@ function windows(look, u, v, du, dv, pu, pv, duty, dutyV, seed, top, zone) {
   const iv = Math.floor(v / pv);
   const h = hash2(seed * 0.731 + iu * 1.31, iv * 2.17 + seed * 0.11);
   const share = look.lit * (0.35 + 1.3 * hash2(Math.floor(iv / 4) + seed * 0.37, Math.floor(iu / 5) * 0.7));
-  const lit = h < share;
+  const lit2 = h < share;
   const pick = look.windows[Math.floor(hash(h * 91.7 + seed) * look.windows.length)];
   const glow = 0.5 + 0.45 * hash(h * 37.1);
-  const near2 = lit ? [pick[0] * glow, pick[1] * glow, pick[2] * glow] : look.glass;
+  const near2 = lit2 ? [pick[0] * glow, pick[1] * glow, pick[2] * glow] : look.glass;
   const avg = look.windows[Math.floor(hash(seed * 3.3) * look.windows.length)];
   const m = smoothstep(0.45, 1.3, Math.max(du / pu, dv / pv));
   const a = Math.min(1, look.lit * 1.1) * 0.7;
@@ -12795,6 +13966,8 @@ var megacity = {
   id: "megacity",
   name: "Megacity",
   description: "A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light",
+  collection: "Akira",
+  fixedTime: "night",
   activity: {
     calm: "The glowing city, windows coming and going, and a distant bike now and then",
     lively: "Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky",
@@ -12820,9 +13993,391 @@ var megacity = {
   create: (settings) => new Megacity(settings)
 };
 
+// wallpapers/mystify.ts
+var TIME_SCALE12 = 0.35;
+var CORNERS = 4;
+var BEZIER = 14;
+var CURVE = 8;
+var LOOKS12 = {
+  day: {
+    sky: [
+      [0, [0.003, 0.003, 0.004]],
+      [1, [0.001, 0.001, 0.002]]
+    ],
+    from: 0,
+    to: 1,
+    cycle: true,
+    saturation: 0.95,
+    value: 1
+  },
+  sunset: {
+    sky: [
+      [0, [0.04, 0.008, 0.034]],
+      [0.6, [0.02, 0.004, 0.018]],
+      [1, [0.006, 0.001, 0.006]]
+    ],
+    from: -0.08,
+    to: 0.12,
+    cycle: false,
+    saturation: 1,
+    value: 0.95
+  },
+  night: {
+    sky: [
+      [0, [0.003, 0.006, 0.022]],
+      [1, [0.0005, 0.001, 0.005]]
+    ],
+    from: 0.47,
+    to: 0.77,
+    cycle: false,
+    saturation: 0.95,
+    value: 1
+  }
+};
+var CAST = {
+  calm: { count: 1, speed: 0.012, echoes: 6, spacing: 0.026 },
+  lively: { count: 2, speed: 0.014, echoes: 6, spacing: 0.026 },
+  teeming: { count: 3, speed: 0.016, echoes: 7, spacing: 0.026 }
+};
+var SAMPLES = 4;
+var VALUES = CORNERS * 2;
+
+class Mystify extends Canvas {
+  look;
+  cast;
+  gap;
+  sample;
+  time = 0;
+  next = 0;
+  polys = [];
+  flash = 0;
+  placed = false;
+  bezier = { wait: eggWait() * TIME_SCALE12, t: -1 };
+  prev = new Float64Array(VALUES);
+  at = new Float64Array(CORNERS * 2);
+  mids = new Float64Array(CORNERS * 2);
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.look = LOOKS12[settings.time];
+    this.cast = CAST[settings.activity];
+    this.gap = this.cast.spacing / this.cast.speed;
+    this.sample = this.gap / SAMPLES;
+    this.polys = Array.from({ length: this.cast.count }, (_, i) => this.poly(i));
+  }
+  poly(i, life = Infinity) {
+    const f = {
+      u: new Float64Array(VALUES),
+      v: new Float64Array(VALUES),
+      kick: new Float64Array(VALUES),
+      ring: new Float64Array((this.cast.echoes * SAMPLES + 2) * CORNERS * 2),
+      head: 0,
+      hue: [0.2, 0.7, 0.45][i % 3] + rand(-0.03, 0.03),
+      life,
+      age: 0
+    };
+    const turn = Math.floor(rand(0, CORNERS));
+    for (let c = 0;c < CORNERS; c++) {
+      const heading = rand(0, TAU);
+      const speed = this.cast.speed * rand(0.7, 1.3);
+      const q = (c + turn) % CORNERS;
+      f.u[c * 2] = (q === 1 || q === 2 ? 0.5 : 0) + rand(0.04, 0.46);
+      f.u[c * 2 + 1] = (q >= 2 ? 0.5 : 0) + rand(0.04, 0.46);
+      f.v[c * 2] = Math.cos(heading) * speed;
+      f.v[c * 2 + 1] = Math.sin(heading) * speed;
+    }
+    return f;
+  }
+  rewind(f) {
+    const n = f.ring.length / (CORNERS * 2);
+    f.head = 0;
+    for (let s = 0;s < n; s++) {
+      const back = s * this.sample + (this.time - this.next + this.sample);
+      for (let k = 0;k < VALUES; k++)
+        this.prev[k] = f.u[k] - f.v[k] * back;
+      this.corners(this.prev, f.ring, s * CORNERS * 2);
+    }
+  }
+  corners(u, out, o) {
+    for (let k = 0;k < VALUES; k++)
+      out[o + k] = fold(u[k], k & 1 ? 1 : this.A);
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
+    const start = this.time;
+    this.time += dt;
+    this.stepGloom(dt);
+    this.flash = Math.max(0, this.flash - dt);
+    const pace = 1 - 0.6 * this.gloom;
+    const decay = Math.exp(-dt / 2);
+    for (const f of this.polys) {
+      f.age += dt;
+      f.hue += dt / 60 * (1 + 6 * smoothstep(0, 1, this.flash));
+      for (let k = 0;k < VALUES; k++) {
+        f.u[k] += (f.v[k] + f.kick[k]) * dt * pace;
+        f.kick[k] *= decay;
+      }
+    }
+    for (;this.next <= this.time; this.next += this.sample) {
+      const back = this.time - this.next;
+      for (const f of this.polys) {
+        const n = f.ring.length / (CORNERS * 2);
+        f.head = (f.head + n - 1) % n;
+        for (let k = 0;k < VALUES; k++)
+          this.prev[k] = f.u[k] - (f.v[k] + f.kick[k]) * back * pace;
+        this.corners(this.prev, f.ring, f.head * CORNERS * 2);
+      }
+    }
+    this.polys = this.polys.filter((f) => f.age < f.life);
+    this.stepBezier(dt);
+  }
+  render() {
+    this.restore();
+    const { H, look } = this;
+    const width = this.cells ? 0.8 : Math.max(0.5, 0.0024 * H);
+    const soft = this.cells ? 3.5 : 1;
+    const curve2 = this.bezier.t < 0 ? 0 : smoothstep(0, 2, this.bezier.t) * smoothstep(BEZIER, BEZIER - 2, this.bezier.t);
+    const flash = smoothstep(0, 1, this.flash);
+    const dim = 1 - 0.5 * this.gloom;
+    const echoes = this.cast.echoes;
+    const lag = clamp(1 - (this.next - this.time) / this.sample, 0, 1);
+    for (const f of this.polys) {
+      const grow = f.life === Infinity ? 1 : smoothstep(0, 1, f.age) * smoothstep(f.life, f.life - 2, f.age);
+      if (grow <= 0.01)
+        continue;
+      const n = f.ring.length / (CORNERS * 2);
+      for (let e = echoes - 1;e >= 0; e--) {
+        if (e === 0)
+          this.corners(f.u, this.at, 0);
+        if (e > 0) {
+          const s = e * SAMPLES - lag;
+          const i = Math.floor(s);
+          const t = s - i;
+          const a2 = (f.head + i) % n * CORNERS * 2;
+          const b = (f.head + i + 1) % n * CORNERS * 2;
+          for (let k = 0;k < CORNERS * 2; k++)
+            this.at[k] = lerp(f.ring[a2 + k], f.ring[b + k], t);
+        }
+        for (let k = 0;k < CORNERS * 2; k++)
+          this.at[k] *= H;
+        const hue = f.hue - e * 0.01;
+        const base = look.cycle ? hsv(hue, look.saturation, look.value) : hsv(lerp(look.from, look.to, 0.5 - 0.5 * Math.cos(hue * TAU)), look.saturation, look.value);
+        const rainbow = hsv(f.hue * 3 + e * 0.09, 0.9, look.value * 1.1);
+        const a = grow * dim * (1 - 0.6 * e / echoes);
+        const color = [lerp(base[0], rainbow[0], flash) * a, lerp(base[1], rainbow[1], flash) * a, lerp(base[2], rainbow[2], flash) * a];
+        this.outline(width, soft, color, curve2);
+      }
+    }
+    this.finish();
+  }
+  outline(width, soft, color, curve2) {
+    const { hdr, W, H, mids } = this;
+    const points = this.at;
+    if (curve2 <= 0.01) {
+      for (let c = 0;c < CORNERS; c++) {
+        const d = (c + 1) % CORNERS * 2;
+        stroke(hdr, W, H, points[c * 2], points[c * 2 + 1], points[d], points[d + 1], width, soft, color[0], color[1], color[2]);
+      }
+      return;
+    }
+    for (let c = 0;c < CORNERS; c++) {
+      const d = (c + 1) % CORNERS * 2;
+      mids[c * 2] = (points[c * 2] + points[d]) / 2;
+      mids[c * 2 + 1] = (points[c * 2 + 1] + points[d + 1]) / 2;
+    }
+    for (let c = 0;c < CORNERS; c++) {
+      const m0 = (c + CORNERS - 1) % CORNERS * 2;
+      const m1 = c * 2;
+      let x0 = mids[m0];
+      let y0 = mids[m0 + 1];
+      for (let s = 1;s <= CURVE; s++) {
+        const t = s / CURVE;
+        const sx = t < 0.5 ? lerp(mids[m0], points[c * 2], t * 2) : lerp(points[c * 2], mids[m1], t * 2 - 1);
+        const sy = t < 0.5 ? lerp(mids[m0 + 1], points[c * 2 + 1], t * 2) : lerp(points[c * 2 + 1], mids[m1 + 1], t * 2 - 1);
+        const bx = (1 - t) * (1 - t) * mids[m0] + 2 * t * (1 - t) * points[c * 2] + t * t * mids[m1];
+        const by = (1 - t) * (1 - t) * mids[m0 + 1] + 2 * t * (1 - t) * points[c * 2 + 1] + t * t * mids[m1 + 1];
+        const x1 = lerp(sx, bx, curve2);
+        const y1 = lerp(sy, by, curve2);
+        stroke(hdr, W, H, x0, y0, x1, y1, width, soft, color[0], color[1], color[2]);
+        x0 = x1;
+        y0 = y1;
+      }
+    }
+  }
+  visit() {
+    this.flash = 3;
+    if (this.polys.length > this.cast.count * 2)
+      return;
+    for (const parent of this.polys.slice(0, this.cast.count)) {
+      const f = this.poly(this.polys.length, 7);
+      f.u.set(parent.u);
+      for (let k = 0;k < VALUES; k++)
+        f.v[k] = k & 1 ? parent.v[k] : -parent.v[k];
+      f.hue = parent.hue + 0.5;
+      this.rewind(f);
+      this.polys.push(f);
+    }
+  }
+  poke(x, y) {
+    let best;
+    let corner = 0;
+    let least = Infinity;
+    for (const f of this.polys) {
+      this.corners(f.u, this.at, 0);
+      for (let c = 0;c < CORNERS; c++) {
+        const d = Math.hypot(this.at[c * 2] - x, this.at[c * 2 + 1] - y);
+        if (d >= least)
+          continue;
+        least = d;
+        best = f;
+        corner = c;
+      }
+    }
+    if (!best)
+      return;
+    this.corners(best.u, this.at, 0);
+    const dx = this.at[corner * 2] - x;
+    const dy = this.at[corner * 2 + 1] - y;
+    const l = Math.hypot(dx, dy) || 1;
+    const k = corner * 2;
+    const sx = slope(best.u[k], this.A);
+    const sy = slope(best.u[k + 1], 1);
+    const speed = Math.hypot(best.v[k], best.v[k + 1]);
+    best.v[k] = sx * dx * speed / l;
+    best.v[k + 1] = sy * dy * speed / l;
+    best.kick[k] = sx * dx * speed * 5 / l;
+    best.kick[k + 1] = sy * dy * speed * 5 / l;
+  }
+  layout() {
+    const { W, H, hdr } = this;
+    if (!this.placed)
+      for (const f of this.polys) {
+        for (let c = 0;c < CORNERS; c++)
+          f.u[c * 2] *= this.A;
+        this.rewind(f);
+      }
+    this.placed = true;
+    const stops = this.look.sky;
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      const i = stops.findIndex(([at]) => at >= v);
+      const [a, from] = stops[Math.max(0, i - 1)];
+      const [b, to] = stops[i < 0 ? stops.length - 1 : i];
+      const k = b > a ? smoothstep(a, b, v) : 1;
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(from[0], to[0], k);
+        hdr[o + 1] = lerp(from[1], to[1], k);
+        hdr[o + 2] = lerp(from[2], to[2], k);
+      }
+    }
+  }
+  stepBezier(dt) {
+    const b = this.bezier;
+    if (b.t < 0) {
+      b.wait -= dt;
+      if (b.wait <= 0)
+        b.t = 0;
+      return;
+    }
+    b.t += dt;
+    if (b.t < BEZIER)
+      return;
+    b.t = -1;
+    b.wait = eggWait(true) * TIME_SCALE12;
+  }
+}
+function fold(u, span) {
+  const m = (u % (2 * span) + 2 * span) % (2 * span);
+  return m < span ? m : 2 * span - m;
+}
+function slope(u, span) {
+  return (u % (2 * span) + 2 * span) % (2 * span) < span ? 1 : -1;
+}
+function stroke(hdr, W, H, ax, ay, bx, by, width, soft, r, g, b) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 0.000001)
+    return;
+  const reach = width + soft;
+  const steep = Math.abs(dy) > Math.abs(dx);
+  const m0 = steep ? ay : ax;
+  const m1 = steep ? by : bx;
+  const n0 = steep ? ax : ay;
+  const n1 = steep ? bx : by;
+  const across = reach * Math.sqrt(len2) / Math.abs(m1 - m0);
+  const lo = Math.max(0, Math.floor(Math.min(m0, m1) - reach));
+  const hi = Math.min((steep ? H : W) - 1, Math.ceil(Math.max(m0, m1) + reach));
+  const limit = (steep ? W : H) - 1;
+  const inv = 1 / len2;
+  let run = lo;
+  let runLo = Infinity;
+  let runHi = -Infinity;
+  for (let m = lo;m <= hi; m++) {
+    const t = clamp((m + 0.5 - m0) / (m1 - m0), 0, 1);
+    const c = n0 + (n1 - n0) * t - 0.5;
+    const a0 = Math.max(0, Math.floor(c - across));
+    const a1 = Math.min(limit, Math.ceil(c + across));
+    for (let n = a0;n <= a1; n++) {
+      const px = (steep ? n : m) + 0.5;
+      const py = (steep ? m : n) + 0.5;
+      const s = clamp(((px - ax) * dx + (py - ay) * dy) * inv, 0, 1);
+      const ex = ax + dx * s - px;
+      const ey = ay + dy * s - py;
+      const cover = clamp((width + soft / 2 - Math.sqrt(ex * ex + ey * ey)) / soft, 0, 1);
+      if (cover <= 0)
+        continue;
+      const o = ((steep ? m : n) * W + (steep ? n : m)) * 3;
+      hdr[o] += (r - hdr[o]) * cover;
+      hdr[o + 1] += (g - hdr[o + 1]) * cover;
+      hdr[o + 2] += (b - hdr[o + 2]) * cover;
+    }
+    runLo = Math.min(runLo, a0);
+    runHi = Math.max(runHi, a1);
+    if (m - run < 7 && m < hi)
+      continue;
+    if (runHi >= runLo)
+      touch(hdr, steep ? runLo : run, steep ? run : runLo, steep ? runHi : m, steep ? m : runHi);
+    run = m + 1;
+    runLo = Infinity;
+    runHi = -Infinity;
+  }
+}
+var mystify = {
+  id: "mystify",
+  name: "Mystify",
+  description: "The old screensaver: bright polygons whose corners glide and bounce off the edges, trailing stacks of echoes",
+  collection: "Classics",
+  fixedTime: "day",
+  activity: {
+    calm: "One polygon drifting slowly",
+    lively: "The classic pair, in two colors",
+    teeming: "Three polygons, a little quicker, with longer trails"
+  },
+  scrim: {
+    day: [
+      [4, 4, 6],
+      [3, 3, 5],
+      [2, 2, 4]
+    ],
+    sunset: [
+      [30, 8, 26],
+      [20, 5, 18],
+      [8, 2, 8]
+    ],
+    night: [
+      [2, 4, 16],
+      [1, 3, 12],
+      [0, 1, 5]
+    ]
+  },
+  create: (settings) => new Mystify(settings)
+};
+
 // wallpapers/ocean.ts
 var SURFACE = 0.065;
-var TIME_SCALE10 = 0.35;
+var TIME_SCALE13 = 0.35;
 var CREATURE_SCALE = 0.7;
 var CREATURE_SPEED9 = 0.25;
 var CAUS_N = 128;
@@ -12854,7 +14409,7 @@ class Ocean extends Canvas {
   nightRow = new Float32Array(0);
   snow = [];
   whale = { x: -9, dir: 1, next: 14, y: 0.4 };
-  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE10, spin: 0 };
+  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE13, spin: 0 };
   activity;
   timeOfDay;
   constructor(settings) {
@@ -12878,7 +14433,7 @@ class Ocean extends Canvas {
       this.snow.push({ x: Math.random() * 4, y: Math.random(), z: Math.random(), s: Math.random() });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
     this.time += dt;
     for (const s of this.snow) {
       s.x += (0.006 + s.z * 0.012) * dt;
@@ -13259,7 +14814,7 @@ class Ocean extends Canvas {
     if (s.x > -0.4 && s.x < this.A + 0.4)
       return;
     s.x = -9;
-    s.wait = eggWait(true) * TIME_SCALE10;
+    s.wait = eggWait(true) * TIME_SCALE13;
   }
   subPoint(u, v) {
     const s = this.sub;
@@ -13901,7 +15456,7 @@ class Ocean extends Canvas {
     const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
     const skin = [0.42, 0.48, 0.32];
     const skinFar = [0.26, 0.3, 0.2];
-    const stroke = Math.sin(tu.phase);
+    const stroke2 = Math.sin(tu.phase);
     const whip = Math.cos(tu.phase) * 0.05;
     const flipper = (u0, v0, length, angle, width, color) => {
       const [r, g, b] = tint(color);
@@ -13919,8 +15474,8 @@ class Ocean extends Canvas {
         a += 0.04 + whip * q;
       }
     };
-    const front = Math.PI - 0.55 - stroke * 0.6;
-    const back = Math.PI - 0.25 - stroke * 0.25;
+    const front = Math.PI - 0.55 - stroke2 * 0.6;
+    const back = Math.PI - 0.25 - stroke2 * 0.25;
     flipper(0.14, 0.03, 0.4, front - 0.25, 0.055, skinFar);
     flipper(-0.2, 0.03, 0.17, back - 0.2, 0.04, skinFar);
     {
@@ -14235,6 +15790,7 @@ var ocean = {
   id: "ocean",
   name: "Ocean",
   description: "Deep water, god rays, marine snow, and a whale that drifts past now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Water, light and the whale",
     lively: "Adds a fish and an octopus",
@@ -14260,8 +15816,676 @@ var ocean = {
   create: (settings) => new Ocean(settings)
 };
 
+// wallpapers/pipes.ts
+var TIME_SCALE14 = 0.35;
+var GY = 8;
+var GZ = 12;
+var GXM = 40;
+var Z0 = 5;
+var FOCAL = 0.5 * Z0 / (GY * 0.45);
+var PIPE = 0.15;
+var BALL = 0.23;
+var BEND = 0.5;
+var SS2 = 2;
+var BLOCK2 = 8;
+var BAKE_FRAMES = 45;
+var FULL = 0.45;
+var FADE3 = 1;
+var DX2 = [1, -1, 0, 0, 0, 0];
+var DY2 = [0, 0, 1, -1, 0, 0];
+var DZ = [0, 0, 0, 0, 1, -1];
+var CYL = 0;
+var BALLS2 = 1;
+var ARC = 2;
+var COLORS = [
+  [0.2, 0.75, 0.75],
+  [0.12, 0.58, 0.08],
+  [0.95, 0.34, 0.04],
+  [1, 0.7, 0.04],
+  [0.52, 0.52, 0.55],
+  [0.85, 0.06, 0.05],
+  [0.09, 0.25, 0.95],
+  [0.5, 0.1, 0.8]
+];
+var PICKS = [0, 0, 0, 1, 1, 1, 2, 3, 4, 5, 6, 7];
+var LOOKS13 = {
+  day: {
+    sky: [
+      [0.002, 0.002, 0.003],
+      [0.001, 0.001, 0.0015]
+    ],
+    key: [1.1, 1.08, 1.02],
+    ambient: 0.14,
+    glint: [1, 0.98, 0.94],
+    glintTint: 0.15,
+    fill: [0.02, 0.03, 0.04],
+    fog: 0.4,
+    tint: [1, 1, 1]
+  },
+  sunset: {
+    sky: [
+      [0.06, 0.012, 0.05],
+      [0.085, 0.022, 0.006]
+    ],
+    key: [1.15, 0.82, 0.58],
+    ambient: 0.14,
+    glint: [1, 0.62, 0.3],
+    glintTint: 0.45,
+    fill: [0.3, 0.05, 0.18],
+    fog: 0.45,
+    tint: [1.05, 0.95, 0.88]
+  },
+  night: {
+    sky: [
+      [0.003, 0.006, 0.024],
+      [0.0006, 0.0012, 0.005]
+    ],
+    key: [0.62, 0.72, 1],
+    ambient: 0.09,
+    glint: [0.16, 0.36, 1.05],
+    glintTint: 0.65,
+    fill: [0.02, 0.1, 0.3],
+    fog: 0.5,
+    tint: [0.78, 0.84, 1]
+  }
+};
+
+class Pipes extends Canvas {
+  time = 0;
+  activity;
+  look;
+  speed;
+  count;
+  bends;
+  limit;
+  pipes = [];
+  waits = [];
+  prims = [];
+  fresh = [];
+  grid = new Uint8Array(GXM * GY * GZ);
+  filled = 0;
+  gx = GY * 2;
+  cycle = 0;
+  fade = -1;
+  burst = 0;
+  egg = eggWait() * TIME_SCALE14;
+  teapot = false;
+  grown = false;
+  samples = new Float32Array(0);
+  depth = new Float32Array(0);
+  rows = new Float32Array(0);
+  base = new Float32Array(0);
+  pending = new Uint8Array(0);
+  pendingCount = 0;
+  sinceBake = 0;
+  shade = new Float32Array(16);
+  box = new Float32Array(4);
+  spine = new Float32Array(9);
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.activity = settings.activity;
+    this.look = LOOKS13[settings.time];
+    this.speed = { calm: 0.8, lively: 1.5, teeming: 2.8 }[this.activity];
+    this.count = { calm: 1, lively: 3, teeming: 6 }[this.activity];
+    this.bends = { calm: 0, lively: 0.1, teeming: 0.35 }[this.activity];
+    this.limit = { calm: 300, lively: 200, teeming: 130 }[this.activity];
+    this.waits = Array.from({ length: this.count }, (_, i) => i === 0 ? 0 : rand(1, 4) * i);
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
+    this.time += dt;
+    this.stepGloom(dt);
+    if (!this.grown)
+      return;
+    this.egg -= dt;
+    if (this.egg <= 0 && !this.teapot)
+      this.teapot = true;
+    if (this.fade >= 0) {
+      this.fade += dt / FADE3;
+      if (this.fade >= 1)
+        this.clear();
+      return;
+    }
+    this.cycle += dt;
+    this.burst = Math.max(0, this.burst - dt);
+    this.grow(dt * (1 - 0.9 * this.gloom) * (1 + 4 * smoothstep(0, 1, this.burst)));
+    if (this.filled > FULL * this.gx * GY * GZ || this.cycle > this.limit)
+      this.fade = 0;
+  }
+  render() {
+    this.restore();
+    const { W, H } = this;
+    for (const p of this.fresh)
+      this.draw(p);
+    this.fresh = this.fresh.filter((p) => p.drawn < p.full);
+    this.sinceBake++;
+    if (this.pendingCount && (this.sinceBake >= BAKE_FRAMES || this.fade >= 0)) {
+      resolve(this.samples, this.background, W, H, 0, 0, W - 1, H - 1);
+      this.pending.fill(0);
+      this.pendingCount = 0;
+      this.sinceBake = 0;
+      this.hdr.set(this.background);
+      this.rebake();
+    }
+    const bw = Math.ceil(W / BLOCK2);
+    const bh = Math.ceil(H / BLOCK2);
+    for (let by = 0;by < bh; by++)
+      for (let bx = 0;bx < bw; bx++) {
+        if (!this.pending[by * bw + bx])
+          continue;
+        let end = bx;
+        while (end + 1 < bw && this.pending[by * bw + end + 1])
+          end++;
+        const x0 = bx * BLOCK2;
+        const y0 = by * BLOCK2;
+        const x1 = Math.min(W, (end + 1) * BLOCK2) - 1;
+        const y1 = Math.min(H, (by + 1) * BLOCK2) - 1;
+        resolve(this.samples, this.hdr, W, H, x0, y0, x1, y1);
+        this.touch(x0, y0, x1, y1);
+        bx = end;
+      }
+    if (this.fade >= 0) {
+      dim(this.hdr, this.base, smoothstep(0, 1, this.fade));
+      this.touch(0, 0, W - 1, H - 1);
+    }
+    this.finish();
+  }
+  visit() {
+    if (this.fade >= 0)
+      return;
+    this.burst = 3;
+    for (let n = 0;n < 2 && this.pipes.length < this.count + 3; n++)
+      this.sprout();
+  }
+  poke(x, y) {
+    if (this.fade >= 0 || this.pipes.length >= this.count + 4)
+      return;
+    const rx = (x - this.A / 2) / FOCAL;
+    const ry = (y - 0.5) / FOCAL;
+    for (let k = 1;k < GZ; k++) {
+      const z = Z0 + k;
+      const i = Math.round(rx * z + (GXM - 1) / 2);
+      const j = Math.round(ry * z + (GY - 1) / 2);
+      if (!this.inside(i, j, k) || this.grid[this.cell(i, j, k)])
+        continue;
+      this.start(i, j, k);
+      return;
+    }
+  }
+  layout() {
+    const { W, H, look } = this;
+    this.gx = Math.min(GXM, Math.max(4, Math.round(this.A * GY)));
+    if (!this.grown) {
+      this.grown = true;
+      for (let t = { calm: 100, lively: 30, teeming: 14 }[this.activity];t > 0; t -= 0.05)
+        this.grow(0.05);
+    }
+    for (let y = 0;y < H; y++) {
+      const k = smoothstep(0, 1, (y + 0.5) / H);
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        this.hdr[o] = lerp(look.sky[0][0], look.sky[1][0], k);
+        this.hdr[o + 1] = lerp(look.sky[0][1], look.sky[1][1], k);
+        this.hdr[o + 2] = lerp(look.sky[0][2], look.sky[1][2], k);
+      }
+    }
+    this.base = this.hdr.slice();
+    this.rows = new Float32Array(H * SS2 * 3);
+    for (let y = 0;y < H * SS2; y++) {
+      const k = smoothstep(0, 1, (y + 0.5) / (H * SS2));
+      for (let c = 0;c < 3; c++)
+        this.rows[y * 3 + c] = lerp(look.sky[0][c], look.sky[1][c], k);
+    }
+    this.samples = new Float32Array(W * SS2 * H * SS2 * 3);
+    this.depth = new Float32Array(W * SS2 * H * SS2);
+    this.pending = new Uint8Array(Math.ceil(W / BLOCK2) * Math.ceil(H / BLOCK2));
+    this.pendingCount = 0;
+    this.wipe();
+    for (const p of this.prims) {
+      p.drawn = 0;
+      this.draw(p);
+    }
+    this.pending.fill(0);
+    this.pendingCount = 0;
+    resolve(this.samples, this.hdr, W, H, 0, 0, W - 1, H - 1);
+  }
+  wipe() {
+    const n = this.depth.length;
+    const SW = this.W * SS2;
+    this.depth.fill(Infinity);
+    for (let s = 0;s < n; s++) {
+      const r = Math.floor(s / SW) * 3;
+      this.samples[s * 3] = this.rows[r];
+      this.samples[s * 3 + 1] = this.rows[r + 1];
+      this.samples[s * 3 + 2] = this.rows[r + 2];
+    }
+  }
+  clear() {
+    this.fade = -1;
+    this.cycle = 0;
+    this.pipes = [];
+    this.prims = [];
+    this.fresh = [];
+    this.grid.fill(0);
+    this.filled = 0;
+    this.waits = Array.from({ length: this.count }, (_, i) => rand(0.2, 0.6) + i * rand(1, 3));
+    this.wipe();
+    this.pending.fill(0);
+    this.pendingCount = 0;
+    this.background.set(this.base);
+    this.rebake();
+  }
+  grow(dt) {
+    for (const p of this.pipes)
+      this.advance(p, dt * this.speed);
+    const live = this.pipes.filter((p) => !p.done);
+    for (let n = this.pipes.length - live.length;n > 0; n--)
+      this.waits.push(rand(0.5, 3));
+    this.pipes = live;
+    this.waits = this.waits.map((w) => w - dt).sort((a, b) => a - b);
+    while (this.waits.length && this.waits[0] <= 0) {
+      this.waits.shift();
+      if (this.pipes.length < this.count)
+        this.sprout();
+    }
+  }
+  advance(p, du) {
+    p.u += du;
+    for (;; ) {
+      this.extend(p);
+      if (p.dOut < 0 && p.u >= 0.5) {
+        p.done = true;
+        return;
+      }
+      if (p.u < 1)
+        return;
+      p.u -= 1;
+      p.i += DX2[p.dOut];
+      p.j += DY2[p.dOut];
+      p.k += DZ[p.dOut];
+      p.dIn = p.dOut;
+      this.enter(p);
+    }
+  }
+  extend(p) {
+    const u = Math.min(p.u, 1);
+    if (p.bend) {
+      p.pieces[0].ext = u * (Math.PI / 2);
+      return;
+    }
+    for (const piece of p.pieces) {
+      if (piece.kind === BALLS2)
+        piece.ext = u >= 0.5 ? 1 : 0;
+      if (piece.kind !== CYL)
+        continue;
+      piece.ext = piece.full === 1 ? u : piece === p.pieces[0] && p.dIn >= 0 ? Math.min(u, 0.5) : Math.max(0, u - 0.5);
+    }
+  }
+  enter(p) {
+    p.length++;
+    p.dOut = p.length >= p.max ? -1 : this.choose(p);
+    if (p.dOut >= 0)
+      this.claim(p.i + DX2[p.dOut], p.j + DY2[p.dOut], p.k + DZ[p.dOut]);
+    const [x, y, z] = this.center(p.i, p.j, p.k);
+    p.pieces = [];
+    p.bend = false;
+    if (p.dIn >= 0 && p.dOut === p.dIn) {
+      p.pieces.push(this.prim(CYL, x - DX2[p.dIn] * 0.5, y - DY2[p.dIn] * 0.5, z - DZ[p.dIn] * 0.5, p.dIn, PIPE, 1, p.color));
+      return;
+    }
+    if (p.dIn >= 0 && p.dOut >= 0 && Math.random() < this.bends) {
+      p.bend = true;
+      const a = this.prim(ARC, x - DX2[p.dIn] * BEND + DX2[p.dOut] * BEND, y - DY2[p.dIn] * BEND + DY2[p.dOut] * BEND, z - DZ[p.dIn] * BEND + DZ[p.dOut] * BEND, 0, PIPE, Math.PI / 2, p.color);
+      a.e1 = p.dOut ^ 1;
+      a.e2 = p.dIn;
+      p.pieces.push(a);
+      return;
+    }
+    if (p.dIn >= 0)
+      p.pieces.push(this.prim(CYL, x - DX2[p.dIn] * 0.5, y - DY2[p.dIn] * 0.5, z - DZ[p.dIn] * 0.5, p.dIn, PIPE, 0.5, p.color));
+    const teapot = this.teapot && p.dIn >= 0 && p.dOut >= 0 && p.k < GZ / 2;
+    if (teapot) {
+      this.teapot = false;
+      this.egg = eggWait(true) * TIME_SCALE14;
+      for (const t of TEAPOT)
+        p.pieces.push(this.prim(BALLS2, x + t[0] * 1.4, y + t[1] * 1.4, z + t[2] * 1.4, 0, t[3] * 1.4, 1, p.color, t[4]));
+    }
+    if (!teapot)
+      p.pieces.push(this.prim(BALLS2, x, y, z, 0, BALL, 1, p.color));
+    if (p.dOut >= 0)
+      p.pieces.push(this.prim(CYL, x, y, z, p.dOut, PIPE, 0.5, p.color));
+  }
+  prim(kind, x, y, z, d, r, full, color, ky = 1) {
+    const prim = { kind, x, y, z, d, e1: 0, e2: 0, r, ky, ext: 0, full, drawn: 0, color };
+    this.prims.push(prim);
+    this.fresh.push(prim);
+    return prim;
+  }
+  choose(p) {
+    const free = [0, 1, 2, 3, 4, 5].filter((d) => {
+      const i = p.i + DX2[d];
+      const j = p.j + DY2[d];
+      const k = p.k + DZ[d];
+      return this.inside(i, j, k) && !this.grid[this.cell(i, j, k)];
+    });
+    if (!free.length)
+      return -1;
+    if (p.dIn >= 0 && free.includes(p.dIn) && Math.random() < 0.6)
+      return p.dIn;
+    const turns = free.filter((d) => d !== p.dIn);
+    const pick = turns.length ? turns : free;
+    return pick[Math.floor(Math.random() * pick.length)];
+  }
+  sprout() {
+    for (let n = 0;n < 60; n++) {
+      const lo = Math.floor((GXM - this.gx) / 2);
+      const i = lo + Math.floor(Math.random() * this.gx);
+      const j = Math.floor(Math.random() * GY);
+      const k = Math.floor(Math.random() ** 1.6 * GZ);
+      if (this.grid[this.cell(i, j, k)])
+        continue;
+      this.start(i, j, k);
+      return;
+    }
+  }
+  start(i, j, k) {
+    const color = this.paint(COLORS[PICKS[Math.floor(Math.random() * PICKS.length)]]);
+    const p = { i, j, k, dIn: -1, dOut: -1, u: 0.5, bend: false, length: 0, max: Math.floor(rand(18, 50)), color, pieces: [], done: false };
+    this.claim(i, j, k);
+    this.enter(p);
+    this.pipes.push(p);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    const g = this.look === LOOKS13.night && c === COLORS[4] ? [0.16, 0.24, 0.55] : c;
+    return [g[0] * t[0], g[1] * t[1], g[2] * t[2]];
+  }
+  claim(i, j, k) {
+    this.grid[this.cell(i, j, k)] = 1;
+    this.filled++;
+  }
+  inside(i, j, k) {
+    const lo = Math.floor((GXM - this.gx) / 2);
+    return i >= lo && i < lo + this.gx && j >= 0 && j < GY && k >= 0 && k < GZ;
+  }
+  cell(i, j, k) {
+    return (k * GY + j) * GXM + i;
+  }
+  center(i, j, k) {
+    return [i - (GXM - 1) / 2, j - (GY - 1) / 2, Z0 + k];
+  }
+  draw(p) {
+    if (p.ext <= p.drawn)
+      return;
+    const look = this.look;
+    const gloom = 1 - 0.4 * this.gloom;
+    const s = this.shade;
+    s.set([look.key[0] * gloom, look.key[1] * gloom, look.key[2] * gloom, look.ambient, look.glint[0] * gloom, look.glint[1] * gloom, look.glint[2] * gloom, look.glintTint, look.fill[0], look.fill[1], look.fill[2], look.fog]);
+    const SW = this.W * SS2;
+    const SH = this.H * SS2;
+    const f = FOCAL * SH;
+    const box = this.box;
+    box[0] = Infinity;
+    box[1] = Infinity;
+    box[2] = -Infinity;
+    box[3] = -Infinity;
+    if (p.kind === BALLS2)
+      ellipsoid(this.samples, this.depth, this.rows, SW, SH, f, s, p.x, p.y, p.z, p.r, p.ky, p.color, box, undefined);
+    if (p.kind === CYL) {
+      const a = p.drawn;
+      const b = p.ext;
+      const axis = p.d >> 1;
+      const sign = p.d & 1 ? -1 : 1;
+      const at = axis === 0 ? p.x : axis === 1 ? p.y : p.z;
+      const s0 = at + sign * Math.max(0, a - 0.02);
+      const s1 = at + sign * b;
+      cylinder(this.samples, this.depth, this.rows, SW, SH, f, s, axis, p.x, p.y, p.z, Math.min(s0, s1), Math.max(s0, s1), p.r, p.color, box);
+    }
+    if (p.kind === ARC) {
+      const step = 0.06;
+      const spine = this.spine;
+      spine.set([p.x, p.y, p.z, DX2[p.e1], DY2[p.e1], DZ[p.e1], DX2[p.e2], DY2[p.e2], DZ[p.e2]]);
+      for (let t = Math.floor(p.drawn / step) * step;t < p.ext + step; t += step) {
+        const th = Math.min(t, p.ext);
+        const c = Math.cos(th) * BEND;
+        const n = Math.sin(th) * BEND;
+        ellipsoid(this.samples, this.depth, this.rows, SW, SH, f, s, p.x + DX2[p.e1] * c + DX2[p.e2] * n, p.y + DY2[p.e1] * c + DY2[p.e2] * n, p.z + DZ[p.e1] * c + DZ[p.e2] * n, p.r, 1, p.color, box, spine);
+        if (th >= p.ext)
+          break;
+      }
+    }
+    p.drawn = p.kind === BALLS2 ? 1 : p.ext;
+    if (box[2] < box[0])
+      return;
+    const bw = Math.ceil(this.W / BLOCK2);
+    const x0 = Math.max(0, Math.floor(box[0] / SS2 / BLOCK2));
+    const y0 = Math.max(0, Math.floor(box[1] / SS2 / BLOCK2));
+    const x1 = Math.min(bw - 1, Math.floor(box[2] / SS2 / BLOCK2));
+    const y1 = Math.min(Math.ceil(this.H / BLOCK2) - 1, Math.floor(box[3] / SS2 / BLOCK2));
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        if (this.pending[y * bw + x])
+          continue;
+        this.pending[y * bw + x] = 1;
+        this.pendingCount++;
+      }
+  }
+}
+var TEAPOT = [
+  [0, 0.02, 0, 0.3, 0.7],
+  [0, -0.17, 0, 0.17, 0.4],
+  [0, -0.25, 0, 0.05, 1],
+  ...Array.from({ length: 16 }, (_, n) => {
+    const t = n / 15;
+    return [0.22 + 0.24 * t, 0.06 - 0.26 * t * t - 0.04 * t, 0, 0.075 - 0.035 * t, 1];
+  }),
+  ...Array.from({ length: 24 }, (_, n) => {
+    const a = -Math.PI / 2 + Math.PI * n / 23;
+    return [-0.28 - 0.13 * Math.cos(a), 0.12 * Math.sin(a), 0, 0.042, 1];
+  })
+];
+function light(samples, rows, s, row, nx, ny, nz, dx, dy, z, color, shade2) {
+  const lx = -0.48;
+  const ly = -0.66;
+  const lz = -0.58;
+  const vl = 1 / Math.hypot(dx, dy, 1);
+  const vx = -dx * vl;
+  const vy = -dy * vl;
+  const vz = -vl;
+  const diffuse = Math.max(0, nx * lx + ny * ly + nz * lz);
+  const hx = lx + vx;
+  const hy = ly + vy;
+  const hz = lz + vz;
+  const hl = 1 / Math.hypot(hx, hy, hz);
+  const sp = Math.max(0, (nx * hx + ny * hy + nz * hz) * hl);
+  const sp2 = sp * sp;
+  const sp8 = sp2 * sp2 * sp2 * sp2;
+  const spec = sp8 * sp8 * sp8 * sp8 * 1.1 + sp8 * 0.12;
+  const facing = nx * vx + ny * vy + nz * vz;
+  const rim = (1 - Math.max(0, facing)) ** 3;
+  const fog2 = shade2[11] * smoothstep(Z0, Z0 + GZ, z);
+  const o = s * 3;
+  for (let c = 0;c < 3; c++) {
+    const glint = lerp(shade2[4 + c], shade2[4 + c] * color[c] * 1.6, shade2[7]);
+    const lit2 = color[c] * (shade2[3] + shade2[c] * diffuse) + glint * spec + shade2[8 + c] * rim;
+    samples[o + c] = lerp(lit2, rows[row * 3 + c], fog2);
+  }
+}
+function ellipsoid(samples, depth2, rows, SW, SH, f, shade2, cx, cy, cz, r, ky, color, box, spine) {
+  const ry = r * ky;
+  const near2 = cz - r;
+  if (near2 <= 0.1)
+    return;
+  const x0 = Math.max(0, Math.floor(SW / 2 + f * (cx - r) / (cx - r < 0 ? near2 : cz + r)));
+  const x1 = Math.min(SW - 1, Math.ceil(SW / 2 + f * (cx + r) / (cx + r > 0 ? near2 : cz + r)));
+  const y0 = Math.max(0, Math.floor(SH / 2 + f * (cy - ry) / (cy - ry < 0 ? near2 : cz + r)));
+  const y1 = Math.min(SH - 1, Math.ceil(SH / 2 + f * (cy + ry) / (cy + ry > 0 ? near2 : cz + r)));
+  if (x1 < x0 || y1 < y0)
+    return;
+  const iy = 1 / ky;
+  const ccy = cy * iy;
+  const cc = cx * cx + ccy * ccy + cz * cz - r * r;
+  let hit = false;
+  for (let y = y0;y <= y1; y++) {
+    const dy = (y + 0.5 - SH / 2) / f;
+    const dys = dy * iy;
+    for (let x = x0;x <= x1; x++) {
+      const dx = (x + 0.5 - SW / 2) / f;
+      const a = dx * dx + dys * dys + 1;
+      const b = dx * cx + dys * ccy + cz;
+      const disc = b * b - a * cc;
+      if (disc < 0)
+        continue;
+      const t = (b - Math.sqrt(disc)) / a;
+      const s = y * SW + x;
+      if (t >= depth2[s])
+        continue;
+      depth2[s] = t;
+      hit = true;
+      let nx = t * dx - cx;
+      let ny = (t * dy - cy) * iy * iy;
+      let nz = t - cz;
+      if (spine) {
+        const px = t * dx - spine[0];
+        const py = t * dy - spine[1];
+        const pz = t - spine[2];
+        const phi = clamp(Math.atan2(px * spine[6] + py * spine[7] + pz * spine[8], px * spine[3] + py * spine[4] + pz * spine[5]), 0, Math.PI / 2);
+        const c = Math.cos(phi) * BEND;
+        const n = Math.sin(phi) * BEND;
+        nx = px - spine[3] * c - spine[6] * n;
+        ny = py - spine[4] * c - spine[7] * n;
+        nz = pz - spine[5] * c - spine[8] * n;
+      }
+      const nl = 1 / Math.hypot(nx, ny, nz);
+      light(samples, rows, s, y, nx * nl, ny * nl, nz * nl, dx, dy, t, color, shade2);
+    }
+  }
+  if (!hit)
+    return;
+  box[0] = Math.min(box[0], x0);
+  box[1] = Math.min(box[1], y0);
+  box[2] = Math.max(box[2], x1);
+  box[3] = Math.max(box[3], y1);
+}
+function cylinder(samples, depth2, rows, SW, SH, f, shade2, axis, cx, cy, cz, a, b, r, color, box) {
+  const lx0 = axis === 0 ? a : cx - r;
+  const lx1 = axis === 0 ? b : cx + r;
+  const ly0 = axis === 1 ? a : cy - r;
+  const ly1 = axis === 1 ? b : cy + r;
+  const lz0 = axis === 2 ? a : cz - r;
+  const lz1 = axis === 2 ? b : cz + r;
+  if (lz0 <= 0.1)
+    return;
+  const x0 = Math.max(0, Math.floor(SW / 2 + f * lx0 / (lx0 < 0 ? lz0 : lz1)));
+  const x1 = Math.min(SW - 1, Math.ceil(SW / 2 + f * lx1 / (lx1 > 0 ? lz0 : lz1)));
+  const y0 = Math.max(0, Math.floor(SH / 2 + f * ly0 / (ly0 < 0 ? lz0 : lz1)));
+  const y1 = Math.min(SH - 1, Math.ceil(SH / 2 + f * ly1 / (ly1 > 0 ? lz0 : lz1)));
+  if (x1 < x0 || y1 < y0)
+    return;
+  const cp = axis === 0 ? cy : cx;
+  const cq = axis === 2 ? cy : cz;
+  let hit = false;
+  for (let y = y0;y <= y1; y++) {
+    const dy = (y + 0.5 - SH / 2) / f;
+    for (let x = x0;x <= x1; x++) {
+      const dx = (x + 0.5 - SW / 2) / f;
+      const dp = axis === 0 ? dy : dx;
+      const dq = axis === 2 ? dy : 1;
+      const dk = axis === 0 ? dx : axis === 1 ? dy : 1;
+      const qa = dp * dp + dq * dq;
+      const qb = dp * cp + dq * cq;
+      const disc = qb * qb - qa * (cp * cp + cq * cq - r * r);
+      if (disc < 0 || qa < 0.000000001)
+        continue;
+      const root = Math.sqrt(disc);
+      const t0 = (qb - root) / qa;
+      const t1 = (qb + root) / qa;
+      const ta = dk === 0 ? a <= 0 && b >= 0 ? -Infinity : Infinity : Math.min(a / dk, b / dk);
+      const tb = dk === 0 ? a <= 0 && b >= 0 ? Infinity : -Infinity : Math.max(a / dk, b / dk);
+      const t = Math.max(t0, ta);
+      if (t > Math.min(t1, tb) || t <= 0)
+        continue;
+      const s = y * SW + x;
+      if (t >= depth2[s])
+        continue;
+      depth2[s] = t;
+      hit = true;
+      const side = t0 >= ta;
+      const np = side ? (t * dp - cp) / r : 0;
+      const nq = side ? (t * dq - cq) / r : 0;
+      const nk = side ? 0 : dk > 0 ? -1 : 1;
+      const nx = axis === 0 ? nk : np;
+      const ny = axis === 0 ? np : axis === 1 ? nk : nq;
+      const nz = axis === 2 ? nk : nq;
+      light(samples, rows, s, y, nx, ny, nz, dx, dy, t, color, shade2);
+    }
+  }
+  if (!hit)
+    return;
+  box[0] = Math.min(box[0], x0);
+  box[1] = Math.min(box[1], y0);
+  box[2] = Math.max(box[2], x1);
+  box[3] = Math.max(box[3], y1);
+}
+function resolve(samples, out, W, H, x0, y0, x1, y1) {
+  const SW = W * SS2;
+  const k = 1 / (SS2 * SS2);
+  for (let y = y0;y <= Math.min(y1, H - 1); y++)
+    for (let x = x0;x <= Math.min(x1, W - 1); x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      for (let j = 0;j < SS2; j++)
+        for (let i = 0;i < SS2; i++) {
+          const s = ((y * SS2 + j) * SW + x * SS2 + i) * 3;
+          r += samples[s];
+          g += samples[s + 1];
+          b += samples[s + 2];
+        }
+      const o = (y * W + x) * 3;
+      out[o] = r * k;
+      out[o + 1] = g * k;
+      out[o + 2] = b * k;
+    }
+}
+function dim(hdr, base, k) {
+  for (let i = 0;i < hdr.length; i++)
+    hdr[i] += (base[i] - hdr[i]) * k;
+}
+var pipes = {
+  id: "pipes",
+  name: "3D Pipes",
+  description: "The old 3D screensaver: glossy pipes growing through the dark one length at a time, turning at ball joints",
+  collection: "Classics",
+  fixedTime: "day",
+  activity: {
+    calm: "One pipe growing slowly through the grid, over a long fill",
+    lively: "Two or three pipes growing at once",
+    teeming: "Five pipes, quicker, some sweeping round in smooth bends"
+  },
+  scrim: {
+    day: [
+      [6, 6, 8],
+      [4, 4, 6],
+      [3, 3, 4]
+    ],
+    sunset: [
+      [30, 6, 24],
+      [20, 5, 14],
+      [24, 8, 3]
+    ],
+    night: [
+      [2, 4, 16],
+      [1, 3, 11],
+      [0, 1, 5]
+    ]
+  },
+  create: (settings) => new Pipes(settings)
+};
+
 // wallpapers/prehistoric.ts
-var TIME_SCALE11 = 0.35;
+var TIME_SCALE15 = 0.35;
 var CREATURE_SPEED10 = 0.25;
 var HORIZON7 = 0.6;
 var VENT_X = 0.4;
@@ -14270,7 +16494,7 @@ var SMOKE_LIFE = 14;
 var SMOKE_PUFFS = 32;
 var DELOREAN = 14;
 var FLASH = 1.2;
-var LOOKS10 = {
+var LOOKS14 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.8],
@@ -14402,11 +16626,11 @@ class Prehistoric extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   birds = [];
-  delorean = { wait: eggWait() * TIME_SCALE11, t: -1, x0: 0 };
+  delorean = { wait: eggWait() * TIME_SCALE15, t: -1, x0: 0 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS10[settings.time];
+    this.look = LOOKS14[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.night = settings.time === "night";
@@ -14421,7 +16645,7 @@ class Prehistoric extends Canvas {
     this.dragonflies = Array.from({ length: 4 }, () => ({ x: Math.random() * 1.5, y: rand(0.75, 0.95), tx: 0, ty: 0, rest: rand(0, 3), face: 1, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE15;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED10;
     this.creatureTime += cdt;
@@ -14532,7 +16756,7 @@ class Prehistoric extends Canvas {
     paintSky(this.hdr, W, H, look.sky, look.orb, px);
     this.weather.cover(this.hdr, W, H);
     const sky = this.hdr.slice();
-    const day = look === LOOKS10.day;
+    const day = look === LOOKS14.day;
     for (const [i, c] of this.ash.entries())
       c.x = lerp(this.plumeTop(), A + c.w, (i + 0.3) / this.ash.length);
     const vx = A - VENT_X;
@@ -15163,7 +17387,7 @@ class Prehistoric extends Canvas {
     if (d.t < DELOREAN + 6)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE11;
+    d.wait = eggWait(true) * TIME_SCALE15;
   }
   drawDelorean() {
     const H = this.H;
@@ -15357,6 +17581,7 @@ var prehistoric = {
   id: "prehistoric",
   name: "Prehistoric",
   description: "A smoking volcano over ferns and cycads, with a T. rex stomping by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Volcano, smoke, ferns and cycads",
     lively: "Adds a browsing sauropod and circling pterosaurs",
@@ -15383,7 +17608,7 @@ var prehistoric = {
 };
 
 // wallpapers/rider.ts
-var TIME_SCALE12 = 0.35;
+var TIME_SCALE16 = 0.35;
 var CREATURE_SPEED11 = 0.25;
 var BIKE_Y = 0.2;
 var BIKE_L = 0.6;
@@ -15391,13 +17616,13 @@ var RIDER_S = 0.28;
 var STRIDE = 0.1;
 var LIVELY = { up: 1.4, look: 1.6, turn: 0.45, down: 1.4, rest: 1, back: 0.45 };
 var TEEMING = { up: 1.9, wait: 0.4, mount: 0.9, idle: 0.8, off: 1.7, away: 2.2, slide: 2.2, settle: 0.6, dismount: 0.9, turn: 0.45, down: 1.9, rest: 0.6, back: 0.45 };
-var START = 1 - 45 * TIME_SCALE12 * CREATURE_SPEED11;
+var START = 1 - 45 * TIME_SCALE16 * CREATURE_SPEED11;
 var PSYCHIC = { rise: 3, hold: 26, drop: 28, gone: 46 };
 function unit(x, y, z) {
   const l = Math.hypot(x, y, z);
   return [x / l, y / l, z / l];
 }
-var LOOKS11 = {
+var LOOKS15 = {
   day: {
     style: "front",
     dir: unit(-0.45, -0.6, 0.66),
@@ -15496,7 +17721,7 @@ class Rider extends Canvas {
   creatureTime = 0;
   activity;
   look;
-  lighting = { style: "front", dir: LOOKS11.day.dir };
+  lighting = { style: "front", dir: LOOKS15.day.dir };
   shade;
   weather;
   k = 1;
@@ -15513,12 +17738,12 @@ class Rider extends Canvas {
   bits = [];
   dust = [];
   visitor;
-  psychic = { wait: eggWait() * TIME_SCALE12, t: -1, x: 1, y: 0.8, chunks: [] };
+  psychic = { wait: eggWait() * TIME_SCALE16, t: -1, x: 1, y: 0.8, chunks: [] };
   crater;
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS11[settings.time];
+    this.look = LOOKS15[settings.time];
     this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, 0);
     const shade2 = sunShade(settings.time, this.look.sun, this.weather.covered);
     this.shade = { ...shade2, cast: Math.min(0.9, shade2.cast * 1.3) };
@@ -15535,7 +17760,7 @@ class Rider extends Canvas {
       this.bits.push({ x: Math.random() * 2, y: rand(0.35, 0.97), vx: 0, vy: 0, spin: Math.random() * TAU, size: rand(0.004, 0.007), paper: false, age: 0, life: Infinity });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE16;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED11;
     this.creatureTime += cdt;
@@ -15654,8 +17879,8 @@ class Rider extends Canvas {
       for (let i = 0;i < line.length; i += 2)
         pts.push(this.poster(line[i], line[i + 1]));
       if (!look.night)
-        stroke(hdr, W, H, pts.flatMap(([x, y]) => [x * H + 1.3 * px, y * H + 0.6 * px, 0.5, w]), look.chip, 0);
-      stroke(hdr, W, H, pts.flatMap(([x, y]) => [x * H, y * H, 0.8, w]), look.seam, 0);
+        stroke2(hdr, W, H, pts.flatMap(([x, y]) => [x * H + 1.3 * px, y * H + 0.6 * px, 0.5, w]), look.chip, 0);
+      stroke2(hdr, W, H, pts.flatMap(([x, y]) => [x * H, y * H, 0.8, w]), look.seam, 0);
     }
     for (const [cx, cy, size] of CHIPS) {
       const [x, y] = this.poster(cx, cy);
@@ -15862,10 +18087,10 @@ class Rider extends Canvas {
     if (e.t < PSYCHIC.gone)
       return;
     e.t = -1;
-    e.wait = eggWait(true) * TIME_SCALE12;
+    e.wait = eggWait(true) * TIME_SCALE16;
   }
   makeCrack(x, y, branches, min, max, life) {
-    const lines = [];
+    const lines2 = [];
     for (let i = 0;i < branches; i++) {
       let a = i / branches * TAU + rand(-0.4, 0.4);
       const length = rand(min, max);
@@ -15878,12 +18103,12 @@ class Rider extends Canvas {
         if (j === 2 && Math.random() < 0.5) {
           const b = a + (Math.random() < 0.5 ? -0.9 : 0.9);
           const [qx, qy] = [line.at(-2) ?? x, line.at(-1) ?? y];
-          lines.push([qx, qy, qx + Math.cos(b) * length * 0.3, qy + Math.sin(b) * length * 0.22]);
+          lines2.push([qx, qy, qx + Math.cos(b) * length * 0.3, qy + Math.sin(b) * length * 0.22]);
         }
       }
-      lines.push(line);
+      lines2.push(line);
     }
-    return { lines, age: 0, life, grow: 0 };
+    return { lines: lines2, age: 0, life, grow: 0 };
   }
   bikePoint(b, scale2, u, v) {
     const L = BIKE_L * this.k * scale2 * this.H;
@@ -15947,8 +18172,8 @@ class Rider extends Canvas {
     if (this.look.night)
       this.shape(arc.slice(1).map(([u, v], i) => C(arc[i][0], arc[i][1], u, v, 0.006, 0.006, [s[0] * 1.5, s[1] * 1.5, s[2] * 1.5])), this.lighting, 0);
     const glow2 = clamp(lamps, 0, 2);
-    const lit = (off, on) => [lerp(off[0], on[0], Math.min(1, glow2)), lerp(off[1], on[1], Math.min(1, glow2)), lerp(off[2], on[2], Math.min(1, glow2))];
-    this.shape([E(-0.47, 0.045, 0.018, 0.024, 0, lit(this.paint([0.9, 0.85, 0.6]), HEADLAMP)), E(0.485, -0.01, 0.014, 0.022, 0, lit(this.paint([0.5, 0.04, 0.03]), TAILLAMP))], this.lighting, 0);
+    const lit2 = (off, on) => [lerp(off[0], on[0], Math.min(1, glow2)), lerp(off[1], on[1], Math.min(1, glow2)), lerp(off[2], on[2], Math.min(1, glow2))];
+    this.shape([E(-0.47, 0.045, 0.018, 0.024, 0, lit2(this.paint([0.9, 0.85, 0.6]), HEADLAMP)), E(0.485, -0.01, 0.014, 0.022, 0, lit2(this.paint([0.5, 0.04, 0.03]), TAILLAMP))], this.lighting, 0);
     if (glow2 <= 0)
       return;
     const [hx, hy] = P(-0.62, 0.075);
@@ -16067,8 +18292,8 @@ class Rider extends Canvas {
     const r = Math.max(radius * this.k * H, this.cells ? 1 : 0.6);
     const pts = t.pts.flatMap((p) => [p.x * H, p.y * H, strength * clamp(1 - p.age / t.life, 0, 1) ** 1.5, r]);
     if (glow2)
-      stroke(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 3 ? v * 4 : i % 4 === 2 ? v * 0.4 : v), color, 1);
-    stroke(this.hdr, this.W, H, pts, color, glow2 ? 0.6 : 0);
+      stroke2(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 3 ? v * 4 : i % 4 === 2 ? v * 0.4 : v), color, 1);
+    stroke2(this.hdr, this.W, H, pts, color, glow2 ? 0.6 : 0);
   }
   drawCrack(c) {
     const H = this.H;
@@ -16080,8 +18305,8 @@ class Rider extends Canvas {
       for (let i = 0;i < n * 2 && i < line.length; i += 2)
         pts.push(line[i] * H, line[i + 1] * H, 0.8 * fade, w);
       if (!this.look.night)
-        stroke(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 0 ? v + 1.3 : i % 4 === 1 ? v + 0.6 : i % 4 === 2 ? v * 0.6 : v), this.look.chip, 0);
-      stroke(this.hdr, this.W, H, pts, this.look.seam, 0);
+        stroke2(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 0 ? v + 1.3 : i % 4 === 1 ? v + 0.6 : i % 4 === 2 ? v * 0.6 : v), this.look.chip, 0);
+      stroke2(this.hdr, this.W, H, pts, this.look.seam, 0);
     }
   }
   drawCrater() {
@@ -16171,7 +18396,7 @@ function mixPose(a, b, t) {
     out[j] = [lerp(a[j][0], b[j][0], t), lerp(a[j][1], b[j][1], t)];
   return out;
 }
-function stroke(hdr, W, H, pts, color, soft) {
+function stroke2(hdr, W, H, pts, color, soft) {
   const n = pts.length / 4;
   for (let i = 0;i + 1 < n; i++) {
     const [ax, ay, aa, ar] = [pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]];
@@ -16216,6 +18441,8 @@ var rider = {
   id: "rider",
   name: "Rider",
   description: "A red capsule bike on pale cracked concrete, its rider walking up to it, with another of the gang speeding by now and then",
+  collection: "Akira",
+  fixedTime: "day",
   activity: {
     calm: "The bike, the rider standing by it, and drifting dust",
     lively: "He walks slowly up to the bike and back, and paper and pebbles skitter in the gusts",
@@ -16242,14 +18469,14 @@ var rider = {
 };
 
 // wallpapers/space.ts
-var TIME_SCALE13 = 0.35;
+var TIME_SCALE17 = 0.35;
 var CREATURE_SPEED12 = 0.25;
 var TW = 512;
 var TH = 256;
 var PLANET = { x: 0.52, y: 1.1, r: 0.58 };
 var RING2 = { tilt: 0.42, flat: 0.24, inner: 1.25, outer: 2.1 };
 var METEOR = 1.2;
-var LOOKS12 = {
+var LOOKS16 = {
   day: {
     sun: normalize(-0.55, -0.55, 0.62),
     starK: 0.35,
@@ -16327,11 +18554,11 @@ class Space extends Canvas {
   satellite = { x: 1.4, y: 0.15, dir: -1, wait: 0 };
   rocks = [];
   meteors = [];
-  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE13 };
+  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE17 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS12[settings.time];
+    this.look = LOOKS16[settings.time];
     if (settings.time === "day")
       this.frame = 0.25;
     if (settings.activity === "teeming")
@@ -16347,7 +18574,7 @@ class Space extends Canvas {
       }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE17;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED12;
     this.creatureTime += cdt;
@@ -16376,7 +18603,7 @@ class Space extends Canvas {
       ship.x -= 0.1 * cdt;
       if (ship.x < -0.4) {
         ship.x = -9;
-        ship.wait = eggWait(true) * TIME_SCALE13;
+        ship.wait = eggWait(true) * TIME_SCALE17;
       }
     }
     if (this.activity !== "calm") {
@@ -16565,10 +18792,10 @@ class Space extends Canvas {
         const lat = Math.asin(clamp(-dy, -1, 1)) / Math.PI + 0.5;
         const t = (Math.min(TH - 1, lat * TH | 0) * TW + (lon * TW | 0)) % (TW * TH);
         const cloud = SURFACE2.cloud[t];
-        const light = 0.03 + 1.15 * diffuse;
-        let cr0 = SURFACE2.albedo[t * 3] * light;
-        let cg0 = SURFACE2.albedo[t * 3 + 1] * light;
-        let cb0 = SURFACE2.albedo[t * 3 + 2] * light;
+        const light2 = 0.03 + 1.15 * diffuse;
+        let cr0 = SURFACE2.albedo[t * 3] * light2;
+        let cg0 = SURFACE2.albedo[t * 3 + 1] * light2;
+        let cb0 = SURFACE2.albedo[t * 3 + 2] * light2;
         const cl = 0.04 + 1.2 * diffuse;
         cr0 += (cl - cr0) * cloud * 0.85;
         cg0 += (cl - cg0) * cloud * 0.85;
@@ -16643,9 +18870,9 @@ class Space extends Canvas {
         if (r2 > 1.1)
           continue;
         const nz = Math.sqrt(Math.max(0, 1 - r2));
-        const lit = Math.max(0, dx * look.sun[0] + dy * look.sun[1] + nz * look.sun[2]);
+        const lit2 = Math.max(0, dx * look.sun[0] + dy * look.sun[1] + nz * look.sun[2]);
         const craters = 0.75 + 0.35 * fbm2(dx * 3 + 5, dy * 3 + 2, 4);
-        const k = (0.015 + lit * 0.9) * craters;
+        const k = (0.015 + lit2 * 0.9) * craters;
         this.blend((y * W + x) * 3, k * mr, k * mg, k * mb, clamp((1 - Math.sqrt(r2)) * R + 0.5, 0, 1));
       }
   }
@@ -16710,14 +18937,14 @@ class Space extends Canvas {
     const x = s.x * H;
     const y = s.y * H;
     const P = (u, v) => [x - u * S, y + v * S];
-    const hull = this.paint([0.7, 0.72, 0.78]);
+    const hull2 = this.paint([0.7, 0.72, 0.78]);
     const dark = this.paint([0.35, 0.37, 0.42]);
     this.shape([
       cap(...P(-0.45, 0.04), ...P(-0.1, 0.06), 0.022 * S, 0.02 * S, dark),
       cap(...P(-0.45, -0.04), ...P(-0.1, -0.06), 0.022 * S, 0.02 * S, dark),
-      cap(...P(-0.4, 0), ...P(0.5, 0), 0.05 * S, 0.012 * S, hull),
-      cap(...P(-0.15, -0.045), ...P(0.05, -0.04), 0.02 * S, 0.014 * S, hull),
-      ell(...P(0.08, -0.04), 0.035 * S, 0.012 * S, 0, hull)
+      cap(...P(-0.4, 0), ...P(0.5, 0), 0.05 * S, 0.012 * S, hull2),
+      cap(...P(-0.15, -0.045), ...P(0.05, -0.04), 0.02 * S, 0.014 * S, hull2),
+      ell(...P(0.08, -0.04), 0.035 * S, 0.012 * S, 0, hull2)
     ], this.lighting, 0.8);
     for (let i = 0;i < 10; i++)
       this.splat(...P(-0.3 + i * 0.06, 0.008), 1.3, 0.65, 0.12);
@@ -16798,11 +19025,11 @@ class Space extends Canvas {
         if (rr > 1.05)
           continue;
         const nz = Math.sqrt(Math.max(0, 1 - rr * rr));
-        const lit = Math.max(0, dx / edge * look.sun[0] + dy / edge * look.sun[1] + nz * look.sun[2]);
+        const lit2 = Math.max(0, dx / edge * look.sun[0] + dy / edge * look.sun[1] + nz * look.sun[2]);
         const pits = 0.7 + 0.45 * fbm2(dx * 2.5 + Math.cos(r.angle) * 2 + r.seed, dy * 2.5 + Math.sin(r.angle) * 2, 4);
         const ambient = look.lighting === "night" ? 0.01 : 0.02;
         const rim = look.lighting === "night" ? Math.pow(1 - nz, 2) * Math.max(0, (dx / edge * (W - PLANET.x * H - cx) + dy / edge * (PLANET.y * H - cy)) / Math.hypot(W - PLANET.x * H - cx, PLANET.y * H - cy)) * 0.6 : 0;
-        const k = (ambient + lit * 0.7 + rim) * pits;
+        const k = (ambient + lit2 * 0.7 + rim) * pits;
         this.blend((y * W + x) * 3, k * look.rockColor[0], k * look.rockColor[1], k * look.rockColor[2], clamp((1.05 - rr) * R, 0, 1));
       }
   }
@@ -16910,6 +19137,7 @@ var space = {
   id: "space",
   name: "Space",
   description: "A ringed planet turning slowly below a nebula and drifting stars, with a comet now and then",
+  collection: "Landscapes",
   activity: {
     calm: "The planet, its rings, a moon and the stars",
     lively: "Adds an orbiting space station and a satellite",
@@ -16936,12 +19164,12 @@ var space = {
 };
 
 // wallpapers/tundra.ts
-var TIME_SCALE14 = 0.35;
+var TIME_SCALE18 = 0.35;
 var CREATURE_SPEED13 = 0.25;
 var HORIZON8 = 0.55;
 var YETI = 12;
 var HOP = 0.2;
-var LOOKS13 = {
+var LOOKS17 = {
   day: {
     style: "front",
     light: [1, 0.97, 0.9],
@@ -17034,14 +19262,14 @@ class Tundra extends Canvas {
   fox;
   bear;
   fisher = { tug: 0, next: 8 };
-  yeti = { wait: eggWait() * TIME_SCALE14, t: -1, x: 0 };
+  yeti = { wait: eggWait() * TIME_SCALE18, t: -1, x: 0 };
   weather;
   pines = new SwayLayer;
   lights = new LightMap;
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS13[settings.time];
+    this.look = LOOKS17[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.stars = makeStars(this.look.stars, 0.45);
@@ -17058,7 +19286,7 @@ class Tundra extends Canvas {
       this.bear = walker(0.7, 0.655);
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE18;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED13;
     this.creatureTime += cdt;
@@ -17107,7 +19335,7 @@ class Tundra extends Canvas {
     if (y.t < YETI)
       return;
     y.t = -1;
-    y.wait = eggWait(true) * TIME_SCALE14;
+    y.wait = eggWait(true) * TIME_SCALE18;
   }
   poke(x, y) {
     const order2 = [...this.penguins].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
@@ -17174,12 +19402,12 @@ class Tundra extends Canvas {
       for (let y = Math.max(0, Math.floor(drift[x]));y < H; y++) {
         const v = y / H;
         const waves = 0.5 + 0.5 * Math.sin(x / H * 6 + v * 40 + fbm1(x / px * 0.02, 3) * 4);
-        const k = smoothstep(0.3, 1, waves) * (look === LOOKS13.day ? 0.2 : 0.35) * (1 - (v - 0.6) * 0.8);
-        const c = lerpRGB2(look.snow, look.shade, look === LOOKS13.day ? Math.min(1, k + smoothstep(0.7, 1.1, v) * 0.45) : k);
+        const k = smoothstep(0.3, 1, waves) * (look === LOOKS17.day ? 0.2 : 0.35) * (1 - (v - 0.6) * 0.8);
+        const c = lerpRGB2(look.snow, look.shade, look === LOOKS17.day ? Math.min(1, k + smoothstep(0.7, 1.1, v) * 0.45) : k);
         const edge = look.style === "rim" ? Math.exp(-(y + 0.5 - drift[x]) / (2 * px)) * 0.3 : 0;
         this.blend((y * W + x) * 3, c[0] + look.light[0] * edge, c[1] + look.light[1] * edge, c[2] + look.light[2] * edge, clamp(y + 1 - drift[x], 0, 1));
       }
-    if (look === LOOKS13.day) {
+    if (look === LOOKS17.day) {
       mottle(this.hdr, W, H, 0.6, 1, 0.7, [1.04, 1, 0.9], [0.5, 0.66, 1]);
       haze(this.hdr, sky, W, H, 0.6, 0.8, 0.15, 0);
     }
@@ -17247,13 +19475,13 @@ class Tundra extends Canvas {
       top[x] = (HORIZON8 + 0.02 - height - (fbm1(u * 25, 2) - 0.5) * 0.008) * H;
     }
     for (let x = 0;x < W; x++) {
-      const slope = (top[Math.min(W - 1, x + 1)] - top[Math.max(0, x - 1)]) / 2;
+      const slope2 = (top[Math.min(W - 1, x + 1)] - top[Math.max(0, x - 1)]) / 2;
       const snowLine = (HORIZON8 - 0.06 + (fbm1(x / H * 8, 6) - 0.5) * 0.04) * H;
       for (let y = Math.max(0, Math.floor(top[x]));y < (HORIZON8 + 0.06) * H; y++) {
         const haze2 = clamp((y / H - 0.35) * 1.2, 0, 0.4);
         let c = y < snowLine ? look.peaks : look.rock;
         if (look.style === "front")
-          c = mulRGB(c, slope > 0.3 ? [1.05, 1, 0.92] : slope < -0.3 ? [0.45, 0.6, 0.92] : [0.8, 0.82, 0.9]);
+          c = mulRGB(c, slope2 > 0.3 ? [1.05, 1, 0.92] : slope2 < -0.3 ? [0.45, 0.6, 0.92] : [0.8, 0.82, 0.9]);
         const edge = look.style === "rim" ? Math.exp(-(y + 0.5 - top[x]) / (1.8 * this.px)) * 0.5 : 0;
         c = lerpRGB2(c, look.sky[look.sky.length - 1][1], haze2 * 0.5);
         this.blend((y * W + x) * 3, c[0] + look.light[0] * edge, c[1] + look.light[1] * edge, c[2] + look.light[2] * edge, clamp(y + 1 - top[x], 0, 1));
@@ -17319,17 +19547,17 @@ class Tundra extends Canvas {
     const seam = this.look.shade;
     this.polygon(dome2(cx, R, R * 0.85), block);
     this.polygon(dome2(cx - R * 0.15, R * 0.75, R * 0.72).map(([x, y]) => [x, y - R * 0.04 * H]), lerpRGB2(this.look.snow, this.look.peaks, 0.7), 0.55);
-    const lines = [];
+    const lines2 = [];
     for (let row = 1;row < 4; row++) {
       const yy = base - row / 4 * R * 0.85;
       const half = R * Math.sqrt(1 - (row / 4) ** 2);
-      lines.push(cap((cx - half) * H, yy * H, (cx + half) * H, yy * H, this.thick(0.0018, 0.6), this.thick(0.0018, 0.6), seam));
+      lines2.push(cap((cx - half) * H, yy * H, (cx + half) * H, yy * H, this.thick(0.0018, 0.6), this.thick(0.0018, 0.6), seam));
       for (let k2 = 0;k2 < 4; k2++) {
         const sx = cx + ((k2 + row % 2 * 0.5) / 4 * 2 - 1) * half * 0.85;
-        lines.push(cap(sx * H, yy * H, sx * H, (yy + R * 0.21) * H, this.thick(0.001, 0.5), this.thick(0.001, 0.5), seam));
+        lines2.push(cap(sx * H, yy * H, sx * H, (yy + R * 0.21) * H, this.thick(0.001, 0.5), this.thick(0.001, 0.5), seam));
       }
     }
-    this.shape(lines, this.lighting, 0);
+    this.shape(lines2, this.lighting, 0);
     const door = cx - R * 0.35;
     this.polygon(dome2(door, R * 0.38, R * 0.42), block);
     const k = this.look.glow;
@@ -17376,11 +19604,11 @@ class Tundra extends Canvas {
     for (let x = 0;x < W; x++) {
       const u = x / H;
       const band = (0.17 + 0.05 * Math.sin(u * 1.7 + t * 0.07) + 0.03 * Math.sin(u * 4.1 - t * 0.05)) * H;
-      const fold = auroraFold(u, t);
+      const fold2 = auroraFold(u, t);
       bottom = Math.max(bottom, band + 0.05 * H);
       for (let y = 0;y < Math.min(H, band + 0.05 * H); y++) {
         const above2 = band - y;
-        const k = (above2 > 0 ? Math.exp(-above2 / (0.12 * H)) : Math.exp(-((above2 / (0.015 * H)) ** 2))) * fold * 0.35 * look.aurora;
+        const k = (above2 > 0 ? Math.exp(-above2 / (0.12 * H)) : Math.exp(-((above2 / (0.015 * H)) ** 2))) * fold2 * 0.35 * look.aurora;
         if (k < 0.003)
           continue;
         const violet = clamp(above2 / (0.15 * H), 0, 1);
@@ -17398,7 +19626,7 @@ class Tundra extends Canvas {
     const igloos = this.igloos();
     for (let i = 0;i < lights.cols; i++) {
       const u = i * lights.cell / H;
-      const fold = (auroraFold(u - 0.04, t) + auroraFold(u, t) + auroraFold(u + 0.04, t)) / 3;
+      const fold2 = (auroraFold(u - 0.04, t) + auroraFold(u, t) + auroraFold(u + 0.04, t)) / 3;
       const violet = 0.75 * smoothstep(0.1, 0.9, Math.sin(u * 3.5 - t * 0.05 + 1));
       const color = [lerp(0.05, 0.5, violet), lerp(0.8, 0.08, violet), lerp(0.3, 0.75, violet)];
       for (let j = Math.floor(HORIZON8 * H / lights.cell);j < lights.rows; j++) {
@@ -17406,7 +19634,7 @@ class Tundra extends Canvas {
         const lake = 1 + 0.9 * smoothstep(1.2, 0.6, ((u - 0.5 * A) / 0.3) ** 2 + ((v - 0.745) / 0.045) ** 2);
         const ripple = 0.65 + 0.35 * Math.sin(u * 6 + v * 38 - t * 0.25);
         const fire = igloos.reduce((m, [x, base, R]) => Math.max(m, smoothstep(1, 0.2, ((u - x + R * 0.35) / (R * 3)) ** 2 + ((v - base) / (R * 1.4)) ** 2)), 0);
-        const k = fold * ripple * lake * (1 - 0.85 * fire) * smoothstep(HORIZON8, 0.63, v) * (1 - 0.7 * smoothstep(0.66, 0.95, v)) * this.look.aurora;
+        const k = fold2 * ripple * lake * (1 - 0.85 * fire) * smoothstep(HORIZON8, 0.63, v) * (1 - 0.7 * smoothstep(0.66, 0.95, v)) * this.look.aurora;
         if (k > 0.01)
           lights.node(i, j, color, 0.9 * k, 0.009 * k);
       }
@@ -17642,6 +19870,7 @@ var tundra = {
   id: "tundra",
   name: "Tundra",
   description: "Snowy peaks, a frozen lake, igloos and a snowman under falling snow, with a snowy owl now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Peaks, igloos, a snowman and falling snow",
     lively: "Adds waddling penguins and an arctic fox",
@@ -17668,12 +19897,12 @@ var tundra = {
 };
 
 // wallpapers/zen.ts
-var TIME_SCALE15 = 0.35;
+var TIME_SCALE19 = 0.35;
 var CREATURE_SPEED14 = 0.25;
 var HORIZON9 = 0.52;
 var GROUND2 = 0.565;
 var TANUKI = { arrive: 15, leave: 38, gone: 62 };
-var LOOKS14 = {
+var LOOKS18 = {
   day: {
     style: "front",
     light: [1, 0.95, 0.85],
@@ -17815,12 +20044,12 @@ class Zen extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   sparrows = [];
-  tanuki = { wait: eggWait() * TIME_SCALE15, t: -1 };
+  tanuki = { wait: eggWait() * TIME_SCALE19, t: -1 };
   trees = new SwayLayer(-1);
   constructor(settings) {
     super();
     this.activity = settings.activity;
-    this.look = LOOKS14[settings.time];
+    this.look = LOOKS18[settings.time];
     if (settings.time === "day")
       this.frame = 0.4;
     this.season = settings.season ?? "spring";
@@ -17838,7 +20067,7 @@ class Zen extends Canvas {
     this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.58 + Math.random() * 0.36, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE15;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE19;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED14;
     this.creatureTime += cdt;
@@ -17959,11 +20188,11 @@ class Zen extends Canvas {
     this.weather.cover(this.hdr, W, H);
     const clear = this.hdr.slice();
     this.drawHills();
-    if (look === LOOKS14.day)
+    if (look === LOOKS18.day)
       haze(this.hdr, clear, W, H, HORIZON9, GROUND2, 0.15);
     const sky = this.hdr.slice();
     this.drawGround();
-    if (look === LOOKS14.day)
+    if (look === LOOKS18.day)
       mottle(this.hdr, W, H, GROUND2, 1, 0.5, [1.08, 1, 0.84], [0.76, 0.84, 0.96]);
     const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
     ground(0.07 * A, 0.66, 0.1, 0.4, 1.6);
@@ -18139,7 +20368,7 @@ class Zen extends Canvas {
       const perspective = s0 + k * (v - GROUND2);
       const spacing = Math.max(least, perspective);
       const ring = this.cells ? Math.max(perspective, 6 * px / (0.42 * H)) : perspective;
-      const lines = v < near2 ? (v - GROUND2) / least : (near2 - GROUND2) / least + Math.log(spacing / least) / k;
+      const lines2 = v < near2 ? (v - GROUND2) / least : (near2 - GROUND2) / least + Math.log(spacing / least) / k;
       for (let x = 0;x < W; x++) {
         const u = (x + 0.5) / H;
         const top = GROUND2 + 0.004 * Math.sin(u * 9);
@@ -18148,7 +20377,7 @@ class Zen extends Canvas {
         const pd = Math.hypot((u - p.x) / p.rx, (v - p.y) / p.ry);
         const t = (v - 0.57) / (p.y - 0.57);
         const sd = t >= 0 && t <= 1 ? Math.abs(u - this.streamX(t)) - lerp(0.022, 0.06, t) : 1;
-        let groove = Math.sin(lines * TAU);
+        let groove = Math.sin(lines2 * TAU);
         let moss = smoothstep(0.62, 0.6, v + 0.008 * Math.sin(u * 13)) + smoothstep(1.22, 1.15, pd + 0.04 * Math.sin(u * 23)) + smoothstep(0.04, 0.03, sd);
         for (const r of rocks) {
           const d = Math.hypot(u - r.x, (v - r.y) / 0.42);
@@ -18651,7 +20880,7 @@ class Zen extends Canvas {
     if (k.t < TANUKI.gone)
       return;
     k.t = -1;
-    k.wait = eggWait(true) * TIME_SCALE15;
+    k.wait = eggWait(true) * TIME_SCALE19;
   }
   drawTanuki() {
     const { A, H } = this;
@@ -18815,6 +21044,7 @@ var zen = {
   id: "zen",
   name: "Zen garden",
   description: "A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Garden, pond ripples, petals and a bamboo fountain",
     lively: "Adds koi circling under the lily pads",
@@ -18841,7 +21071,7 @@ var zen = {
 };
 
 // wallpapers/index.ts
-var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox];
+var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, hauntedHouse, rider, megacity, dome, flowerbox, maze, pipes, mystify, flyingOpenCode];
 
 // tui.tsx
 var tui_default = Plugin.define({
@@ -18864,6 +21094,7 @@ ${external.skipped.join(`
         variant: "error"
       });
     const wallpapers = [...WALLPAPERS, ...external.wallpapers];
+    const collections = [...new Set(wallpapers.map(collectionOf))];
     const engine = createEngine(context, {
       dump: process.env.WALLPAPER_DUMP,
       dumpFade: process.env.WALLPAPER_DUMP_FADE
@@ -18895,14 +21126,16 @@ ${external.skipped.join(`
       };
     };
     const due = (state) => Date.now() - (state.changed?.[scope(state)] ?? state.changed?.[""] ?? 0) >= HOUR;
-    const other = (id) => {
-      const others = wallpapers.filter((w) => w.id !== id);
-      return others[Math.floor(Math.random() * others.length)].id;
+    const collection = (state) => collections.find((c) => c === (state.collections?.[scope(state)] ?? state.collections?.[""])) ?? "all";
+    const inCollection = (state) => wallpapers.filter((w) => collection(state) === "all" || collectionOf(w) === collection(state));
+    const other = (state, id) => {
+      const others = inCollection(state).filter((w) => w.id !== id);
+      return others.length ? others[Math.floor(Math.random() * others.length)].id : id;
     };
     const shuffle = () => update((draft) => {
       const id = current(draft);
       if (id && due(draft))
-        choose(draft, other(id));
+        choose(draft, other(draft, id));
     });
     const [session, mark] = context.storage.memory("session", {
       initial: {
@@ -18911,7 +21144,7 @@ ${external.skipped.join(`
     });
     const [picked, setPicked] = createSignal();
     if (!session.shuffled && shuffleSetting() === "session" && current(stored)) {
-      const id = other(current(stored));
+      const id = other(stored, current(stored));
       setPicked(id);
       update((draft) => choose(draft, id)).finally(() => setPicked(undefined));
     }
@@ -18919,6 +21152,7 @@ ${external.skipped.join(`
       draft.shuffled = true;
     });
     const shown = () => picked() ?? current(stored);
+    const fixed = () => Boolean(wallpapers.find((w) => w.id === shown())?.fixedTime);
     const [hour, minute] = (process.env.WALLPAPER_CLOCK ?? "").split(":").map(Number);
     const skew = process.env.WALLPAPER_CLOCK ? new Date().setHours(hour, minute, 0, 0) - Date.now() : 0;
     const [now, setNow] = createSignal(new Date(Date.now() + skew));
@@ -18970,6 +21204,27 @@ ${external.skipped.join(`
         await update((draft) => choose(draft, ""));
         return {
           message: "Wallpaper off"
+        };
+      }
+      if (arg.startsWith("collection ")) {
+        const name = arg.slice("collection ".length).trim();
+        const chosen = name === "all" ? "all" : collections.find((c) => c.toLowerCase() === name);
+        if (!chosen)
+          return {
+            message: `No collection "${name}". Available: all, ${collections.map((c) => c.toLowerCase()).join(", ")}`,
+            error: true
+          };
+        await update((draft) => {
+          draft.collections = {
+            ...draft.collections,
+            [scope(draft)]: chosen
+          };
+          const members = inCollection(draft);
+          if (current(draft) && !members.some((w2) => w2.id === current(draft)))
+            choose(draft, members[0].id);
+        });
+        return {
+          message: chosen === "all" ? "Wallpapers from every collection" : `Wallpaper collection: ${chosen}`
         };
       }
       const level2 = ACTIVITIES.find((a) => a === arg);
@@ -19046,7 +21301,14 @@ ${external.skipped.join(`
           message: `No wallpaper "${arg}". Available: ${wallpapers.map((w2) => w2.id).join(", ")}`,
           error: true
         };
-      await update((draft) => choose(draft, arg));
+      await update((draft) => {
+        if (!inCollection(draft).includes(wallpaper))
+          draft.collections = {
+            ...draft.collections,
+            [scope(draft)]: collectionOf(wallpaper)
+          };
+        choose(draft, arg);
+      });
       return {
         message: `${wallpaper.name} wallpaper on`
       };
@@ -19059,8 +21321,15 @@ ${external.skipped.join(`
       notify(result.message, result.error ? "error" : "info");
     };
     const rows = [{
+      title: "Collection",
+      values: () => ["all", ...collections].map((c) => `collection ${c}`),
+      value: () => `collection ${collection(stored)}`,
+      label: (v) => v === "collection all" ? "All" : v.slice(11),
+      describe: (v) => v === "collection all" ? "Every wallpaper" : wallpapers.filter((w) => collectionOf(w) === v.slice(11)).map((w) => w.name).join(", "),
+      set: (v) => apply(v.toLowerCase())
+    }, {
       title: "Wallpaper",
-      values: () => ["off", ...wallpapers.map((w) => w.id)],
+      values: () => ["off", ...inCollection(stored).map((w) => w.id)],
       value: () => shown() || "off",
       label: (v) => wallpapers.find((w) => w.id === v)?.name ?? "Off",
       describe: (v) => wallpapers.find((w) => w.id === v)?.description ?? "No wallpaper",
@@ -19074,6 +21343,7 @@ ${external.skipped.join(`
       set: apply
     }, {
       title: "Time of day",
+      hidden: fixed,
       values: () => ["auto", ...TIMES],
       value: timeSetting,
       label: (v) => v === "auto" ? `Auto (${timeAt(now())})` : capitalize(v),
@@ -19081,6 +21351,7 @@ ${external.skipped.join(`
       set: apply
     }, {
       title: "Season",
+      hidden: fixed,
       values: () => ["season auto", ...SEASONS.map((s) => `season ${s}`)],
       value: () => `season ${seasonSetting()}`,
       label: (v) => v === "season auto" ? `Auto (${seasonAt(now(), south())})` : capitalize(v.slice(7)),
@@ -19088,6 +21359,7 @@ ${external.skipped.join(`
       set: apply
     }, {
       title: "Weather",
+      hidden: fixed,
       values: () => ["off", "local", "clear", "rain", "snow", "fog"].map((w) => `weather ${w}`),
       value: () => `weather ${weatherSetting()}`,
       label: (v) => v === "weather local" ? `Local (${location() ? local()?.weather ?? "checking" : "no location"})` : capitalize(v.slice(8)),
@@ -19152,12 +21424,12 @@ ${external.skipped.join(`
     }];
     const Picker = () => {
       const theme = context.theme.surface("dialog");
-      const [selected, setSelected] = createSignal(0);
+      const visible = () => rows.filter((row) => !row.hidden?.());
+      const [selected, setSelected] = createSignal(rows[0]);
       let saving = false;
-      const change = async (index, direction) => {
+      const change = async (row, direction) => {
         if (saving)
           return;
-        const row = rows[index];
         const values = row.values();
         const next = values[(values.indexOf(row.value()) + direction + values.length) % values.length];
         saving = true;
@@ -19166,7 +21438,8 @@ ${external.skipped.join(`
         });
       };
       const move = (direction) => {
-        setSelected((i) => (i + direction + rows.length) % rows.length);
+        const list = visible();
+        setSelected(list[(list.indexOf(selected()) + direction + list.length) % list.length]);
       };
       context.keymap.layer(() => ({
         mode: "modal",
@@ -19225,9 +21498,11 @@ ${external.skipped.join(`
         _$insertNode(_el$5, _$createTextNode(`esc`));
         _$setProp(_el$5, "onMouseUp", () => context.ui.dialog.clear());
         _$insert(_el$7, _$createComponent(For, {
-          each: rows,
-          children: (row, index) => {
-            const active = () => selected() === index();
+          get each() {
+            return visible();
+          },
+          children: (row) => {
+            const active = () => selected() === row;
             const fg = () => active() ? theme.text.action.primary.focused : theme.text.base;
             return (() => {
               var _el$23 = _$createElement("box"), _el$24 = _$createElement("text"), _el$25 = _$createElement("text");
@@ -19237,8 +21512,8 @@ ${external.skipped.join(`
               _$setProp(_el$23, "paddingLeft", 4);
               _$setProp(_el$23, "paddingRight", 4);
               _$setProp(_el$23, "onMouseUp", () => {
-                setSelected(index());
-                change(index(), 1);
+                setSelected(row);
+                change(row, 1);
               });
               _$setProp(_el$24, "flexGrow", 1);
               _$insert(_el$24, () => row.title);
@@ -19267,7 +21542,7 @@ ${external.skipped.join(`
         _$setProp(_el$8, "paddingLeft", 4);
         _$setProp(_el$8, "paddingRight", 4);
         _$setProp(_el$9, "wrapMode", "word");
-        _$insert(_el$9, () => rows[selected()].describe(rows[selected()].value()));
+        _$insert(_el$9, () => selected().describe(selected().value()));
         _$insertNode(_el$0, _el$1);
         _$insertNode(_el$0, _el$16);
         _$setProp(_el$0, "paddingLeft", 4);
@@ -19366,7 +21641,7 @@ ${external.skipped.join(`
           commands: [{
             id: "wallpapers.choose",
             title: "Choose wallpaper",
-            description: "Animated scene behind the UI. Args: wallpaper id, off, calm, lively, teeming, day, sunset, night, auto, a season, a weather, location <place>, subtle, normal, vivid, saver, smooth",
+            description: "Animated scene behind the UI. Args: wallpaper id, off, collection <name>, calm, lively, teeming, day, sunset, night, auto, a season, a weather, location <place>, subtle, normal, vivid, saver, smooth",
             group: "Wallpapers",
             palette: true,
             slash: {

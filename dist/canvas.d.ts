@@ -91,6 +91,8 @@ export declare abstract class Canvas {
     protected shrink(buf: Float32Array, channels?: number): Float32Array<ArrayBuffer>;
     protected thick(radius: number, min?: number): number;
     protected restore(background?: Float32Array | undefined): void;
+    protected rebake(): void;
+    protected hold(): void;
     protected touch(x0: number, y0: number, x1: number, y1: number): void;
     protected add(x: number, y: number, r: number, g: number, b: number): void;
     protected point(x: number, y: number, r: number, g: number, b: number, size?: number, glide?: boolean): void;

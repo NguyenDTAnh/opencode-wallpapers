@@ -28,11 +28,15 @@ export interface Wallpaper {
     readonly id: string;
     readonly name: string;
     readonly description: string;
+    readonly collection?: string;
+    readonly fixedTime?: Time;
     readonly scrim: Readonly<Record<Time, Scrim>>;
     readonly activity: Readonly<Record<Activity, string>>;
     create(settings: Settings): Scene;
 }
 export type Scrim = readonly [RGB, RGB, RGB];
+export declare function collectionOf(wallpaper: Wallpaper): string;
+export declare function settingsFor(wallpaper: Wallpaper, settings: Settings): Settings;
 export interface Settings {
     readonly activity: Activity;
     readonly time: Time;

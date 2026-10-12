@@ -521,6 +521,14 @@ class Canvas {
     this.touched.length = 0;
     this.restored = true;
   }
+  rebake() {
+    this.stillExposure = NaN;
+  }
+  hold() {
+    this.background = this.hdr.slice();
+    this.still = this.background;
+    this.stillExposure = NaN;
+  }
   touch(x0, y0, x1, y1) {
     addBox(this.touched, x0, y0, x1, y1);
   }
@@ -1630,6 +1638,12 @@ function drawShadow(hdr, W, H, s, x, y, ground) {
 }
 // src/wallpaper.ts
 var AGENT_EVENTS = ["busy", "idle", "done", "error"];
+function collectionOf(wallpaper) {
+  return wallpaper.collection ?? (wallpaper.fixedTime ? "Classics" : "Landscapes");
+}
+function settingsFor(wallpaper, settings) {
+  return wallpaper.fixedTime ? { ...settings, time: wallpaper.fixedTime, season: undefined, weather: undefined } : settings;
+}
 var ACTIVITIES = ["calm", "lively", "teeming"];
 var TIMES = ["day", "sunset", "night"];
 var SEASONS = ["spring", "summer", "autumn", "winter"];
