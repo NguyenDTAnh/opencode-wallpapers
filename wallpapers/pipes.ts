@@ -34,14 +34,14 @@ const ARC = 2
 
 // The classic colors: teal, green, orange, yellow, gray, red, blue and violet.
 const COLORS: RGB[] = [
-  [0.17, 0.6, 0.6],
-  [0.1, 0.45, 0.07],
-  [0.8, 0.28, 0.03],
-  [0.85, 0.58, 0.03],
-  [0.42, 0.42, 0.44],
-  [0.7, 0.05, 0.04],
-  [0.07, 0.2, 0.8],
-  [0.42, 0.08, 0.66],
+  [0.2, 0.75, 0.75],
+  [0.12, 0.58, 0.08],
+  [0.95, 0.34, 0.04],
+  [1, 0.7, 0.04],
+  [0.52, 0.52, 0.55],
+  [0.85, 0.06, 0.05],
+  [0.09, 0.25, 0.95],
+  [0.5, 0.1, 0.8],
 ]
 // The teal and green come up most often, as in the original.
 const PICKS = [0, 0, 0, 1, 1, 1, 2, 3, 4, 5, 6, 7]
@@ -72,7 +72,7 @@ const LOOKS: Record<Time, Look> = {
     glint: [1, 0.98, 0.94],
     glintTint: 0.15,
     fill: [0.02, 0.03, 0.04],
-    fog: 0.5,
+    fog: 0.4,
     tint: [1, 1, 1],
   },
   // A deep plum glowing to embers at the bottom, under a low, warm light.
@@ -81,13 +81,13 @@ const LOOKS: Record<Time, Look> = {
       [0.06, 0.012, 0.05],
       [0.085, 0.022, 0.006],
     ],
-    key: [1.1, 0.72, 0.45],
-    ambient: 0.12,
-    glint: [1, 0.6, 0.28],
+    key: [1.15, 0.82, 0.58],
+    ambient: 0.14,
+    glint: [1, 0.62, 0.3],
     glintTint: 0.45,
-    fill: [0.25, 0.04, 0.16],
-    fog: 0.55,
-    tint: [1, 0.85, 0.75],
+    fill: [0.3, 0.05, 0.18],
+    fog: 0.45,
+    tint: [1.05, 0.95, 0.88],
   },
   // Navy to black, each pipe's glint its own color edged with cobalt: never white.
   night: {
@@ -100,7 +100,7 @@ const LOOKS: Record<Time, Look> = {
     glint: [0.16, 0.36, 1.05],
     glintTint: 0.65,
     fill: [0.02, 0.1, 0.3],
-    fog: 0.6,
+    fog: 0.5,
     tint: [0.78, 0.84, 1],
   },
 }
@@ -180,7 +180,7 @@ class Pipes extends Canvas {
     this.activity = settings.activity
     this.look = LOOKS[settings.time]
     this.speed = { calm: 0.8, lively: 1.5, teeming: 2.8 }[this.activity]
-    this.count = { calm: 1, lively: 3, teeming: 5 }[this.activity]
+    this.count = { calm: 1, lively: 3, teeming: 6 }[this.activity]
     this.bends = { calm: 0, lively: 0.1, teeming: 0.35 }[this.activity]
     this.limit = { calm: 300, lively: 200, teeming: 130 }[this.activity]
     this.waits = Array.from({ length: this.count }, (_, i) => (i === 0 ? 0 : rand(1, 4) * i))
@@ -268,7 +268,7 @@ class Pipes extends Canvas {
     // Grow the scene a while before the first frame, so it never opens on an empty screen.
     if (!this.grown) {
       this.grown = true
-      for (let t = { calm: 50, lively: 25, teeming: 14 }[this.activity]; t > 0; t -= 0.05) this.grow(0.05)
+      for (let t = { calm: 100, lively: 30, teeming: 14 }[this.activity]; t > 0; t -= 0.05) this.grow(0.05)
     }
     for (let y = 0; y < H; y++) {
       const k = smoothstep(0, 1, (y + 0.5) / H)
@@ -321,7 +321,7 @@ class Pipes extends Canvas {
     this.fresh = []
     this.grid.fill(0)
     this.filled = 0
-    this.waits = Array.from({ length: this.count }, (_, i) => rand(0.5, 2) + i * rand(1, 3))
+    this.waits = Array.from({ length: this.count }, (_, i) => rand(0.2, 0.6) + i * rand(1, 3))
     this.wipe()
     this.pending.fill(0)
     this.pendingCount = 0
@@ -435,7 +435,8 @@ class Pipes extends Canvas {
       const lo = Math.floor((GXM - this.gx) / 2)
       const i = lo + Math.floor(Math.random() * this.gx)
       const j = Math.floor(Math.random() * GY)
-      const k = Math.floor(Math.random() * GZ)
+      // Nearer cells more often, so the screen's edges get the big pipes and its middle stays quieter.
+      const k = Math.floor(Math.random() ** 1.6 * GZ)
       if (this.grid[this.cell(i, j, k)]) continue
       this.start(i, j, k)
       return
