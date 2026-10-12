@@ -12003,8 +12003,495 @@ var jungle = {
   create: (settings) => new Jungle(settings)
 };
 
-// wallpapers/maze.ts
+// wallpapers/matrix.ts
 var TIME_SCALE10 = 0.35;
+var PITCH = 6;
+var ROW = 8;
+var FAR_ROW = 6;
+var RIPPLE_SPEED = 0.55;
+var RIPPLE_LIFE = 0.9;
+var RIPPLE_WIDTH = 0.035;
+var GLITCH = 1.6;
+var HOLD = 7;
+var FADE2 = 1.5;
+var RAIN3 = font(5, [
+  "##### ....# ..#.# ..##. ..#.. ..#.. .#...",
+  "....# ...#. ..##. .#.#. ...#. ...#. ...#.",
+  "..#.. ##### #...# ....# ...#. ..#.. .#...",
+  "..... ##### ..#.. ..#.. ..#.. ##### .....",
+  "...#. ##### ...#. ..##. .#.#. #..#. ...#.",
+  "..#.. ##### ..#.# ..#.# .#..# .#..# #..#.",
+  "..#.. ##### ..#.. ##### ..#.. ..#.. ..#..",
+  ".#### .#..# #...# ....# ...#. ..#.. ##...",
+  ".#... .#### #..#. ...#. ...#. ..#.. .#...",
+  "..... ##### ....# ....# ....# ##### .....",
+  ".#.#. ##### .#.#. .#.#. ...#. ..#.. .#...",
+  "#.... .#..# #...# .#..# ....# ...#. ###..",
+  "..... ##### ....# ...#. ..#.. .#.#. #...#",
+  ".#... .#... ##### .#..# .#.#. .#... ..###",
+  "#...# #...# .#..# ....# ...#. ..#.. ##...",
+  "...#. ###.. ..#.. ##### ..#.. ..#.. .#...",
+  "#.#.# #.#.# ....# ....# ...#. ..#.. .#...",
+  ".###. ..... ##### ..#.. ..#.. ..#.. .#...",
+  ".#... .#... .##.. .#.#. .#... .#... .#...",
+  "..#.. ##### ..#.. ..#.. ..#.. .#... #....",
+  "..... #####  ....# .#.#. ..#.. .#.#. #....",
+  "..#.. ##### ...#. ..#.. .###. #.#.# ..#..",
+  "#.... #.... #..## ###.. #.... #.... .####",
+  "..#.. ##### ..#.. #.#.# #.#.# ..#.. ..#..",
+  "..... ##### ....# .#.#. ..#.. ...#. .....",
+  "....# #..#. .##.. ..#.. .#.#. #.... .....",
+  ".#... ##### .#..# .#.#. .#... .#... .#...",
+  "..... ##### ....# .#### ....# ##### .....",
+  "#..#. #..#. #..#. #..#. ...#. ..#.. .#...",
+  "..#.. #.#.. #.#.. #.#.# #.#.# #.##. .....",
+  "#.... #.... #.... #...# #..#. #.#.. ##...",
+  "##### #...# ....# ....# ...#. ..#.. .#...",
+  "##### ....# ##### ....# ...#. ..#.. .#...",
+  ".###. #...# #..## #.#.# ##..# #...# .###.",
+  "..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.",
+  "##### ...#. ..#.. ...#. ....# #...# .###.",
+  "...#. ..##. .#.#. #..#. ##### ...#. ...#.",
+  "##### #.... ####. ....# ....# #...# .###.",
+  "##### ....# ...#. ..#.. .#... .#... .#...",
+  ".###. #...# #...# .#### ....# ...#. .##..",
+  "##### ....# ...#. ..#.. .#... #.... #####",
+  "..... ..... ##### ..... ##### ..... .....",
+  "..... #.#.# .###. ##### .###. #.#.# .....",
+  "..... ..#.. ..#.. ..... ..#.. ..#.. ....."
+], true);
+var FAR2 = font(3, [
+  "### ..# .## .#. #..",
+  "..# .#. ##. .#. .#.",
+  ".#. ### .#. ### .#.",
+  "### ..# ..# ..# ###",
+  "..# ..# .#. .#. #..",
+  "### .#. .#. .#. ###",
+  "#.. ##. #.# #.. #..",
+  "#.. ### #.# #.. #..",
+  "#.# #.# ..# ..# .#.",
+  "#.# #.# ..# .#. #..",
+  ".#. ### .#. .#. #..",
+  ".#. .#. ### .#. .#.",
+  "### #.# #.# #.# ###",
+  ".#. ##. .#. .#. ###",
+  "### ..# .## ..# ###",
+  "#.# #.# ### ..# ..#",
+  "### ..# .#. .#. .#.",
+  "### #.# ### ..# ##.",
+  "### ..# .#. #.. ###"
+], true);
+var GLITCHES = font(5, ["##### ##### ..... ##### ##### ..... #####", "#.#.# .#.#. #.#.# .#.#. #.#.# .#.#. #.#.#", "###.. ###.. ###.. ..### ..### ..### ###..", "..... #.### ##### ##.## ##### ###.# ....."], false);
+var SOLID = font(5, ["##### ##### ##### ##### ##### ##### #####"], false);
+var LETTERS = {};
+var ALPHABET = font(5, Object.entries({
+  A: ".###. #...# #...# ##### #...# #...# #...#",
+  B: "####. #...# #...# ####. #...# #...# ####.",
+  E: "##### #.... #.... ####. #.... #.... #####",
+  F: "##### #.... #.... ####. #.... #.... #....",
+  H: "#...# #...# #...# ##### #...# #...# #...#",
+  I: ".###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.",
+  K: "#...# #..#. #.#.. ##... #.#.. #..#. #...#",
+  L: "#.... #.... #.... #.... #.... #.... #####",
+  N: "#...# ##..# #.#.# #..## #...# #...# #...#",
+  O: ".###. #...# #...# #...# #...# #...# .###.",
+  P: "####. #...# #...# ####. #.... #.... #....",
+  R: "####. #...# #...# ####. #.#.. #..#. #...#",
+  T: "##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..",
+  U: "#...# #...# #...# #...# #...# #...# .###.",
+  W: "#...# #...# #...# #.#.# #.#.# ##.## #...#",
+  "@": "#.#.. #.#.. ###.. #.##. .#### .#### .#.#."
+}).map(([letter, rows], i) => (LETTERS[letter] = i, rows)), false);
+var HEAD = [0.17, 1.5, 0.36];
+var RED = [0.9, 0.05, 0.03];
+var CAST = {
+  calm: { share: 0.3, speed: [1, 1.5], length: [5, 11], mutate: 0.0375, far: 0.4, surge: false },
+  lively: { share: 0.8, speed: [1.5, 2.5], length: [6, 14], mutate: 0.075, far: 0.35, surge: false },
+  teeming: { share: 1.15, speed: [2.5, 4], length: [7, 16], mutate: 0.1, far: 0.35, surge: true }
+};
+
+class Matrix extends Canvas {
+  activity;
+  cast;
+  time = 0;
+  cols = 0;
+  rows = 0;
+  farRows = 0;
+  ox = 0;
+  s = 1;
+  streams = [];
+  glyphs = new Uint8Array(0);
+  farGlyphs = new Uint8Array(0);
+  lum = new Float32Array(0);
+  head = new Float32Array(0);
+  farLum = new Float32Array(0);
+  farHead = new Float32Array(0);
+  red = new Float32Array(0);
+  frozen = new Uint8Array(0);
+  ripples = [];
+  glitch = 0;
+  surgeWait = rand(4, 10);
+  egg = eggWait() * TIME_SCALE10;
+  word;
+  started = false;
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.activity = settings.activity;
+    this.cast = CAST[this.activity];
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    this.time += dt;
+    this.stepGloom(dt);
+    this.glitch = Math.max(0, this.glitch - dt);
+    if (!this.glitch)
+      this.frozen.fill(0);
+    this.advance(dt);
+    this.ripples = this.ripples.filter((r) => (r.t += dt) < RIPPLE_LIFE);
+    for (let i = 0;i < this.red.length; i++)
+      this.red[i] = Math.max(0, this.red[i] - dt * 0.8);
+    this.stepEgg(dt);
+  }
+  advance(dt) {
+    const cast = this.cast;
+    const pace = 1 - 0.55 * this.gloom;
+    const jerk = this.glitch ? Math.floor(this.time * 9) % 3 === 0 ? 2.2 : 0 : 1;
+    for (const s2 of this.streams) {
+      if (this.frozen[s2.col])
+        continue;
+      const before = Math.floor(s2.y);
+      s2.y += s2.speed * dt * pace * jerk * (s2.far ? 0.55 : 1);
+      const now = Math.floor(s2.y);
+      for (let r = before + 1;r <= now; r++) {
+        const rows = s2.far ? this.farRows : this.rows;
+        if (r >= 0 && r < rows)
+          (s2.far ? this.farGlyphs : this.glyphs)[s2.col * this.farRows + r] = Math.random() * 256 | 0;
+      }
+    }
+    this.streams = this.streams.filter((s2) => s2.y - s2.length < (s2.far ? this.farRows : this.rows));
+    if (!this.cols)
+      return;
+    const target = Math.round(cast.share * this.cols);
+    for (let n = this.streams.filter((s2) => !s2.extra).length;n < target; n++)
+      this.spawn(-rand(0, this.rows * 0.8));
+    if (!cast.surge)
+      return;
+    this.surgeWait -= dt;
+    if (this.surgeWait > 0)
+      return;
+    this.surgeWait = rand(6, 14);
+    const s = this.spawn(-rand(0, 3), true);
+    if (!s)
+      return;
+    s.far = false;
+    s.speed *= 1.8;
+    s.length = this.rows * rand(0.9, 1.3);
+    s.bright = 1.35;
+    s.mint = 0.45;
+  }
+  spawn(y, extra = false, col = -1) {
+    const cast = this.cast;
+    for (let i = 0;i < (col < 0 ? 20 : 1); i++) {
+      const c = col < 0 ? Math.floor(Math.random() * this.cols) : col;
+      const there = this.streams.filter((s2) => s2.col === c);
+      if (col < 0 && there.some((s2) => s2.y - s2.length < 2))
+        continue;
+      const s = {
+        col: c,
+        y,
+        speed: rand(cast.speed[0], cast.speed[1]),
+        length: rand(cast.length[0], cast.length[1]),
+        bright: rand(0.8, 1.05),
+        far: there.length ? there[0].far : Math.random() < cast.far,
+        mint: 0,
+        extra
+      };
+      this.streams.push(s);
+      return s;
+    }
+  }
+  render() {
+    this.restore();
+    const { W, H, cols, rows, farRows, ox, s, glyphs, farGlyphs, lum, head, farLum, farHead, red } = this;
+    lum.fill(0);
+    head.fill(0);
+    farLum.fill(0);
+    farHead.fill(0);
+    const dim = 1 - 0.45 * this.gloom;
+    for (const st of this.streams)
+      light(st.far ? farLum : lum, st.far ? farHead : head, st.col * farRows, st.far ? farRows : rows, st.y, st.length, st.bright * dim, st.mint);
+    this.lightRipples();
+    const word = this.word;
+    const c = [0, 0, 0];
+    for (let col = 0;col < cols; col++) {
+      const x = ox + col * PITCH * s;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (let r = 0;r < farRows; r++) {
+        const i = col * farRows + r;
+        const b = farLum[i];
+        if (b < 0.02)
+          continue;
+        tint(c, b * 0.42, farHead[i] * 0.55, 0);
+        const g = FAR2.glyphs[farGlyphs[i] % FAR2.count];
+        glyph(this.hdr, W, H, x + s, r * FAR_ROW * s, FAR2.rows, g, 3, 5, s, c[0], c[1], c[2]);
+        y0 = Math.min(y0, r * FAR_ROW * s);
+        y1 = Math.max(y1, (r * FAR_ROW + 5) * s - 1);
+      }
+      for (let r = 0;r < rows; r++) {
+        const i = col * farRows + r;
+        const letter = word && col >= word.col && col < word.col + word.text.length && r === word.row ? word.shown[col - word.col] : 0;
+        const b = Math.max(lum[i], letter);
+        if (b < 0.02)
+          continue;
+        tint(c, b, letter ? Math.max(head[i], 0.5) : head[i], red[i]);
+        if (letter)
+          glyph(this.hdr, W, H, x, r * ROW * s, SOLID.rows, 0, 5, 7, s, 0.0004, 0.0018, 0.0008);
+        const table = letter ? ALPHABET : red[i] > 0.2 ? GLITCHES : RAIN3;
+        const g = letter ? LETTERS[word.text[col - word.col]] : glyphs[i] % table.count;
+        glyph(this.hdr, W, H, x, r * ROW * s, table.rows, table.glyphs[g], 5, 7, s, c[0], c[1], c[2]);
+        y0 = Math.min(y0, r * ROW * s);
+        y1 = Math.max(y1, (r * ROW + 7) * s - 1);
+      }
+      if (y1 >= y0)
+        this.touch(x, y0, Math.min(W - 1, x + 5 * s - 1), Math.min(H - 1, y1));
+    }
+    this.mutate();
+    this.finish();
+  }
+  mutate() {
+    const rate = this.cast.mutate * (1 / 15) * TIME_SCALE10;
+    const n = this.lum.length;
+    for (let i = 0;i < n; i++) {
+      if (this.lum[i] > 0.05 && Math.random() < rate * this.lum[i])
+        this.glyphs[i] = Math.random() * 256 | 0;
+      if (this.farLum[i] > 0.05 && Math.random() < rate * this.farLum[i] * 0.5)
+        this.farGlyphs[i] = Math.random() * 256 | 0;
+    }
+    if (!this.glitch)
+      return;
+    for (let k = 0;k < 6; k++) {
+      const i = Math.floor(Math.random() * n);
+      if (this.lum[i] > 0.1)
+        this.red[i] = 1;
+    }
+  }
+  lightRipples() {
+    const { H, cols, rows, farRows, ox, s } = this;
+    for (const rp of this.ripples) {
+      const radius = rp.t * RIPPLE_SPEED * H;
+      const fade = 1 - rp.t / RIPPLE_LIFE;
+      const width = RIPPLE_WIDTH * H;
+      const c0 = Math.max(0, Math.floor((rp.x - radius - width - ox) / (PITCH * s)));
+      const c1 = Math.min(cols - 1, Math.ceil((rp.x + radius + width - ox) / (PITCH * s)));
+      const r0 = Math.max(0, Math.floor((rp.y - radius - width) / (ROW * s)));
+      const r1 = Math.min(rows - 1, Math.ceil((rp.y + radius + width) / (ROW * s)));
+      for (let col = c0;col <= c1; col++)
+        for (let r = r0;r <= r1; r++) {
+          const d = Math.hypot(ox + (col * PITCH + 2.5) * s - rp.x, (r * ROW + 3.5) * s - rp.y);
+          const k = Math.exp(-(((d - radius) / width) ** 2)) * fade;
+          if (k < 0.15)
+            continue;
+          const i = col * farRows + r;
+          this.lum[i] = Math.max(this.lum[i], k);
+          this.head[i] = Math.max(this.head[i], k);
+        }
+    }
+  }
+  visit() {
+    for (let col = 0;col < this.cols; col++) {
+      if (Math.random() > 0.5)
+        continue;
+      const s = this.spawn(-rand(0, 6), true, col);
+      if (!s)
+        continue;
+      s.far = false;
+      s.speed *= 2.6;
+      s.length = rand(6, 12);
+      s.bright = 1.15;
+    }
+  }
+  react(event) {
+    super.react(event);
+    if (event !== "error" || !this.cols)
+      return;
+    this.glitch = GLITCH;
+    for (let k = 0;k < Math.max(2, this.cols / 10); k++)
+      this.frozen[Math.floor(Math.random() * this.cols)] = 1;
+  }
+  poke(x, y) {
+    if (!this.cols || this.ripples.length >= 3)
+      return;
+    const px = x * this.H;
+    const py = y * this.H;
+    const col = clamp(Math.floor((px - this.ox) / (PITCH * this.s)), 0, this.cols - 1);
+    const s = this.spawn(Math.floor(py / (ROW * this.s)), true, col);
+    if (s) {
+      s.far = false;
+      s.bright = 1.2;
+      s.length = rand(8, 14);
+    }
+    this.ripples.push({ x: px, y: py, t: 0 });
+  }
+  stepEgg(dt) {
+    const word = this.word;
+    if (word) {
+      word.t += dt;
+      for (let i = 0;i < word.text.length; i++) {
+        if (word.text[i] === " ")
+          continue;
+        const passed = this.streams.some((s) => s.extra && !s.far && s.col === word.col + i && s.y >= word.row + 1);
+        if (passed || word.shown[i])
+          word.shown[i] = Math.min(1, word.shown[i] + dt * 3);
+      }
+      if (word.held < 0 && word.shown.every((v, i) => v >= 1 || word.text[i] === " "))
+        word.held = 0;
+      if (word.held >= 0)
+        word.held += dt;
+      const fade = clamp(1 - (word.held - HOLD) / FADE2, 0, 1);
+      if (fade < 1)
+        word.shown.forEach((v, i) => word.shown[i] = Math.min(v, fade));
+      if (fade <= 0 || word.t > HOLD * 3)
+        this.word = undefined;
+      return;
+    }
+    this.egg -= dt;
+    if (this.egg > 0 || !this.cols)
+      return;
+    this.egg = eggWait(true) * TIME_SCALE10;
+    const text = this.cols >= 27 ? "FOLLOW THE WHITE RABBIT @" : "WAKE UP";
+    const col = Math.floor((this.cols - text.length) / 2);
+    this.word = { text, col, row: 2, shown: new Float32Array(text.length), t: 0, held: -1 };
+    for (let i = 0;i < text.length; i++) {
+      if (text[i] === " ")
+        continue;
+      const s = this.spawn(-rand(0, 8), true, col + i);
+      if (!s)
+        continue;
+      s.far = false;
+      s.speed = rand(5, 7);
+      s.length = rand(6, 10);
+    }
+  }
+  layout() {
+    const { W, H, hdr } = this;
+    this.s = this.cells ? 1 : Math.max(1, Math.round(H / 170));
+    const s = this.s;
+    const cols = Math.max(1, Math.floor(W / (PITCH * s)));
+    this.ox = 2 * Math.floor((W - cols * PITCH * s + s) / 4);
+    this.rows = Math.ceil(H / (ROW * s));
+    this.farRows = Math.ceil(H / (FAR_ROW * s));
+    if (cols !== this.cols || this.glyphs.length !== cols * this.farRows) {
+      this.cols = cols;
+      const n = cols * this.farRows;
+      this.glyphs = Uint8Array.from({ length: n }, () => Math.random() * 256 | 0);
+      this.farGlyphs = Uint8Array.from({ length: n }, () => Math.random() * 256 | 0);
+      this.lum = new Float32Array(n);
+      this.head = new Float32Array(n);
+      this.farLum = new Float32Array(n);
+      this.farHead = new Float32Array(n);
+      this.red = new Float32Array(n);
+      this.frozen = new Uint8Array(cols);
+      this.streams = this.streams.filter((st) => st.col < cols);
+    }
+    if (!this.started) {
+      this.started = true;
+      for (let t = 0;t < 8; t += 0.05)
+        this.advance(0.05);
+    }
+    for (let i = 0;i < W * H; i++) {
+      hdr[i * 3] = 0.0004;
+      hdr[i * 3 + 1] = 0.0018;
+      hdr[i * 3 + 2] = 0.0008;
+    }
+  }
+}
+function light(lum, head, o, rows, y, length, bright, mint) {
+  const top = Math.floor(y);
+  const f = y - top;
+  for (let a = 0;a < length + 1; a++) {
+    const r = top - a;
+    if (r < 0)
+      break;
+    if (r >= rows)
+      continue;
+    const b = (1 - (a + f) / length) ** 0.6 * bright;
+    if (b <= 0)
+      break;
+    const h = a === 0 ? 1 : a === 1 ? Math.max(0, 1 - f * 3) : mint * b;
+    const i = o + r;
+    if (b > lum[i])
+      lum[i] = b;
+    if (h > head[i])
+      head[i] = h;
+  }
+}
+function tint(c, b, h, red) {
+  const k = Math.min(1, b);
+  const g = 0.72 * k ** 1.25;
+  const r = 0.02 * k + 0.05 * k ** 6;
+  const bl = 0.05 * k + 0.06 * k ** 6;
+  const m = Math.min(1, b);
+  c[0] = lerp(lerp(r, HEAD[0] * m, h), RED[0] * k, red);
+  c[1] = lerp(lerp(g, HEAD[1] * m, h), RED[1] * k, red);
+  c[2] = lerp(lerp(bl, HEAD[2] * m, h), RED[2] * k, red);
+}
+function glyph(hdr, W, H, x, y, rows, g, w, h, s, r, gr, b) {
+  for (let j = 0;j < h * s; j++) {
+    const py = y + j;
+    if (py < 0 || py >= H)
+      continue;
+    const bits2 = rows[g + Math.floor(j / s)];
+    for (let i = 0;i < w * s; i++) {
+      const px = x + i;
+      if (px >= W || !(bits2 & 1 << w - 1 - Math.floor(i / s)))
+        continue;
+      const o = (py * W + px) * 3;
+      hdr[o] = r;
+      hdr[o + 1] = gr;
+      hdr[o + 2] = b;
+    }
+  }
+}
+function font(w, list, mirror) {
+  const parsed = list.map((g) => g.split(/\s+/).map((row) => [...mirror ? [...row].reverse().join("") : row].reduce((bits2, ch) => bits2 << 1 | (ch === "#" ? 1 : 0), 0) & (1 << w) - 1));
+  const h = parsed[0].length;
+  return { rows: Uint8Array.from(parsed.flat()), glyphs: parsed.map((_, i) => i * h), count: parsed.length };
+}
+var matrix = {
+  id: "matrix",
+  name: "Matrix",
+  description: "The digital rain: streams of mirrored katakana and digits falling down a black screen, pale mint heads trailing green",
+  collection: "Classics",
+  fixedTime: "night",
+  activity: {
+    calm: "A few slow streams falling through the dark",
+    lively: "The classic rain, near streams over dimmer, slower ones behind",
+    teeming: "Dense, quicker rain, with now and then a bright code surge"
+  },
+  scrim: {
+    day: [
+      [2, 6, 3],
+      [1, 5, 2],
+      [0, 3, 1]
+    ],
+    sunset: [
+      [2, 6, 3],
+      [1, 5, 2],
+      [0, 3, 1]
+    ],
+    night: [
+      [1, 7, 3],
+      [0, 5, 2],
+      [0, 3, 1]
+    ]
+  },
+  create: (settings) => new Matrix(settings)
+};
+
+// wallpapers/maze.ts
+var TIME_SCALE11 = 0.35;
 var MAZE = 12;
 var WALL = 0.8;
 var EYE = WALL / 2;
@@ -12109,7 +12596,7 @@ class Maze extends Canvas {
   flip = 0;
   flipTo = 0;
   flipLeft = 0;
-  egg = eggWait() * TIME_SCALE10;
+  egg = eggWait() * TIME_SCALE11;
   cols = new Float32Array(0);
   rows = new Float32Array(0);
   params = new Float32Array(32);
@@ -12252,7 +12739,7 @@ class Maze extends Canvas {
     return queue.length;
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
     this.time += dt;
     this.stepGloom(dt);
     this.walk(dt);
@@ -12411,7 +12898,7 @@ class Maze extends Canvas {
     if (this.flipLeft > 0 || this.mode !== "pause")
       return;
     this.flipTo = 0;
-    this.egg = eggWait(true) * TIME_SCALE10;
+    this.egg = eggWait(true) * TIME_SCALE11;
   }
   visit() {
     if (this.mode === "cheer")
@@ -12475,9 +12962,9 @@ class Maze extends Canvas {
   render() {
     const { W, H, look } = this;
     const dip = this.gloom > 0.2 && hashStep(Math.floor(this.time / 0.12)) < 0.1 * this.gloom ? 0.55 : 1;
-    const light = Math.round((1 - 0.45 * this.gloom) * dip * this.fade * 32) / 32;
+    const light2 = Math.round((1 - 0.45 * this.gloom) * dip * this.fade * 32) / 32;
     const roll = Math.cos(this.flip * Math.PI);
-    const view2 = [this.x, this.y, this.angle, roll, light];
+    const view2 = [this.x, this.y, this.angle, roll, light2];
     const moved = view2.some((v, i) => v !== this.last[i]);
     const f = Math.max(0.62 * H, 0.36 * W);
     const fy = f * (Math.abs(roll) < 0.02 ? 0.02 * Math.sign(roll || 1) : roll);
@@ -12487,7 +12974,7 @@ class Maze extends Canvas {
       this.restore(undefined);
       this.last.set(view2);
       const p = this.params;
-      p.set([...look.brick, ...look.mortar, ...look.ceiling, ...look.seam, ...look.floor, ...look.fog, look.haze, look.lamp, look.ambient, light, ...look.face, ...look.ink, look.side, this.cells ? 9 : 2]);
+      p.set([...look.brick, ...look.mortar, ...look.ceiling, ...look.seam, ...look.floor, ...look.fog, look.haze, look.lamp, look.ambient, light2, ...look.face, ...look.ink, look.side, this.cells ? 9 : 2]);
       castColumns(this.vwall, this.hwall, this.smile, this.x, this.y, dirX, dirY, -dirY * (W / 2 / f), dirX * (W / 2 / f), W, this.cols);
       shadeView(this.hdr, W, H, this.cols, this.rows, f, fy, this.x, this.y, p);
       touch(this.hdr, 0, 0, W - 1, H - 1);
@@ -12498,10 +12985,10 @@ class Maze extends Canvas {
     if (this.kept)
       this.restore();
     for (const o of this.solids)
-      this.drawSolid(o, f, fy, dirX, dirY, light);
+      this.drawSolid(o, f, fy, dirX, dirY, light2);
     this.finish(2);
   }
-  drawSolid(o, f, fy, dirX, dirY, light) {
+  drawSolid(o, f, fy, dirX, dirY, light2) {
     const { W, H, look } = this;
     const ox = o.cx + 0.5;
     const oy = o.cy + 0.5;
@@ -12534,7 +13021,7 @@ class Maze extends Canvas {
     const lz = 0.7;
     const ll = Math.hypot(lx, ly, lz);
     const dist = Math.hypot(ox - this.x, oy - this.y);
-    const reach = (look.lamp ? look.ambient + (1 - look.ambient) / (1 + dist * dist * look.lamp) : 1) * light;
+    const reach = (look.lamp ? look.ambient + (1 - look.ambient) / (1 + dist * dist * look.lamp) : 1) * light2;
     const fogk = veil(dist, look.haze);
     const base = o.flip ? look.flip : look.solid;
     const faces = shape.faces.map(([a, b, c]) => {
@@ -12564,7 +13051,7 @@ class Maze extends Canvas {
       const pa = pts[t.a];
       const pb = pts[t.b];
       const pc = pts[t.c];
-      fillTriangle(this.hdr, W, H, this.cols, depth2, pa[3], pa[4], pb[3], pb[4], pc[3], pc[4], base[0] * k + fog[0] * fogk * light, base[1] * k + fog[1] * fogk * light, base[2] * k + fog[2] * fogk * light);
+      fillTriangle(this.hdr, W, H, this.cols, depth2, pa[3], pa[4], pb[3], pb[4], pc[3], pc[4], base[0] * k + fog[0] * fogk * light2, base[1] * k + fog[1] * fogk * light2, base[2] * k + fog[2] * fogk * light2);
       x0 = Math.min(x0, pa[3], pb[3], pc[3]);
       y0 = Math.min(y0, pa[4], pb[4], pc[4]);
       x1 = Math.max(x1, pa[3], pb[3], pc[3]);
@@ -12660,7 +13147,7 @@ function shadeView(hdr, W, H, cols, rows, f, fy, px, py, p) {
   const haze2 = p[18];
   const lamp = p[19];
   const ambient = p[20];
-  const light = p[21];
+  const light2 = p[21];
   const side = p[28];
   for (let x = 0;x < W; x++) {
     const o = x * COL;
@@ -12669,7 +13156,7 @@ function shadeView(hdr, W, H, cols, rows, f, fy, px, py, p) {
     const b = horizon + fy * EYE / d;
     cols[o + 1] = Math.min(a, b);
     cols[o + 2] = Math.max(a, b);
-    cols[o + 10] = lit(d * cols[o + 7], lamp, ambient) * light;
+    cols[o + 10] = lit(d * cols[o + 7], lamp, ambient) * light2;
     cols[o + 11] = veil(d * cols[o + 7], haze2);
   }
   for (let y = 0;y < H; y++) {
@@ -12725,9 +13212,9 @@ function shadeView(hdr, W, H, cols, rows, f, fy, px, py, p) {
         }
         const k2 = cols[o + 10];
         const fog = cols[o + 11];
-        r = (r * k2 * (1 - fog) + p[15] * fog * light) * cov;
-        g = (g * k2 * (1 - fog) + p[16] * fog * light) * cov;
-        bl = (bl * k2 * (1 - fog) + p[17] * fog * light) * cov;
+        r = (r * k2 * (1 - fog) + p[15] * fog * light2) * cov;
+        g = (g * k2 * (1 - fog) + p[16] * fog * light2) * cov;
+        bl = (bl * k2 * (1 - fog) + p[17] * fog * light2) * cov;
       }
       if (cov < 1) {
         let fr = p[12];
@@ -12744,12 +13231,12 @@ function shadeView(hdr, W, H, cols, rows, f, fy, px, py, p) {
           fb = lerp(p[8] * tone, p[11], seam);
         }
         const dd = rd * cols[o + 7];
-        const k2 = lit(dd, lamp, ambient) * light;
+        const k2 = lit(dd, lamp, ambient) * light2;
         const fog = veil(dd, haze2);
         const c = 1 - cov;
-        r += (fr * k2 * (1 - fog) + p[15] * fog * light) * c;
-        g += (fg * k2 * (1 - fog) + p[16] * fog * light) * c;
-        bl += (fb * k2 * (1 - fog) + p[17] * fog * light) * c;
+        r += (fr * k2 * (1 - fog) + p[15] * fog * light2) * c;
+        g += (fg * k2 * (1 - fog) + p[16] * fog * light2) * c;
+        bl += (fb * k2 * (1 - fog) + p[17] * fog * light2) * c;
       }
       const i = (y * W + x) * 3;
       hdr[i] = r;
@@ -12832,18 +13319,18 @@ var maze = {
 };
 
 // wallpapers/megacity.ts
-var TIME_SCALE11 = 0.35;
+var TIME_SCALE12 = 0.35;
 var CREATURE_SPEED8 = 0.25;
 var HORIZON6 = 0.6;
 var CAM = 0.1;
 var ROAD2 = 0.22;
 var LAMPS = 0.26;
 var END = 9;
-var FAR2 = 16;
+var FAR3 = 16;
 var LAMP_STEP = 0.3;
 var BIKE2 = 0.065;
 var TAIL = 0.36 * BIKE2;
-var FADE2 = 0.4;
+var FADE3 = 0.4;
 var DOME_Z = 13;
 var DOME = 40;
 var LOOKS11 = {
@@ -13039,7 +13526,7 @@ class Megacity extends Canvas {
   warm = false;
   bursts = [];
   craft = { x: -9, dir: 1, next: rand(10, 30), y: 1.6 };
-  dome = { wait: eggWait() * TIME_SCALE11, t: -1 };
+  dome = { wait: eggWait() * TIME_SCALE12, t: -1 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
@@ -13048,7 +13535,7 @@ class Megacity extends Canvas {
     this.gap = rand(...TRAFFIC2[this.activity]) * 0.3;
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED8;
     this.creatureTime += cdt;
@@ -13353,7 +13840,7 @@ class Megacity extends Canvas {
       }
       this.recordTrail(b);
     }
-    this.bikes = this.bikes.filter((b) => b.z < 6.5 || b.trail.length > 0 && this.creatureTime - b.trail[b.trail.length - 1] < FADE2 * 4);
+    this.bikes = this.bikes.filter((b) => b.z < 6.5 || b.trail.length > 0 && this.creatureTime - b.trail[b.trail.length - 1] < FADE3 * 4);
   }
   bike(lane, z, i) {
     return { x: lane, z, lane, weave: this.activity === "calm" ? 0 : rand(0.01, this.activity === "teeming" ? 0.05 : 0.03), phase: rand(0, 6), speed: rand(0.5, 0.7), yaw: 0, lean: 0, color: BIKES[i % BIKES.length], jacket: JACKETS[i % JACKETS.length], trail: [], slide: -1, dir: 0 };
@@ -13389,14 +13876,14 @@ class Megacity extends Canvas {
       return;
     t.push(tx, TAIL, tz, this.creatureTime);
     let drop = 0;
-    while (drop < t.length && this.creatureTime - t[drop + 3] > FADE2 * 4)
+    while (drop < t.length && this.creatureTime - t[drop + 3] > FADE3 * 4)
       drop += 4;
     if (drop)
       t.splice(0, drop);
   }
   drawTrails() {
     const { W, H, hdr, heat, look } = this;
-    const fade = FADE2 * (look.night ? 1 : 0.6);
+    const fade = FADE3 * (look.night ? 1 : 0.6);
     for (const b of this.bikes) {
       const t = b.trail;
       if (t.length < 8)
@@ -13542,7 +14029,7 @@ class Megacity extends Canvas {
     if (d.t < DOME)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE11;
+    d.wait = eggWait(true) * TIME_SCALE12;
   }
   drawDome() {
     const { W, H, hdr, depth: depth2, look } = this;
@@ -13767,7 +14254,7 @@ function columnHits(city2, dx, H, px) {
       add(m.z, m.y0, m.y1, 3, i, 0, 0, cover, 0);
   }
   add(END, 0, farHeight(dx * END, 0.16, 0.3, 0.75, 3), 4, 0, dx * END, END / H, 1, 0);
-  add(FAR2, 0, farHeight(dx * FAR2, 0.3, 0.8, 1.6, 11), 5, 0, dx * FAR2, FAR2 / H, 1, 0);
+  add(FAR3, 0, farHeight(dx * FAR3, 0.3, 0.8, 1.6, 11), 5, 0, dx * FAR3, FAR3 / H, 1, 0);
   for (let k = 0;k < n; k++) {
     let m = k;
     order[k] = k;
@@ -13994,7 +14481,7 @@ var megacity = {
 };
 
 // wallpapers/mystify.ts
-var TIME_SCALE12 = 0.35;
+var TIME_SCALE13 = 0.35;
 var CORNERS = 4;
 var BEZIER = 14;
 var CURVE = 8;
@@ -14034,7 +14521,7 @@ var LOOKS12 = {
     value: 1
   }
 };
-var CAST = {
+var CAST2 = {
   calm: { count: 1, speed: 0.012, echoes: 6, spacing: 0.026 },
   lively: { count: 2, speed: 0.014, echoes: 6, spacing: 0.026 },
   teeming: { count: 3, speed: 0.016, echoes: 7, spacing: 0.026 }
@@ -14052,7 +14539,7 @@ class Mystify extends Canvas {
   polys = [];
   flash = 0;
   placed = false;
-  bezier = { wait: eggWait() * TIME_SCALE12, t: -1 };
+  bezier = { wait: eggWait() * TIME_SCALE13, t: -1 };
   prev = new Float64Array(VALUES);
   at = new Float64Array(CORNERS * 2);
   mids = new Float64Array(CORNERS * 2);
@@ -14060,7 +14547,7 @@ class Mystify extends Canvas {
     super();
     this.supersample = 1;
     this.look = LOOKS12[settings.time];
-    this.cast = CAST[settings.activity];
+    this.cast = CAST2[settings.activity];
     this.gap = this.cast.spacing / this.cast.speed;
     this.sample = this.gap / SAMPLES;
     this.polys = Array.from({ length: this.cast.count }, (_, i) => this.poly(i));
@@ -14103,7 +14590,7 @@ class Mystify extends Canvas {
       out[o + k] = fold(u[k], k & 1 ? 1 : this.A);
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
     const start = this.time;
     this.time += dt;
     this.stepGloom(dt);
@@ -14284,7 +14771,7 @@ class Mystify extends Canvas {
     if (b.t < BEZIER)
       return;
     b.t = -1;
-    b.wait = eggWait(true) * TIME_SCALE12;
+    b.wait = eggWait(true) * TIME_SCALE13;
   }
 }
 function fold(u, span) {
@@ -14377,7 +14864,7 @@ var mystify = {
 
 // wallpapers/ocean.ts
 var SURFACE = 0.065;
-var TIME_SCALE13 = 0.35;
+var TIME_SCALE14 = 0.35;
 var CREATURE_SCALE = 0.7;
 var CREATURE_SPEED9 = 0.25;
 var CAUS_N = 128;
@@ -14409,7 +14896,7 @@ class Ocean extends Canvas {
   nightRow = new Float32Array(0);
   snow = [];
   whale = { x: -9, dir: 1, next: 14, y: 0.4 };
-  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE13, spin: 0 };
+  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE14, spin: 0 };
   activity;
   timeOfDay;
   constructor(settings) {
@@ -14433,7 +14920,7 @@ class Ocean extends Canvas {
       this.snow.push({ x: Math.random() * 4, y: Math.random(), z: Math.random(), s: Math.random() });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
     this.time += dt;
     for (const s of this.snow) {
       s.x += (0.006 + s.z * 0.012) * dt;
@@ -14814,7 +15301,7 @@ class Ocean extends Canvas {
     if (s.x > -0.4 && s.x < this.A + 0.4)
       return;
     s.x = -9;
-    s.wait = eggWait(true) * TIME_SCALE13;
+    s.wait = eggWait(true) * TIME_SCALE14;
   }
   subPoint(u, v) {
     const s = this.sub;
@@ -14827,10 +15314,10 @@ class Ocean extends Canvas {
       return;
     const L = 0.3 * this.H;
     const fog2 = this.fogAt(this.subPoint(0, 0)[1]);
-    const tint = (c) => [lerp(c[0], fog2[0], 0.3), lerp(c[1], fog2[1], 0.3), lerp(c[2], fog2[2], 0.3)];
+    const tint2 = (c) => [lerp(c[0], fog2[0], 0.3), lerp(c[1], fog2[1], 0.3), lerp(c[2], fog2[2], 0.3)];
     const P = (u, v) => this.subPoint(u, v);
-    const yellow = tint([0.95, 0.72, 0.12]);
-    const dark = tint([0.12, 0.12, 0.14]);
+    const yellow = tint2([0.95, 0.72, 0.12]);
+    const dark = tint2([0.12, 0.12, 0.14]);
     this.shape([
       cap(...P(-0.5, 0), ...P(-0.64, -0.13), 0.025 * L, 0.012 * L, yellow),
       cap(...P(-0.5, 0), ...P(-0.64, 0.13), 0.025 * L, 0.012 * L, yellow),
@@ -14839,7 +15326,7 @@ class Ocean extends Canvas {
       cap(...P(-0.12, -0.13), ...P(0.12, -0.13), 0.07 * L, 0.06 * L, yellow),
       cap(...P(-0.4, 0), ...P(0.35, 0), 0.15 * L, 0.15 * L, yellow)
     ], SUNLIGHT, 0.8);
-    const glass = tint([0.15, 0.4, 0.5]);
+    const glass = tint2([0.15, 0.4, 0.5]);
     this.shape([-0.16, 0.02, 0.2].map((u) => ell(...P(u, 0), 0.045 * L, 0.045 * L, 0, glass)), SUNLIGHT, 0.6);
     this.shape([ell(...P(-0.58, 0), 0.015 * L, 0.11 * L * Math.abs(Math.cos(s.spin)) + 0.01 * L, 0, dark)], SUNLIGHT, 0.3);
   }
@@ -15216,10 +15703,10 @@ class Ocean extends Canvas {
             g = g * (1 - m) + m - bandEdge * 0.5 * g;
             b = b * (1 - m) + m - bandEdge * 0.5 * b;
             const cyl = Math.sqrt(1 - n * n);
-            const light = 0.42 + 0.78 * cyl * (0.75 + 0.25 * (1 - n) * 0.5);
-            r *= light;
-            g *= light;
-            b *= light;
+            const light2 = 0.42 + 0.78 * cyl * (0.75 + 0.25 * (1 - n) * 0.5);
+            r *= light2;
+            g *= light2;
+            b *= light2;
             const spec = Math.pow(Math.max(0, 1 - Math.abs(n + 0.5) * 2.8), 4) * 0.4;
             r += spec;
             g += spec;
@@ -15385,10 +15872,10 @@ class Ocean extends Canvas {
           let br = back[0] + (belly[0] - back[0]) * k;
           let bg = back[1] + (belly[1] - back[1]) * k;
           let bb = back[2] + (belly[2] - back[2]) * k;
-          const light = 0.5 + 0.7 * Math.sqrt(1 - n * n) * (0.8 + 0.2 * (1 - n) * 0.5);
-          br *= light;
-          bg *= light;
-          bb *= light;
+          const light2 = 0.5 + 0.7 * Math.sqrt(1 - n * n) * (0.8 + 0.2 * (1 - n) * 0.5);
+          br *= light2;
+          bg *= light2;
+          bb *= light2;
           const spec = Math.pow(Math.max(0, 1 - Math.abs(n + 0.55) * 3), 4) * 0.35;
           br += spec;
           bg += spec;
@@ -15453,13 +15940,13 @@ class Ocean extends Canvas {
     const H = this.H;
     const fog2 = this.fogAt(tu.y * H);
     const fogK = 0.08 + tu.z * 0.42;
-    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const tint2 = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
     const skin = [0.42, 0.48, 0.32];
     const skinFar = [0.26, 0.3, 0.2];
     const stroke2 = Math.sin(tu.phase);
     const whip = Math.cos(tu.phase) * 0.05;
     const flipper = (u0, v0, length, angle, width, color) => {
-      const [r, g, b] = tint(color);
+      const [r, g, b] = tint2(color);
       let u = u0;
       let v = v0;
       let a = angle;
@@ -15507,13 +15994,13 @@ class Ocean extends Canvas {
             c = seam ? [0.16, 0.12, 0.06] : [0.44 * lightness, 0.36 * lightness, 0.17 * lightness];
           } else
             c = Math.abs(Math.sin(su * Math.PI * 1.5)) < 0.12 ? [0.5, 0.44, 0.28] : [0.78, 0.7, 0.45];
-          const [r, g, b] = tint(c);
+          const [r, g, b] = tint2(c);
           this.blend((y * this.W + x) * 3, r, g, b, cov);
         }
     }
     flipper(-0.2, 0.05, 0.18, back, 0.045, skin);
     {
-      const [r, g, b] = tint(skin);
+      const [r, g, b] = tint2(skin);
       for (let s = 0;s <= 8; s++) {
         const k = s / 8;
         const [x, y] = this.turtlePoint(tu, 0.28 + k * 0.12, -0.01 - k * 0.01);
@@ -15522,7 +16009,7 @@ class Ocean extends Canvas {
       const [hx, hy] = this.turtlePoint(tu, 0.44, -0.025);
       blob(hx, hy, Math.max(1, 0.062 * L), r, g, b);
       const [bx, by] = this.turtlePoint(tu, 0.5, -0.01);
-      const [br, bg2, bb] = tint([0.3, 0.32, 0.22]);
+      const [br, bg2, bb] = tint2([0.3, 0.32, 0.22]);
       blob(bx, by, Math.max(0.7, 0.03 * L), br, bg2, bb);
       const [ex, ey] = this.turtlePoint(tu, 0.465, -0.045);
       blob(ex, ey, Math.max(0.7, 0.014 * L), 0.03, 0.03, 0.03);
@@ -15575,12 +16062,12 @@ class Ocean extends Canvas {
     const squash = Math.max(0.3, Math.abs(dv.face));
     const fog2 = this.fogAt(dv.y * this.H);
     const fogK = 0.08 + dv.z * 0.42;
-    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const tint2 = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
     const limb2 = (u0, v0, u1, v1, r0, r1, color) => {
       const [x0, y0] = this.diverPoint(dv, u0, v0);
       const [x1, y1] = this.diverPoint(dv, u1, v1);
       const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 0.6));
-      const [r, g, b] = tint(color);
+      const [r, g, b] = tint2(color);
       for (let j = 0;j <= steps; j++) {
         const k = j / steps;
         const rad = Math.max(0.6, lerp(r0, r1, k) * L);
@@ -15627,7 +16114,7 @@ class Ocean extends Canvas {
     const ny = hx;
     const fog2 = this.fogAt(cy);
     const fogK = 0.08 + o.z * 0.42;
-    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const tint2 = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
     const baseX = cx - hx * S * 0.6;
     const baseY = cy - hy * S * 0.6;
     const spread = 0.95 * (1 - o.pulse * 0.6) + 0.12 * Math.sin(o.phase * 1.3);
@@ -15644,10 +16131,10 @@ class Ocean extends Canvas {
         const q = s / n;
         const w = S * 0.14 * (1 - q * 0.85) + 0.35;
         const shade2 = 0.55 + 0.3 * (1 - q);
-        const [r, g, b] = tint(hsv(o.hue + q * 0.03, 0.72, shade2 * 0.62));
+        const [r, g, b] = tint2(hsv(o.hue + q * 0.03, 0.72, shade2 * 0.62));
         this.disc(x, y, w, r, g, b, 1);
         if (s % 2 === 0 && w > 0.9) {
-          const [sr, sg, sb] = tint([0.95, 0.78, 0.72]);
+          const [sr, sg, sb] = tint2([0.95, 0.78, 0.72]);
           this.disc(x + Math.cos(a + Math.PI / 2) * w * 0.55, y + Math.sin(a + Math.PI / 2) * w * 0.55, w * 0.32, sr, sg, sb, 0.9);
         }
         a += Math.sin(o.phase * 1.4 + i * 0.9 + q * 3.5) * 0.07 + (q > 0.6 ? curl : 0);
@@ -15671,17 +16158,17 @@ class Ocean extends Canvas {
         if (e > 1.15)
           continue;
         const cov = clamp((1 - e) * ra * 0.5 + 0.5, 0, 1);
-        const light = 0.55 + 0.5 * Math.sqrt(Math.max(0, 1 - e)) - dy / (ra * 4);
+        const light2 = 0.55 + 0.5 * Math.sqrt(Math.max(0, 1 - e)) - dy / (ra * 4);
         const spot = hash2(Math.floor(a * 6 + 20), Math.floor(b * 5 + 20)) > 0.72 && e < 0.8 ? 0.7 : 1;
         const pulse2 = 1 + o.pulse * 0.15;
-        const [r, g, bl] = tint([body2[0] * light * spot * pulse2, body2[1] * light * spot * pulse2, body2[2] * light * spot * pulse2]);
+        const [r, g, bl] = tint2([body2[0] * light2 * spot * pulse2, body2[1] * light2 * spot * pulse2, body2[2] * light2 * spot * pulse2]);
         this.blend((y * this.W + x) * 3, r, g, bl, cov);
       }
     for (const side of [-1, 1]) {
       const ex = mcx - hx * ra * 0.45 + nx * rb * 0.55 * side;
       const ey = mcy - hy * ra * 0.45 + ny * rb * 0.55 * side;
       const er = Math.max(1, S * 0.11);
-      const [r, g, b] = tint([0.95, 0.82, 0.4]);
+      const [r, g, b] = tint2([0.95, 0.82, 0.4]);
       this.disc(ex, ey, er, r, g, b, 1);
       this.disc(ex, ey, er * 0.45, 0.02, 0.02, 0.03, 1);
     }
@@ -15817,7 +16304,7 @@ var ocean = {
 };
 
 // wallpapers/pipes.ts
-var TIME_SCALE14 = 0.35;
+var TIME_SCALE15 = 0.35;
 var GY = 8;
 var GZ = 12;
 var GXM = 40;
@@ -15830,7 +16317,7 @@ var SS2 = 2;
 var BLOCK2 = 8;
 var BAKE_FRAMES = 45;
 var FULL = 0.45;
-var FADE3 = 1;
+var FADE4 = 1;
 var DX2 = [1, -1, 0, 0, 0, 0];
 var DY2 = [0, 0, 1, -1, 0, 0];
 var DZ = [0, 0, 0, 0, 1, -1];
@@ -15908,7 +16395,7 @@ class Pipes extends Canvas {
   cycle = 0;
   fade = -1;
   burst = 0;
-  egg = eggWait() * TIME_SCALE14;
+  egg = eggWait() * TIME_SCALE15;
   teapot = false;
   grown = false;
   samples = new Float32Array(0);
@@ -15933,7 +16420,7 @@ class Pipes extends Canvas {
     this.waits = Array.from({ length: this.count }, (_, i) => i === 0 ? 0 : rand(1, 4) * i);
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE15;
     this.time += dt;
     this.stepGloom(dt);
     if (!this.grown)
@@ -15942,7 +16429,7 @@ class Pipes extends Canvas {
     if (this.egg <= 0 && !this.teapot)
       this.teapot = true;
     if (this.fade >= 0) {
-      this.fade += dt / FADE3;
+      this.fade += dt / FADE4;
       if (this.fade >= 1)
         this.clear();
       return;
@@ -16147,7 +16634,7 @@ class Pipes extends Canvas {
     const teapot = this.teapot && p.dIn >= 0 && p.dOut >= 0 && p.k < GZ / 2;
     if (teapot) {
       this.teapot = false;
-      this.egg = eggWait(true) * TIME_SCALE14;
+      this.egg = eggWait(true) * TIME_SCALE15;
       for (const t of TEAPOT)
         p.pieces.push(this.prim(BALLS2, x + t[0] * 1.4, y + t[1] * 1.4, z + t[2] * 1.4, 0, t[3] * 1.4, 1, p.color, t[4]));
     }
@@ -16285,7 +16772,7 @@ var TEAPOT = [
     return [-0.28 - 0.13 * Math.cos(a), 0.12 * Math.sin(a), 0, 0.042, 1];
   })
 ];
-function light(samples, rows, s, row, nx, ny, nz, dx, dy, z, color, shade2) {
+function light2(samples, rows, s, row, nx, ny, nz, dx, dy, z, color, shade2) {
   const lx = -0.48;
   const ly = -0.66;
   const lz = -0.58;
@@ -16358,7 +16845,7 @@ function ellipsoid(samples, depth2, rows, SW, SH, f, shade2, cx, cy, cz, r, ky, 
         nz = pz - spine[5] * c - spine[8] * n;
       }
       const nl = 1 / Math.hypot(nx, ny, nz);
-      light(samples, rows, s, y, nx * nl, ny * nl, nz * nl, dx, dy, t, color, shade2);
+      light2(samples, rows, s, y, nx * nl, ny * nl, nz * nl, dx, dy, t, color, shade2);
     }
   }
   if (!hit)
@@ -16418,7 +16905,7 @@ function cylinder(samples, depth2, rows, SW, SH, f, shade2, axis, cx, cy, cz, a,
       const nx = axis === 0 ? nk : np;
       const ny = axis === 0 ? np : axis === 1 ? nk : nq;
       const nz = axis === 2 ? nk : nq;
-      light(samples, rows, s, y, nx, ny, nz, dx, dy, t, color, shade2);
+      light2(samples, rows, s, y, nx, ny, nz, dx, dy, t, color, shade2);
     }
   }
   if (!hit)
@@ -16485,7 +16972,7 @@ var pipes = {
 };
 
 // wallpapers/prehistoric.ts
-var TIME_SCALE15 = 0.35;
+var TIME_SCALE16 = 0.35;
 var CREATURE_SPEED10 = 0.25;
 var HORIZON7 = 0.6;
 var VENT_X = 0.4;
@@ -16626,7 +17113,7 @@ class Prehistoric extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   birds = [];
-  delorean = { wait: eggWait() * TIME_SCALE15, t: -1, x0: 0 };
+  delorean = { wait: eggWait() * TIME_SCALE16, t: -1, x0: 0 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
@@ -16645,7 +17132,7 @@ class Prehistoric extends Canvas {
     this.dragonflies = Array.from({ length: 4 }, () => ({ x: Math.random() * 1.5, y: rand(0.75, 0.95), tx: 0, ty: 0, rest: rand(0, 3), face: 1, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE15;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE16;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED10;
     this.creatureTime += cdt;
@@ -17387,7 +17874,7 @@ class Prehistoric extends Canvas {
     if (d.t < DELOREAN + 6)
       return;
     d.t = -1;
-    d.wait = eggWait(true) * TIME_SCALE15;
+    d.wait = eggWait(true) * TIME_SCALE16;
   }
   drawDelorean() {
     const H = this.H;
@@ -17608,7 +18095,7 @@ var prehistoric = {
 };
 
 // wallpapers/rider.ts
-var TIME_SCALE16 = 0.35;
+var TIME_SCALE17 = 0.35;
 var CREATURE_SPEED11 = 0.25;
 var BIKE_Y = 0.2;
 var BIKE_L = 0.6;
@@ -17616,7 +18103,7 @@ var RIDER_S = 0.28;
 var STRIDE = 0.1;
 var LIVELY = { up: 1.4, look: 1.6, turn: 0.45, down: 1.4, rest: 1, back: 0.45 };
 var TEEMING = { up: 1.9, wait: 0.4, mount: 0.9, idle: 0.8, off: 1.7, away: 2.2, slide: 2.2, settle: 0.6, dismount: 0.9, turn: 0.45, down: 1.9, rest: 0.6, back: 0.45 };
-var START = 1 - 45 * TIME_SCALE16 * CREATURE_SPEED11;
+var START = 1 - 45 * TIME_SCALE17 * CREATURE_SPEED11;
 var PSYCHIC = { rise: 3, hold: 26, drop: 28, gone: 46 };
 function unit(x, y, z) {
   const l = Math.hypot(x, y, z);
@@ -17738,7 +18225,7 @@ class Rider extends Canvas {
   bits = [];
   dust = [];
   visitor;
-  psychic = { wait: eggWait() * TIME_SCALE16, t: -1, x: 1, y: 0.8, chunks: [] };
+  psychic = { wait: eggWait() * TIME_SCALE17, t: -1, x: 1, y: 0.8, chunks: [] };
   crater;
   constructor(settings) {
     super();
@@ -17760,7 +18247,7 @@ class Rider extends Canvas {
       this.bits.push({ x: Math.random() * 2, y: rand(0.35, 0.97), vx: 0, vy: 0, spin: Math.random() * TAU, size: rand(0.004, 0.007), paper: false, age: 0, life: Infinity });
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE16;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE17;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED11;
     this.creatureTime += cdt;
@@ -18087,7 +18574,7 @@ class Rider extends Canvas {
     if (e.t < PSYCHIC.gone)
       return;
     e.t = -1;
-    e.wait = eggWait(true) * TIME_SCALE16;
+    e.wait = eggWait(true) * TIME_SCALE17;
   }
   makeCrack(x, y, branches, min, max, life) {
     const lines2 = [];
@@ -18469,7 +18956,7 @@ var rider = {
 };
 
 // wallpapers/space.ts
-var TIME_SCALE17 = 0.35;
+var TIME_SCALE18 = 0.35;
 var CREATURE_SPEED12 = 0.25;
 var TW = 512;
 var TH = 256;
@@ -18554,7 +19041,7 @@ class Space extends Canvas {
   satellite = { x: 1.4, y: 0.15, dir: -1, wait: 0 };
   rocks = [];
   meteors = [];
-  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE17 };
+  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE18 };
   constructor(settings) {
     super();
     this.activity = settings.activity;
@@ -18574,7 +19061,7 @@ class Space extends Canvas {
       }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE17;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE18;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED12;
     this.creatureTime += cdt;
@@ -18603,7 +19090,7 @@ class Space extends Canvas {
       ship.x -= 0.1 * cdt;
       if (ship.x < -0.4) {
         ship.x = -9;
-        ship.wait = eggWait(true) * TIME_SCALE17;
+        ship.wait = eggWait(true) * TIME_SCALE18;
       }
     }
     if (this.activity !== "calm") {
@@ -18792,10 +19279,10 @@ class Space extends Canvas {
         const lat = Math.asin(clamp(-dy, -1, 1)) / Math.PI + 0.5;
         const t = (Math.min(TH - 1, lat * TH | 0) * TW + (lon * TW | 0)) % (TW * TH);
         const cloud = SURFACE2.cloud[t];
-        const light2 = 0.03 + 1.15 * diffuse;
-        let cr0 = SURFACE2.albedo[t * 3] * light2;
-        let cg0 = SURFACE2.albedo[t * 3 + 1] * light2;
-        let cb0 = SURFACE2.albedo[t * 3 + 2] * light2;
+        const light3 = 0.03 + 1.15 * diffuse;
+        let cr0 = SURFACE2.albedo[t * 3] * light3;
+        let cg0 = SURFACE2.albedo[t * 3 + 1] * light3;
+        let cb0 = SURFACE2.albedo[t * 3 + 2] * light3;
         const cl = 0.04 + 1.2 * diffuse;
         cr0 += (cl - cr0) * cloud * 0.85;
         cg0 += (cl - cg0) * cloud * 0.85;
@@ -19164,7 +19651,7 @@ var space = {
 };
 
 // wallpapers/tundra.ts
-var TIME_SCALE18 = 0.35;
+var TIME_SCALE19 = 0.35;
 var CREATURE_SPEED13 = 0.25;
 var HORIZON8 = 0.55;
 var YETI = 12;
@@ -19262,7 +19749,7 @@ class Tundra extends Canvas {
   fox;
   bear;
   fisher = { tug: 0, next: 8 };
-  yeti = { wait: eggWait() * TIME_SCALE18, t: -1, x: 0 };
+  yeti = { wait: eggWait() * TIME_SCALE19, t: -1, x: 0 };
   weather;
   pines = new SwayLayer;
   lights = new LightMap;
@@ -19286,7 +19773,7 @@ class Tundra extends Canvas {
       this.bear = walker(0.7, 0.655);
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE18;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE19;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED13;
     this.creatureTime += cdt;
@@ -19335,7 +19822,7 @@ class Tundra extends Canvas {
     if (y.t < YETI)
       return;
     y.t = -1;
-    y.wait = eggWait(true) * TIME_SCALE18;
+    y.wait = eggWait(true) * TIME_SCALE19;
   }
   poke(x, y) {
     const order2 = [...this.penguins].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
@@ -19897,7 +20384,7 @@ var tundra = {
 };
 
 // wallpapers/zen.ts
-var TIME_SCALE19 = 0.35;
+var TIME_SCALE20 = 0.35;
 var CREATURE_SPEED14 = 0.25;
 var HORIZON9 = 0.52;
 var GROUND2 = 0.565;
@@ -20044,7 +20531,7 @@ class Zen extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   sparrows = [];
-  tanuki = { wait: eggWait() * TIME_SCALE19, t: -1 };
+  tanuki = { wait: eggWait() * TIME_SCALE20, t: -1 };
   trees = new SwayLayer(-1);
   constructor(settings) {
     super();
@@ -20067,7 +20554,7 @@ class Zen extends Canvas {
     this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.58 + Math.random() * 0.36, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE19;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE20;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED14;
     this.creatureTime += cdt;
@@ -20880,7 +21367,7 @@ class Zen extends Canvas {
     if (k.t < TANUKI.gone)
       return;
     k.t = -1;
-    k.wait = eggWait(true) * TIME_SCALE19;
+    k.wait = eggWait(true) * TIME_SCALE20;
   }
   drawTanuki() {
     const { A, H } = this;
@@ -21071,7 +21558,7 @@ var zen = {
 };
 
 // wallpapers/index.ts
-var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, hauntedHouse, rider, megacity, dome, flowerbox, maze, pipes, mystify, flyingOpenCode];
+var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, hauntedHouse, rider, megacity, dome, flowerbox, maze, pipes, mystify, flyingOpenCode, matrix];
 
 // tui.tsx
 var tui_default = Plugin.define({
