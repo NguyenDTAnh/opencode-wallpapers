@@ -292,6 +292,12 @@ export abstract class Canvas {
     this.restored = true
   }
 
+  // For scenes that build up their background over time: after changing `background` outside layout(), call this so
+  // the next finish() works the still frame out again (and the engine refits every cell once).
+  protected rebake() {
+    this.stillExposure = NaN
+  }
+
   // Marks pixels a scene's own loop writes during render(), x0..x1 by y0..y1 inclusive.
   protected touch(x0: number, y0: number, x1: number, y1: number) {
     addBox(this.touched, x0, y0, x1, y1)
