@@ -98,6 +98,8 @@ const FAR = font(
 )
 // What an error turns glyphs into for a moment: broken blocks.
 const GLITCHES = font(5, ["##### ##### ..... ##### ##### ..... #####", "#.#.# .#.#. #.#.# .#.#. #.#.# .#.#. #.#.#", "###.. ###.. ###.. ..### ..### ..### ###..", "..... #.### ##### ##.## ##### ###.# ....."], false)
+// Blanks the slot under each of the egg's letters, so nothing shows through them.
+const SOLID = font(5, ["##### ##### ##### ##### ##### ##### #####"], false)
 // The egg's letters, unmirrored, and a white rabbit (drawn mint, like everything else).
 const LETTERS: Record<string, number> = {}
 const ALPHABET = font(
@@ -174,7 +176,7 @@ class Matrix extends Canvas {
   private glitch = 0
   private surgeWait = rand(4, 10)
   private egg = eggWait() * TIME_SCALE
-  private word: { text: string; col: number; row: number; shown: Float32Array; t: number } | undefined
+  private word: { text: string; col: number; row: number; shown: Float32Array; t: number; held: number } | undefined
   private started = false
 
   constructor(settings: Settings) {
@@ -284,6 +286,7 @@ class Matrix extends Canvas {
         const b = Math.max(lum[i], letter)
         if (b < 0.02) continue
         tint(c, b, letter ? Math.max(head[i], 0.5) : head[i], red[i])
+        if (letter) glyph(this.hdr, W, H, x, r * ROW * s, SOLID.rows, 0, 5, 7, s, 0.0004, 0.0018, 0.0008)
         const table = letter ? ALPHABET : red[i] > 0.2 ? GLITCHES : RAIN
         const g = letter ? LETTERS[word!.text[col - word!.col]] : glyphs[i] % table.count
         glyph(this.hdr, W, H, x, r * ROW * s, table.rows, table.glyphs[g], 5, 7, s, c[0], c[1], c[2])
@@ -306,7 +309,7 @@ class Matrix extends Canvas {
     }
     if (!this.glitch) return
     // While it glitches, lit glyphs here and there turn red and break up.
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < 6; k++) {
       const i = Math.floor(Math.random() * n)
       if (this.lum[i] > 0.1) this.red[i] = 1
     }
@@ -381,11 +384,12 @@ class Matrix extends Canvas {
         const passed = this.streams.some((s) => s.extra && !s.far && s.col === word.col + i && s.y >= word.row + 1)
         if (passed || word.shown[i]) word.shown[i] = Math.min(1, word.shown[i] + dt * 3)
       }
-      const done = word.shown.every((v, i) => v >= 1 || word.text[i] === " ")
-      if (done && word.t < 1e5) word.t = 1e5
-      const fade = word.t >= 1e5 ? 1 - Math.max(0, word.t - 1e5 - HOLD) / FADE : 1
-      if (fade < 1) word.shown.forEach((v, i) => (word.shown[i] = Math.min(v, Math.max(0, fade))))
-      if (fade <= 0 || word.t > 30) this.word = undefined
+      if (word.held < 0 && word.shown.every((v, i) => v >= 1 || word.text[i] === " ")) word.held = 0
+      if (word.held >= 0) word.held += dt
+      const fade = clamp(1 - (word.held - HOLD) / FADE, 0, 1)
+      if (fade < 1) word.shown.forEach((v, i) => (word.shown[i] = Math.min(v, fade)))
+      // Gives up on letters whose stream never came (a column frozen by an error, say).
+      if (fade <= 0 || word.t > HOLD * 3) this.word = undefined
       return
     }
     this.egg -= dt
@@ -393,7 +397,7 @@ class Matrix extends Canvas {
     this.egg = eggWait(true) * TIME_SCALE
     const text = this.cols >= 27 ? "FOLLOW THE WHITE RABBIT @" : "WAKE UP"
     const col = Math.floor((this.cols - text.length) / 2)
-    this.word = { text, col, row: 2, shown: new Float32Array(text.length), t: 0 }
+    this.word = { text, col, row: 2, shown: new Float32Array(text.length), t: 0, held: -1 }
     for (let i = 0; i < text.length; i++) {
       if (text[i] === " ") continue
       const s = this.spawn(-rand(0, 8), true, col + i)
