@@ -347,9 +347,9 @@ bun dev/pixel-check.ts [id] [activity] [time]     # real-pixel mode against a mo
 bun dev/poke.ts <id> [activity] [time] <fx> <fy> [seconds...] # click at a point (fractions of the screen)
 bun dev/fade.ts <id>:day <id>:night 50            # a frame halfway through a crossfade, and its cost
 bun dev/gif.ts <id> [activity] [time]             # a looping GIF at 3x speed in dev/out
-bun run screenshots                               # fails if the README gallery is out of date
-bun run screenshots:update                        # re-renders it (teeming at 45 s)
-bun dev/gif.ts all                                # re-renders the README's GIFs
+bun run screenshots                               # fails if the README gallery differs from the published one
+bun run screenshots:update                        # re-renders it into screenshots/ (teeming at 45 s)
+bun dev/gif.ts all                                # re-renders the README's GIFs into screenshots/
 ```
 
 - `check.ts` runs the real engine on a mock 160x45 screen. "cells change per frame" is flicker: lower is calmer.
@@ -379,8 +379,27 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
 1. Put it in `wallpapers/<id>.ts` as a named export, and add it to `wallpapers/index.ts`.
 2. Run `bun run typecheck` and `bun dev/check.ts <id>`, and look at `dev/snap.ts` and `dev/preview.ts` output at every
    time of day.
-3. Add it to the README's wallpaper list, gallery and GIF grid. Add its best-looking time of day to `BEST` in `dev/gif.ts`, then run `bun run screenshots:update` and
-   `bun dev/gif.ts all`.
+3. Add it to the README's wallpaper list, gallery and GIF grid. Add its best-looking time of day to `BEST` in
+   `dev/gif.ts`. CI publishes its screenshots once it's merged; a maintainer adds its GIF (see below).
+
+## README images
+
+The README's images live on the orphan `assets` branch and are linked by URL, so installing the plugin doesn't
+download them. Don't commit images to `main`. The dev tools check out that branch at `screenshots/` (a git worktree,
+ignored on `main`) the first time they need it.
+
+- **Screenshots** update themselves: CI renders every wallpaper, and when a pull request changes one it warns and
+  attaches the fresh renders as an artifact for review. Once the change is on `main`, CI commits them to `assets`.
+- **GIFs and the rest** (`hero.gif`, `menu.png`, the farm's seasons and rain) are updated by hand, by anyone who can
+  push to `assets`:
+
+  ```sh
+  git -C screenshots pull origin assets
+  bun dev/gif.ts all                                # or copy the new image into screenshots/
+  git -C screenshots commit -am "Update GIFs" && git -C screenshots push origin assets
+  ```
+
+  Push after the change they show is on `main`. A new file needs `git -C screenshots add` first.
 
 ## Your own package
 

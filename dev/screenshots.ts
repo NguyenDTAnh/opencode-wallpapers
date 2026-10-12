@@ -1,9 +1,11 @@
 // Re-renders the README gallery (teeming at 45 s via dev/snap.ts) and fails if any screenshot differs from the
-// committed one beyond a tiny tolerance; --update writes the fresh renders instead. Naming wallpapers limits it to them:
-// bun dev/screenshots.ts [--update] [wallpaper...]
+// published one on the assets branch (see dev/assets.ts) beyond a tiny tolerance, copying the stale ones' fresh renders
+// to dev/out/screenshots/; --update writes the fresh renders into screenshots/ instead. Naming wallpapers limits it to
+// them: bun dev/screenshots.ts [--update] [wallpaper...]
 import { availableParallelism } from "node:os"
 import { TIMES } from "../src/engine"
 import { WALLPAPERS } from "../wallpapers"
+import { assets } from "./assets"
 import { decodePng } from "./png"
 
 const update = process.argv.includes("--update")
@@ -11,6 +13,7 @@ const ids = process.argv.slice(2).filter((arg) => !arg.startsWith("--"))
 const unknown = ids.filter((id) => !WALLPAPERS.some((w) => w.id === id))
 if (unknown.length) throw new Error(`unknown wallpaper ${unknown.join(", ")}`)
 const shots = (ids.length ? WALLPAPERS.filter((w) => ids.includes(w.id)) : WALLPAPERS).flatMap((w) => TIMES.map((time) => ({ id: w.id, time, file: `screenshots/${w.id}${time === "day" ? "" : `-${time}`}.png` })))
+assets()
 const queue = [...shots]
 const stale: string[] = []
 await Promise.all(
@@ -23,24 +26,11 @@ await Promise.all(
         await Bun.write(shot.file, fresh)
         continue
       }
-      const committed = Bun.file(shot.file)
-      if (!(await committed.exists())) {
-        stale.push(`${shot.file}: missing`)
-        continue
+      const reason = await staleness(fresh, Bun.file(shot.file))
+      if (reason) {
+        stale.push(`${shot.file}: ${reason}`)
+        await Bun.write(`dev/out/${shot.file}`, fresh)
       }
-      const a = decodePng(fresh)
-      const b = decodePng(await committed.bytes())
-      if (a.width !== b.width || a.height !== b.height) {
-        stale.push(`${shot.file}: ${b.width}x${b.height}, expected ${a.width}x${a.height}`)
-        continue
-      }
-      // Math functions round slightly differently across CPUs, which can flip a threshold here and there: city at night
-      // drew 92 pixels differently on GitHub's Linux x64 than on macOS arm64. Real scene changes touch far more.
-      let differ = 0
-      for (let p = 0; p < a.rgba.length; p += 4) {
-        if (Math.max(Math.abs(a.rgba[p] - b.rgba[p]), Math.abs(a.rgba[p + 1] - b.rgba[p + 1]), Math.abs(a.rgba[p + 2] - b.rgba[p + 2])) > 2) differ++
-      }
-      if (differ > a.width * a.height * 0.0005) stale.push(`${shot.file}: ${differ} pixels differ`)
     }
   }),
 )
@@ -52,5 +42,19 @@ if (!stale.length) {
   console.log(`${shots.length} screenshots up to date`)
   process.exit(0)
 }
-console.log(`${stale.sort().join("\n")}\nstale screenshots: run bun dev/screenshots.ts --update and commit the result (fresh renders are in dev/out)`)
+console.log(`${stale.sort().join("\n")}\nstale screenshots (fresh renders are in dev/out/screenshots): CI publishes them to the assets branch once this reaches main; see "README images" in CONTRIBUTING.md`)
 process.exit(1)
+
+async function staleness(fresh: Uint8Array, published: Bun.BunFile) {
+  if (!(await published.exists())) return "missing"
+  const a = decodePng(fresh)
+  const b = decodePng(await published.bytes())
+  if (a.width !== b.width || a.height !== b.height) return `${b.width}x${b.height}, expected ${a.width}x${a.height}`
+  // Math functions round slightly differently across CPUs, which can flip a threshold here and there: city at night
+  // drew 92 pixels differently on GitHub's Linux x64 than on macOS arm64. Real scene changes touch far more.
+  let differ = 0
+  for (let p = 0; p < a.rgba.length; p += 4) {
+    if (Math.max(Math.abs(a.rgba[p] - b.rgba[p]), Math.abs(a.rgba[p + 1] - b.rgba[p + 1]), Math.abs(a.rgba[p + 2] - b.rgba[p + 2])) > 2) differ++
+  }
+  if (differ > a.width * a.height * 0.0005) return `${differ} pixels differ`
+}
