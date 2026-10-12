@@ -46,7 +46,7 @@ const LOOKS: Record<Time, Look> = {
     ],
     fill: 0.32,
   },
-  // A deep plum fading to black, the marks amber, coral, rose, gold, violet and a pale peach.
+  // A deep plum fading to black, the marks amber, coral, rose, gold, violet, magenta and peach.
   sunset: {
     sky: [
       [0, [0.045, 0.008, 0.04]],
@@ -54,16 +54,17 @@ const LOOKS: Record<Time, Look> = {
       [1, [0.006, 0.001, 0.006]],
     ],
     colors: [
-      [1, 0.48, 0.06],
-      [1, 0.24, 0.16],
-      [1, 0.2, 0.5],
-      [1, 0.74, 0.22],
-      [0.72, 0.2, 0.95],
-      [1, 0.66, 0.46],
+      [1, 0.45, 0.04],
+      [1, 0.18, 0.12],
+      [1, 0.16, 0.45],
+      [1, 0.72, 0.12],
+      [0.68, 0.18, 0.95],
+      [0.95, 0.12, 0.75],
+      [1, 0.56, 0.32],
     ],
     fill: 0.3,
   },
-  // Navy-black, the marks cobalt, teal, violet, cyan, magenta, green and a pale cobalt where day has white.
+  // Navy-black, the marks cobalt, teal, violet, aqua, magenta, green and a sky blue where day has white.
   night: {
     sky: [
       [0, [0.003, 0.005, 0.022]],
@@ -73,20 +74,21 @@ const LOOKS: Record<Time, Look> = {
       [0.16, 0.3, 1],
       [0.04, 0.72, 0.66],
       [0.5, 0.22, 1],
-      [0.06, 0.58, 1],
+      [0.05, 0.75, 1],
       [0.82, 0.12, 0.78],
       [0.12, 0.8, 0.36],
-      [0.45, 0.58, 1],
+      [0.32, 0.52, 1],
     ],
     fill: 0.3,
   },
 }
 
-// How many marks fly at once and how fast they come, in world units per scene second.
-const STREAM: Record<Activity, { count: number; speed: number }> = {
-  calm: { count: 8, speed: 0.28 },
-  lively: { count: 20, speed: 0.6 },
-  teeming: { count: 30, speed: 0.85 },
+// How many marks fly at once on a 16:9 screen, how fast they come, in world units per scene second, and how fast they
+// turn, in radians per scene second.
+const STREAM: Record<Activity, { count: number; speed: number; spin: number }> = {
+  calm: { count: 7, speed: 0.22, spin: 0.4 },
+  lively: { count: 20, speed: 0.6, spin: 0.65 },
+  teeming: { count: 30, speed: 0.85, spin: 0.65 },
 }
 
 // A flying mark: its middle in world units (x right, y down, z away from the camera), a sideways push from a click,
@@ -109,7 +111,6 @@ class FlyingOpenCode extends Canvas {
   private readonly activity: Activity
   private readonly look: Look
   private marks: Mark[] = []
-  private placed = false
   private surge = 0
   private egg = eggWait() * TIME_SCALE
   private readonly shade = new Float32Array(6)
@@ -141,7 +142,7 @@ class FlyingOpenCode extends Canvas {
       vx: 0,
       vy: 0,
       turn: rand(0, TAU),
-      spin: rand(0.4, 0.9) * (Math.random() < 0.5 ? -1 : 1),
+      spin: STREAM[this.activity].spin * rand(0.7, 1.3) * (Math.random() < 0.5 ? -1 : 1),
       color: colors[Math.floor(Math.random() * colors.length)],
       size: 1,
       extra: false,
@@ -199,7 +200,7 @@ class FlyingOpenCode extends Canvas {
       const f = look.fill
       // Facing the camera it catches the light; edge-on it dims a little, as the old flying logos did.
       const facing = Math.abs(Math.cos(m.turn))
-      const lit = fade * (0.6 + 0.4 * facing + 0.35 * facing ** 24)
+      const lit = fade * (0.7 + 0.35 * facing + 0.3 * facing ** 24)
       shade.set([c[0] * lit, c[1] * lit, c[2] * lit, c[0] * f * lit, c[1] * f * lit, c[2] * f * lit])
       const b = BLOCK * m.size
       const tall = (b * 5 * H) / m.z
@@ -253,9 +254,10 @@ class FlyingOpenCode extends Canvas {
 
   protected override layout() {
     const { W, H, hdr } = this
-    // Fill the stream once the screen's shape is known.
-    if (!this.placed) this.marks = Array.from({ length: STREAM[this.activity].count }, () => this.spawn(rand(NEAR * 2, FAR)))
-    this.placed = true
+    // Fill the stream once the screen's shape is known, as densely on a wide screen as on a 16:9 one.
+    const count = Math.round(STREAM[this.activity].count * clamp(this.A / (16 / 9), 0.6, 1.6))
+    const stream = this.marks.filter((m) => !m.extra)
+    this.marks = [...stream.slice(0, count), ...Array.from({ length: Math.max(0, count - stream.length) }, () => this.spawn(rand(NEAR * 2, FAR))), ...this.marks.filter((m) => m.extra)]
     const stops = this.look.sky
     for (let y = 0; y < H; y++) {
       const v = (y + 0.5) / H
