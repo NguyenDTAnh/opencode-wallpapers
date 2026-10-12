@@ -188,9 +188,9 @@ class FlowerBox extends Canvas {
   }
 
   private blob(r: number, i: number, life = Infinity): Blob {
-    const speed = { calm: 0.03, lively: 0.045, teeming: 0.05 }[this.activity] * (1 + 0.3 * i)
+    const speed = { calm: 0.03, lively: 0.04, teeming: 0.035 }[this.activity] * (1 + 0.2 * i)
     const heading = rand(0, TAU)
-    const spin = { calm: 0.22, lively: 0.32, teeming: 0.35 }[this.activity]
+    const spin = { calm: 0.2, lively: 0.27, teeming: 0.2 }[this.activity]
     return {
       x: 0,
       y: 0,
@@ -204,7 +204,7 @@ class FlowerBox extends Canvas {
       b: rand(0, TAU),
       ra: spin * rand(0.8, 1.2),
       rb: spin * rand(0.45, 0.7),
-      phase: rand(0, 4),
+      phase: i + rand(0, 0.5),
       rate: 1 / ({ calm: 30, lively: 20, teeming: 18 }[this.activity] * rand(0.9, 1.1)),
       life,
       age: 0,
@@ -244,7 +244,8 @@ class FlowerBox extends Canvas {
         b.ky = side * Math.abs(b.ky)
         b.y = clamp(b.y, m, 1 - m)
       }
-      b.a += b.ra * k * lerp(1, 2.5, (burst - 1) / 7)
+      // A knock from a click sets it spinning faster until the push dies away.
+      b.a += b.ra * k * (lerp(1, 2.5, (burst - 1) / 7) + 6 * Math.hypot(b.kx, b.ky))
       b.b += b.rb * k
       b.phase += b.rate * k * burst
       if (this.activity !== "teeming") continue
@@ -293,7 +294,6 @@ class FlowerBox extends Canvas {
       const k = 0.14 / Math.max(d, 0.02)
       b.kx += (b.x - x) * k
       b.ky += (b.y - y) * k
-      b.ra *= 1.6
       pushed = true
     }
     if (pushed || this.blobs.length > 5) return
@@ -343,15 +343,15 @@ class FlowerBox extends Canvas {
     // Two axes of spin plus a slow wobble of the second.
     const ca = Math.cos(b.a)
     const sa = Math.sin(b.a)
-    const cb = Math.cos(b.b)
-    const sb = Math.sin(b.b + 0.4 * Math.sin(b.a * 0.37))
-    const cbb = Math.sqrt(1 - sb * sb) * Math.sign(cb || 1)
+    const tilt = b.b + 0.4 * Math.sin(b.a * 0.37)
+    const cb = Math.cos(tilt)
+    const sb = Math.sin(tilt)
     const R = b.r * grow * H
     const gloom = 1 - 0.55 * this.gloom
     const look = this.look
     const s = this.shade
     s.set([look.key[0] * gloom, look.key[1] * gloom, look.key[2] * gloom, look.ambient, look.glint[0] * gloom, look.glint[1] * gloom, look.glint[2] * gloom, look.glintTint, look.fill[0] * gloom, look.fill[1] * gloom, look.fill[2] * gloom])
-    const box = project(this.model, this.view, this.normals, this.screen, ca, sa, cbb, sb, b.x * H, b.y * H, R)
+    const box = project(this.model, this.view, this.normals, this.screen, ca, sa, cb, sb, b.x * H, b.y * H, R)
     const x0 = Math.max(0, Math.floor(box[0]))
     const y0 = Math.max(0, Math.floor(box[1]))
     const x1 = Math.min(this.W - 1, Math.ceil(box[2]))
