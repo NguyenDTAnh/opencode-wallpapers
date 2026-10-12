@@ -379,8 +379,7 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
 1. Put it in `wallpapers/<id>.ts` as a named export, and add it to `wallpapers/index.ts`.
 2. Run `bun run typecheck` and `bun dev/check.ts <id>`, and look at `dev/snap.ts` and `dev/preview.ts` output at every
    time of day.
-3. Add it to the README's wallpaper, activity, time-of-day, agent reaction and click sections, and to the gallery and
-   GIF grid. Add its best-looking time of day to `BEST` in `dev/gif.ts`, then run `bun run screenshots:update` and
+3. Add it to the README's wallpaper list, gallery and GIF grid. Add its best-looking time of day to `BEST` in `dev/gif.ts`, then run `bun run screenshots:update` and
    `bun dev/gif.ts all`.
 
 ## Your own package
