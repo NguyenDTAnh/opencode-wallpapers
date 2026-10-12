@@ -292,6 +292,15 @@ export abstract class Canvas {
     this.restored = true
   }
 
+  // Makes what hdr holds now the background and still frame, for scenes whose whole view changes for a while and then
+  // holds still, such as a walking camera that pauses: once kept, frames that restore() and draw only small things
+  // cost as little as in any other scene. The next finish() tone-maps and refits everything once.
+  protected hold() {
+    this.background = this.hdr.slice()
+    this.still = this.background
+    this.stillExposure = NaN
+  }
+
   // Marks pixels a scene's own loop writes during render(), x0..x1 by y0..y1 inclusive.
   protected touch(x0: number, y0: number, x1: number, y1: number) {
     addBox(this.touched, x0, y0, x1, y1)
