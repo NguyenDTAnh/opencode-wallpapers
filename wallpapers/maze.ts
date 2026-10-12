@@ -78,7 +78,7 @@ const LOOKS: Record<Time, Look> = {
     lamp: 0.12,
     ambient: 0.4,
     side: 0.74,
-    solid: [0.12, 0.05, 0.03],
+    solid: [0.06, 0.035, 0.03],
     flip: [0.5, 0.04, 0.24],
     face: [0.66, 0.42, 0.02],
     ink: [0.04, 0.012, 0.005],
@@ -106,8 +106,8 @@ const LOOKS: Record<Time, Look> = {
 // a run and the pause looking down the new corridor after a turn.
 const PACE: Record<Activity, { speed: number; turn: number; rest: number; look: number }> = {
   calm: { speed: 0.3, turn: 2.4, rest: 0.4, look: 18 },
-  lively: { speed: 0.9, turn: 1, rest: 0.3, look: 5 },
-  teeming: { speed: 1.2, turn: 0.8, rest: 0.25, look: 4 },
+  lively: { speed: 0.9, turn: 1, rest: 0.3, look: 5.5 },
+  teeming: { speed: 1.2, turn: 0.8, rest: 0.25, look: 4.5 },
 }
 
 // A spinning polyhedron floating in a corridor: its cell, spin angles and rates, how grown it is, and whether it is
@@ -903,7 +903,7 @@ export const maze: Wallpaper = {
   description: "The old 3D maze screensaver: gliding through red brick corridors under a tiled ceiling, turning at every junction",
   activity: {
     calm: "Long looks down each corridor between slow walks and turns",
-    lively: "A steady glide through the maze, pausing briefly at the turns",
+    lively: "Gliding down the corridors, pausing to look along each new one",
     teeming: "A little quicker, with spinning polyhedra floating in the corridors",
   },
   scrim: {
