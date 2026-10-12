@@ -179,10 +179,10 @@ class Pipes extends Canvas {
     this.supersample = 1
     this.activity = settings.activity
     this.look = LOOKS[settings.time]
-    this.speed = { calm: 0.4, lively: 0.75, teeming: 1.4 }[this.activity]
+    this.speed = { calm: 0.2, lively: 0.375, teeming: 0.7 }[this.activity]
     this.count = { calm: 1, lively: 3, teeming: 6 }[this.activity]
     this.bends = { calm: 0, lively: 0.1, teeming: 0.35 }[this.activity]
-    this.limit = { calm: 600, lively: 400, teeming: 260 }[this.activity]
+    this.limit = { calm: 1200, lively: 800, teeming: 520 }[this.activity]
     this.waits = Array.from({ length: this.count }, (_, i) => (i === 0 ? 0 : rand(1, 4) * i))
   }
 
@@ -268,7 +268,7 @@ class Pipes extends Canvas {
     // Grow the scene a while before the first frame, so it never opens on an empty screen.
     if (!this.grown) {
       this.grown = true
-      for (let t = { calm: 200, lively: 60, teeming: 28 }[this.activity]; t > 0; t -= 0.05) this.grow(0.05)
+      for (let t = { calm: 400, lively: 120, teeming: 56 }[this.activity]; t > 0; t -= 0.05) this.grow(0.05)
     }
     for (let y = 0; y < H; y++) {
       const k = smoothstep(0, 1, (y + 0.5) / H)
