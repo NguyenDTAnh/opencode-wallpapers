@@ -1,5 +1,5 @@
-// Compiles the plugin to dist/tui.js and the wallpaper API to dist/api.js with its type declarations, for the npm
-// package: bun dev/build.ts
+// Compiles the plugin to dist/tui.js and the wallpaper API to dist/api.js with its type declarations, for the release
+// branch that CI publishes (see CONTRIBUTING.md) and the npm package: bun dev/build.ts
 // OpenTUI's Solid JSX transform skips files under node_modules, so an installed package must ship compiled JSX.
 // A git clone loads tui.tsx directly and never needs this.
 import { rmSync } from "node:fs"

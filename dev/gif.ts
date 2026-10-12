@@ -1,11 +1,13 @@
 // Renders a wallpaper's scene directly (no terminal conversion) to a looping animated GIF:
 // bun dev/gif.ts <wallpaper> [calm|lively|teeming] [day|sunset|night] [WxH] [seconds] → dev/out/<id>-<activity>-<time>.gif
-// bun dev/gif.ts all → screenshots/<id>.gif for every wallpaper, and screenshots/hero.gif
+// bun dev/gif.ts all → screenshots/<id>.gif for every wallpaper, and screenshots/hero.gif (the assets branch: see
+// dev/assets.ts)
 // Scenes are recorded from START seconds in, played back SPEED times faster than in the terminal, and loop by
 // crossfading the last FADE seconds into the first frames.
 import { mkdirSync } from "node:fs"
 import { ACTIVITIES, TIMES, type Settings, type Time, type Wallpaper } from "../src/engine"
 import { WALLPAPERS } from "../wallpapers"
+import { assets } from "./assets"
 import { wallpapers } from "./wallpapers"
 
 const SPEED = 3
@@ -27,6 +29,7 @@ type Shot = { wallpaper: Wallpaper; settings: Settings; seconds: number }
 const args = process.argv.slice(2)
 mkdirSync("dev/out", { recursive: true })
 if (args[0] === "all") {
+  assets()
   for (const wallpaper of WALLPAPERS) {
     const settings = { activity: "teeming" as const, time: BEST[wallpaper.id] ?? "day" }
     await write(`screenshots/${wallpaper.id}.gif`, [{ wallpaper, settings, seconds: 8 }], 480, 268, FADE)

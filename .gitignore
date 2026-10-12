@@ -1,3 +1,5 @@
 node_modules
 dev/out
 dist
+# The assets branch, checked out by dev/assets.ts
+screenshots/
