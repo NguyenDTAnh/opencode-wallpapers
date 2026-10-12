@@ -355,6 +355,8 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
 - `check.ts` runs the real engine on a mock 160x45 screen. "cells change per frame" is flicker: lower is calmer.
   `--quiet` prints only failures, and it fails on flicker above `--max-flicker` (150) and, if given, on frames slower
   than `--max-ms`; CI runs `--quiet --max-ms=60`. Dev renders seed `Math.random`, so they are reproducible.
+  Wallpapers whose whole view moves now and then (the maze's walking camera, listed in `LONG`) play for two minutes,
+  so their flicker is averaged over moving and still stretches alike.
   Errors thrown in `step` or `render` show up here; inside OpenCode they are only logged to `WALLPAPER_DEBUG`.
   `--verify-dirty` plays each combination twice, refitting every cell (`WALLPAPER_DIRTY=0`) and then only what
   changed, with text edits, redraws, agent events and a crossfade mixed in, and fails on any cell that differs.

@@ -7,6 +7,7 @@ import { flowerbox } from "./flowerbox"
 import { flyingOpenCode } from "./flying-opencode"
 import { hauntedHouse } from "./haunted-house"
 import { jungle } from "./jungle"
+import { maze } from "./maze"
 import { megacity } from "./megacity"
 import { mystify } from "./mystify"
 import { ocean } from "./ocean"
@@ -17,4 +18,4 @@ import { space } from "./space"
 import { tundra } from "./tundra"
 import { zen } from "./zen"
 
-export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox, pipes, mystify, flyingOpenCode]
+export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox, pipes, mystify, flyingOpenCode, maze]

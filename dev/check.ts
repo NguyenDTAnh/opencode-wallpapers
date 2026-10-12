@@ -32,11 +32,17 @@ const cursor = { x: 10, y: 40, visible: true }
 let failed = 0
 let slowest = { ms: -1, name: "" }
 let busiest = { flicker: -1, name: "" }
-const frames = 240
+// Wallpapers whose whole view moves now and then, such as the maze's walking camera, change hundreds of cells a frame
+// while moving and almost none while still, so 16 seconds say more about where the run lands than about the scene.
+// They play for two minutes instead, held to the same flicker limit; --verify-dirty, which keeps every frame of its
+// shorter scripted run, checks only their cells.
+const LONG = ["maze"]
 const runs = (ids.length ? wallpapers.filter((w) => ids.includes(w.id)) : wallpapers).flatMap((w) => ACTIVITIES.flatMap((activity) => TIMES.map((time) => ({ wallpaper: w, activity, time }))))
 for (const { wallpaper, activity, time } of runs) {
-  const reference = verify ? play(wallpaper, activity, time, "0").recording : undefined
-  const result = play(wallpaper, activity, time, "1", reference)
+  const long = LONG.includes(wallpaper.id)
+  const frames = long && !verify ? 1800 : 240
+  const reference = verify ? play(wallpaper, activity, time, "0", frames).recording : undefined
+  const result = play(wallpaper, activity, time, "1", frames, reference)
   const errors = (await Bun.file(debug).exists()) ? (await Bun.file(debug).text()).split("\n").filter((l) => l.startsWith("error:")) : []
   rmSync(debug, { force: true })
   const name = `${wallpaper.id} ${activity} ${time}`
@@ -44,7 +50,7 @@ for (const { wallpaper, activity, time } of runs) {
   if (result.flicker > busiest.flicker) busiest = { flicker: result.flicker, name }
   const problems = [
     errors.length && `${errors.length} errors`,
-    result.flicker > maxFlicker && `flicker over ${maxFlicker}`,
+    result.flicker > maxFlicker && !(long && verify) && `flicker over ${maxFlicker}`,
     result.ms > maxMs && `slower than ${maxMs} ms`,
     result.mismatches && `${result.mismatches} cells differ from a full refit, first ${result.first}`,
     result.uncovered && `${result.uncovered} pixels drawn outside the touched boxes, first ${result.where}`,
@@ -59,7 +65,7 @@ if (failed) process.exit(1)
 
 // Plays one combination, with WALLPAPER_DIRTY set to dirty. Under --verify-dirty it records every frame, and compares
 // each against the reference recording when given.
-function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: string, reference?: Uint16Array[]) {
+function play(wallpaper: Wallpaper, activity: Activity, time: Time, dirty: string, frames: number, reference?: Uint16Array[]) {
   process.env.WALLPAPER_DIRTY = dirty
   // A fresh engine and the same random stream per combination, so a run doesn't depend on which others ran before it.
   const screen = mockScreen()
