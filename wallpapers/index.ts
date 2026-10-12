@@ -7,6 +7,7 @@ import { flowerbox } from "./flowerbox"
 import { hauntedHouse } from "./haunted-house"
 import { jungle } from "./jungle"
 import { megacity } from "./megacity"
+import { mystify } from "./mystify"
 import { ocean } from "./ocean"
 import { pipes } from "./pipes"
 import { prehistoric } from "./prehistoric"
@@ -15,4 +16,4 @@ import { space } from "./space"
 import { tundra } from "./tundra"
 import { zen } from "./zen"
 
-export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox, pipes]
+export const WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse, flowerbox, pipes, mystify]

@@ -35,7 +35,7 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 ## Wallpapers
 
 `ocean` · `desert` · `jungle` · `space` · `farm` · `tundra` · `beach` · `city` · `zen` · `prehistoric` · `rider` ·
-`megacity` · `dome` · `haunted-house` · `flowerbox` · `pipes`
+`megacity` · `dome` · `haunted-house` · `flowerbox` · `pipes` · `mystify`
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -73,6 +73,7 @@ At teeming, played back at 3x speed:
 | ![Rider in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/rider.gif) | ![Megacity in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/megacity.gif) |
 | ![Dome in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/dome.gif) | ![Haunted house in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house.gif) |
 | ![Flower Box in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox.gif) | ![3D Pipes in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes.gif) |
+| ![Mystify in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify.gif) | |
 
 | | Day | Sunset | Night |
 | --- | --- | --- | --- |
@@ -92,6 +93,7 @@ At teeming, played back at 3x speed:
 | Haunted house | ![Haunted house by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house.png) | ![Haunted house at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house-sunset.png) | ![Haunted house at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house-night.png) |
 | Flower Box | ![Flower Box by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox.png) | ![Flower Box at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox-sunset.png) | ![Flower Box at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox-night.png) |
 | 3D Pipes | ![3D Pipes by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes.png) | ![3D Pipes at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes-sunset.png) | ![3D Pipes at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes-night.png) |
+| Mystify | ![Mystify by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify.png) | ![Mystify at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify-sunset.png) | ![Mystify at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify-night.png) |
 
 ## License
 
