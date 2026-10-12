@@ -133,9 +133,9 @@ const RED: RGB = [0.9, 0.05, 0.03]
 // rows, how often a lit glyph changes (per scene second, at full brightness), the share of streams far behind, and
 // whether bright code surges come now and then.
 const CAST: Record<Activity, { share: number; speed: [number, number]; length: [number, number]; mutate: number; far: number; surge: boolean }> = {
-  calm: { share: 0.3, speed: [4, 6], length: [5, 11], mutate: 0.15, far: 0.4, surge: false },
-  lively: { share: 0.8, speed: [6, 10], length: [6, 14], mutate: 0.3, far: 0.35, surge: false },
-  teeming: { share: 1.15, speed: [10, 16], length: [7, 16], mutate: 0.4, far: 0.35, surge: true },
+  calm: { share: 0.3, speed: [2, 3], length: [5, 11], mutate: 0.075, far: 0.4, surge: false },
+  lively: { share: 0.8, speed: [3, 5], length: [6, 14], mutate: 0.15, far: 0.35, surge: false },
+  teeming: { share: 1.15, speed: [5, 8], length: [7, 16], mutate: 0.2, far: 0.35, surge: true },
 }
 
 // A falling stream: its column, the row of its head (the glyph shown is the whole row below), its speed and length in
