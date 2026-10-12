@@ -51,6 +51,7 @@ With a light OpenCode theme the scene is washed out toward white instead of dimm
 | `rider` | A red capsule bike on pale cracked concrete, its rider walking up to it, with another of the gang speeding by now and then. |
 | `megacity` | A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light. |
 | `dome` | A vast black energy dome over a ruined city, its foot blazing with light under a ring of clouds, with a gunship crossing now and then. |
+| `haunted-house` | A crooked Victorian haunted house on a rise above a foggy graveyard under a huge moon, with a witch flying by now and then. |
 
 ### Activity
 
@@ -71,6 +72,7 @@ Every wallpaper has three activity levels, which set how much is going on behind
 | `rider` | The bike, the rider standing by it, and drifting dust | He walks slowly up to the bike and back, and paper and pebbles skitter in the gusts | He rides off in a red tail-light streak and slides back in sideways |
 | `megacity` | The glowing city, windows coming and going, and a distant bike now and then | Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky | Adds a biker gang streaming through, a sideways slide now and then, and an airship overhead |
 | `dome` | The dome, its slowly breathing light and the creeping cloud ring | Light pulses out along the streets, rubble floats up and the sky's ripples spread | The dome swells and recedes, shockwaves roll through the clouds, rubble swirls up and lightning flickers |
+| `haunted-house` | The house, a flickering candle and jack-o'-lanterns, creeping fog, a bat or two and a swaying swing | Adds bats pouring from the turret, ghosts drifting by and a ghoul peeking out from behind a gravestone | Adds a zombie shuffling through the graveyard, a hand clawing out of a grave, a witch crossing the moon and a light moving room to room |
 
 ### Time of day
 
@@ -107,6 +109,9 @@ menu to keep it fixed.
 - **Dome:** a smoky pale sky over a gray-green ruin with the dome's light dimmed by day, warm-lit clouds under an
   orange-red sky and a green-gold blaze at sunset, and at night a near-black sky over deep blue clouds with the city
   lit green and teal from the dome's foot.
+- **Haunted house:** a grim overcast afternoon in sickly green-gray light, a blood-orange sun sinking behind the
+  house with everything in silhouette at sunset, and a deep violet night under a huge gold-orange moon, with glowing
+  windows, flickering jack-o'-lanterns, teal ghosts and a green-tinged zombie.
 
 ## Seasons and weather
 
@@ -122,7 +127,7 @@ it fixed.
   winter.
 - **Zen garden:** cherry blossom in spring, green leaves in summer, red and gold leaves falling in autumn, and bare
   branches under a light snowfall in winter.
-- **Ocean, space, tundra, city, prehistoric, rider, megacity and dome** look the same all year.
+- **Ocean, space, tundra, city, prehistoric, rider, megacity, dome and haunted house** look the same all year.
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -147,9 +152,10 @@ Wallpapers quietly follow what the agent is doing:
 - **Working:** the scene moves a little faster while any session runs, barely at all when calm.
 - **Done:** when the last running session finishes, the wallpaper's visitor shows up: the whale, a tumbleweed, a
   toucan (fireflies flashing together at night), a comet, the tractor, a snowy owl, a sailboat, the blimp, the heron,
-  the T. rex, another rider of the gang, a biker gang or the gunship.
+  the T. rex, another rider of the gang, a biker gang, the gunship or a witch on her broomstick.
 - **Error:** after a failed run, dark clouds roll in (in the ocean and jungle the light shafts fade, in space the star
-  dims, on the rider's concrete their shadows drift by, and over the dome its blaze sinks) and the scene darkens
+  dims, on the rider's concrete their shadows drift by, over the dome its blaze sinks, and at the haunted house
+  lightning cracks and the lights gutter) and the scene darkens
   slightly. It clears when the agent works again, or after a couple of minutes.
 
 ## Clicks and surprises
@@ -172,6 +178,7 @@ every click; dialogs, popups and text are never pokes.
 | `rider` | The pavement cracks a little and pebbles scatter | Chunks of pavement float up around a crater, then drop back |
 | `megacity` | A bike rides up the avenue from the road, or a burst of windows lights up on the towers | A dome of light swells up silently at the far end of the avenue |
 | `dome` | A ripple through the clouds, a shockwave from the dome, or rubble kicked up off the city | A red motorbike tears across the city in a streak of tail light |
+| `haunted-house` | A window flashes with a figure standing in it, a ghoul pops up behind a gravestone, or bats burst out | Zombies climb out of their graves and dance in step |
 
 Click reactions that involve animals need the lively or teeming level. The rare events come along about once every
 hour or two of watching, never sooner than half an hour apart, and changing settings doesn't reset the wait.
@@ -224,7 +231,7 @@ At teeming, played back at 3x speed:
 | ![Beach in motion](screenshots/beach.gif) | ![City in motion](screenshots/city.gif) |
 | ![Zen garden in motion](screenshots/zen.gif) | ![Prehistoric in motion](screenshots/prehistoric.gif) |
 | ![Rider in motion](screenshots/rider.gif) | ![Megacity in motion](screenshots/megacity.gif) |
-| ![Dome in motion](screenshots/dome.gif) | |
+| ![Dome in motion](screenshots/dome.gif) | ![Haunted house in motion](screenshots/haunted-house.gif) |
 
 | | Day | Sunset | Night |
 | --- | --- | --- | --- |
@@ -241,6 +248,7 @@ At teeming, played back at 3x speed:
 | Rider | ![Rider by day](screenshots/rider.png) | ![Rider at sunset](screenshots/rider-sunset.png) | ![Rider at night](screenshots/rider-night.png) |
 | Megacity | ![Megacity by day](screenshots/megacity.png) | ![Megacity at sunset](screenshots/megacity-sunset.png) | ![Megacity at night](screenshots/megacity-night.png) |
 | Dome | ![Dome by day](screenshots/dome.png) | ![Dome at sunset](screenshots/dome-sunset.png) | ![Dome at night](screenshots/dome-night.png) |
+| Haunted house | ![Haunted house by day](screenshots/haunted-house.png) | ![Haunted house at sunset](screenshots/haunted-house-sunset.png) | ![Haunted house at night](screenshots/haunted-house-night.png) |
 
 ## License
 
