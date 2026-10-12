@@ -1,0 +1,18802 @@
+// @bun
+// tui.tsx
+import { memo as _$memo } from "@opentui/solid";
+import { effect as _$effect } from "@opentui/solid";
+import { insert as _$insert } from "@opentui/solid";
+import { createComponent as _$createComponent } from "@opentui/solid";
+import { createTextNode as _$createTextNode } from "@opentui/solid";
+import { insertNode as _$insertNode } from "@opentui/solid";
+import { setProp as _$setProp } from "@opentui/solid";
+import { createElement as _$createElement } from "@opentui/solid";
+import { Plugin } from "@opencode/plugin/tui";
+import { RGBA, TextAttributes } from "@opentui/core";
+import { For, createEffect, createSignal, onCleanup } from "solid-js";
+
+// src/engine.tsx
+import { MouseButton, NativeImagePool, Renderable } from "@opentui/core";
+import { appendFileSync } from "fs";
+
+// src/touched.ts
+var lists = new WeakMap;
+function trackTouched(hdr, list) {
+  lists.set(hdr, list);
+}
+function touch(hdr, x0, y0, x1, y1) {
+  const list = lists.get(hdr);
+  if (list)
+    addBox(list, x0, y0, x1, y1);
+}
+function addBox(list, x0, y0, x1, y1) {
+  const n = list.length;
+  if (n && x0 >= list[n - 4] - 1 && y0 >= list[n - 3] - 1 && x1 <= list[n - 2] + 1 && y1 <= list[n - 1] + 1) {
+    list[n - 4] = Math.min(list[n - 4], x0);
+    list[n - 3] = Math.min(list[n - 3], y0);
+    list[n - 2] = Math.max(list[n - 2], x1);
+    list[n - 1] = Math.max(list[n - 1], y1);
+    return;
+  }
+  list.push(x0, y0, x1, y1);
+}
+
+// src/points.ts
+var POINT_STRIDE = 10;
+
+class Points {
+  on = false;
+  count = 0;
+  data = new Float32Array(POINT_STRIDE * 64);
+  next = new Float32Array(POINT_STRIDE * 64);
+  pending = 0;
+  add(hdr, W, H, x, y, r, g, b, size = 1, glide = false) {
+    if (x < 0 || y < 0 || x >= W || y >= H)
+      return;
+    const o = ((y | 0) * W + (x | 0)) * 3;
+    hdr[o] += r;
+    hdr[o + 1] += g;
+    hdr[o + 2] += b;
+    touch(hdr, x | 0, y | 0, x | 0, y | 0);
+    if (!this.on)
+      return;
+    if ((this.pending + 1) * POINT_STRIDE > this.next.length) {
+      const grown = new Float32Array(this.next.length * 2);
+      grown.set(this.next);
+      this.next = grown;
+    }
+    const p = this.pending++ * POINT_STRIDE;
+    const d = this.next;
+    d[p] = x;
+    d[p + 1] = y;
+    d[p + 2] = size;
+    d[p + 3] = glide ? 1 : 0;
+    d[p + 4] = r;
+    d[p + 5] = g;
+    d[p + 6] = b;
+    d[p + 7] = hdr[o];
+    d[p + 8] = hdr[o + 1];
+    d[p + 9] = hdr[o + 2];
+  }
+  resolve(hdr, W, scale, exposure) {
+    const done = this.data;
+    this.data = this.next;
+    this.next = done;
+    this.count = resolvePoints(this.data, this.pending, hdr, W, scale, exposure);
+    this.pending = 0;
+  }
+}
+function resolvePoints(d, pending, hdr, W, scale, exposure) {
+  let count = 0;
+  for (let p = 0;p < pending * POINT_STRIDE; p += POINT_STRIDE) {
+    const i = (d[p + 1] | 0) * W + (d[p] | 0);
+    if (hdr[i * 3] !== d[p + 7] || hdr[i * 3 + 1] !== d[p + 8] || hdr[i * 3 + 2] !== d[p + 9])
+      continue;
+    const k = scale[i] * exposure;
+    const q = count++ * POINT_STRIDE;
+    for (let c = 0;c < 4; c++)
+      d[q + c] = d[p + c];
+    for (let c = 0;c < 3; c++) {
+      hdr[i * 3 + c] -= d[p + 4 + c];
+      const under = hdr[i * 3 + c] * k;
+      d[q + 4 + c] = (aces(under + d[p + 4 + c] * k) - aces(under)) * 255;
+    }
+  }
+  return count;
+}
+function aces(v) {
+  const mapped = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14);
+  return mapped < 0 ? 0 : mapped > 1 ? 1 : mapped;
+}
+function splat(hdr, W, H, x, y, r, g, b) {
+  const px = x - 0.5;
+  const py = y - 0.5;
+  const x0 = Math.floor(px);
+  const y0 = Math.floor(py);
+  const fx = px - x0;
+  const fy = py - y0;
+  touch(hdr, x0, y0, x0 + 1, y0 + 1);
+  for (let j = 0;j < 2; j++) {
+    const yi = y0 + j;
+    if (yi < 0 || yi >= H)
+      continue;
+    for (let i = 0;i < 2; i++) {
+      const xi = x0 + i;
+      if (xi < 0 || xi >= W)
+        continue;
+      const k = (i ? fx : 1 - fx) * (j ? fy : 1 - fy);
+      const o = (yi * W + xi) * 3;
+      hdr[o] += r * k;
+      hdr[o + 1] += g * k;
+      hdr[o + 2] += b * k;
+    }
+  }
+}
+
+// src/dots.ts
+var GLYPHS = [183, 8729, 8226];
+var FLAT = 400;
+var SCRIM = 0.5;
+var GLIDE = 0.08;
+var GAINS = [2, 1.5, 1.1];
+var SHARPENED = 1.5;
+var DOT = -2;
+
+class Dots {
+  size = new Uint8Array(0);
+  sub = new Uint8Array(0);
+  light = new Float32Array(0);
+  clear(cells) {
+    if (this.size.length !== cells) {
+      this.size = new Uint8Array(cells);
+      this.sub = new Uint8Array(cells);
+      this.light = new Float32Array(cells * 3);
+      return;
+    }
+    this.size.fill(0);
+    this.light.fill(0);
+  }
+  gather(points, alpha, PW, PH, W, H, desaturate, shade) {
+    if (!points?.count || alpha <= 0)
+      return;
+    gatherPoints(this.size, this.sub, this.light, points.data, points.count, alpha, W / PW, H / PH, W, H, desaturate, shade);
+  }
+}
+function gatherPoints(size, sub, light, d, count, alpha, sx, sy, W, H, desaturate, shade) {
+  for (let p = 0;p < count * POINT_STRIDE; p += POINT_STRIDE) {
+    const gx = d[p] * sx;
+    const gy = d[p + 1] * sy;
+    const cx = Math.floor(gx);
+    const cy = Math.floor(gy);
+    if (cx < 0 || cy < 0 || cx >= W || cy >= H)
+      continue;
+    const s = Math.min(3, Math.floor((gy - cy) * 4)) * 2 + ((gx - cx) * 2 >= 1 ? 1 : 0);
+    const l = d[p + 4] * 0.2126 + d[p + 5] * 0.7152 + d[p + 6] * 0.0722;
+    const r = (d[p + 4] + (l - d[p + 4]) * desaturate) * shade * alpha;
+    const g = (d[p + 5] + (l - d[p + 5]) * desaturate) * shade * alpha;
+    const b = (d[p + 6] + (l - d[p + 6]) * desaturate) * shade * alpha;
+    const u = gx - cx - 0.5;
+    const share = d[p + 3] && Math.abs(u) > 0.5 - GLIDE ? (Math.abs(u) - (0.5 - GLIDE)) / (GLIDE * 2) : 0;
+    const row = cy * W;
+    addDot(size, sub, light, row + cx, d[p + 2], s, r * (1 - share), g * (1 - share), b * (1 - share));
+    const nx = cx + (u > 0 ? 1 : -1);
+    if (share > 0 && nx >= 0 && nx < W)
+      addDot(size, sub, light, row + nx, d[p + 2], s & 6 | (u > 0 ? 0 : 1), r * share, g * share, b * share);
+  }
+}
+function addDot(size, sub, light, i, s, at, r, g, b) {
+  if (!size[i] || r + g + b > light[i * 3] + light[i * 3 + 1] + light[i * 3 + 2])
+    sub[i] = at;
+  size[i] = Math.max(size[i], Math.min(3, Math.max(1, Math.round(s))));
+  light[i * 3] += r;
+  light[i * 3 + 1] += g;
+  light[i * 3 + 2] += b;
+}
+function placeDot(dots, i, x, y, q, grid, scrim, GW, curve, held, char, fg, bg, o) {
+  let cover = 0;
+  for (let s = 0;s < 8; s++) {
+    const k2 = scrim[(y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)];
+    if (k2 > SCRIM)
+      return false;
+    cover += k2 / 8;
+  }
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (let s = 0;s < 8; s++) {
+    r += q[s * 3];
+    g += q[s * 3 + 1];
+    b += q[s * 3 + 2];
+  }
+  r /= 8;
+  g /= 8;
+  b /= 8;
+  let err = 0;
+  for (let s = 0;s < 8; s++)
+    err += (q[s * 3] - r) ** 2 + (q[s * 3 + 1] - g) ** 2 + (q[s * 3 + 2] - b) ** 2;
+  if (err > (held ? FLAT * 2 : FLAT))
+    return false;
+  const k = (1 - cover) * GAINS[dots.size[i] - 1];
+  char[i] = GLYPHS[dots.size[i] - 1];
+  bg[o] = r;
+  bg[o + 1] = g;
+  bg[o + 2] = b;
+  bg[o + 3] = 255;
+  for (let c = 0;c < 3; c++) {
+    let under = 0;
+    for (let s = 0;s < 8; s++)
+      under += grid[((y * 4 + (s >> 1)) * GW + x * 2 + (s & 1)) * 3 + c];
+    under /= 8;
+    lift[c] = (curve[Math.min(255, under + dots.light[i * 3 + c]) | 0] - curve[under | 0]) * k;
+  }
+  const fit = Math.min(1, (255 - r) / Math.max(0.001, lift[0]), (255 - g) / Math.max(0.001, lift[1]), (255 - b) / Math.max(0.001, lift[2]));
+  fg[o] = r + lift[0] * fit;
+  fg[o + 1] = g + lift[1] * fit;
+  fg[o + 2] = b + lift[2] * fit;
+  fg[o + 3] = 255;
+  return true;
+}
+var lift = new Float32Array(3);
+function lightDot(dots, i, x, y, q, grid, scrim, GW, curve) {
+  const s = dots.sub[i];
+  const g = (y * 4 + (s >> 1)) * GW + x * 2 + (s & 1);
+  const a = g * 3;
+  const k = 1 - scrim[g];
+  for (let c = 0;c < 3; c++) {
+    const under = grid[a + c];
+    q[s * 3 + c] += (curve[Math.min(255, under + dots.light[i * 3 + c] * SHARPENED) | 0] - curve[under | 0]) * k;
+  }
+}
+
+// src/egg.ts
+var EGG = Symbol.for("opencode-wallpapers.egg");
+var clock = globalThis[EGG] ??= { viewed: 0, due: -1 };
+function eggWait(next = false) {
+  if (process.env.WALLPAPER_EGG === "1")
+    return 3;
+  const wait = 1800 - Math.log(1 - Math.random()) * 3600;
+  if (next || clock.due < 0)
+    clock.due = clock.viewed + wait;
+  return Math.max(0, clock.due - clock.viewed);
+}
+function watchEgg(seconds) {
+  clock.viewed += seconds;
+}
+
+// src/math.ts
+var TAU = Math.PI * 2;
+function clamp(value, min, max) {
+  return value < min ? min : value > max ? max : value;
+}
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+function hash(n) {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453123;
+  return s - Math.floor(s);
+}
+function hash2(x, y) {
+  const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+  return s - Math.floor(s);
+}
+function hashString(text) {
+  let h = 2166136261;
+  for (let i = 0;i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967295;
+}
+function hsv(h, s, v) {
+  h = (h % 1 + 1) % 1;
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0:
+      return [v, t, p];
+    case 1:
+      return [q, v, p];
+    case 2:
+      return [p, v, t];
+    case 3:
+      return [p, q, v];
+    case 4:
+      return [t, p, v];
+    default:
+      return [v, p, q];
+  }
+}
+function noise1(x, seed = 0) {
+  const i = Math.floor(x);
+  const f = x - i;
+  const u = f * f * (3 - 2 * f);
+  return lerp(hash(i + seed * 57.3), hash(i + 1 + seed * 57.3), u);
+}
+function fbm1(x, seed = 0, octaves = 4) {
+  let sum = 0;
+  let amp = 0.5;
+  let freq = 1;
+  for (let i = 0;i < octaves; i++) {
+    sum += noise1(x * freq, seed + i * 13) * amp;
+    freq *= 2;
+    amp *= 0.5;
+  }
+  return sum;
+}
+function noise2(x, y) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  return lerp(lerp(hash2(ix, iy), hash2(ix + 1, iy), ux), lerp(hash2(ix, iy + 1), hash2(ix + 1, iy + 1), ux), uy);
+}
+function fbm2(x, y, octaves = 4) {
+  let sum = 0;
+  let amp = 0.5;
+  let freq = 1;
+  for (let i = 0;i < octaves; i++) {
+    sum += noise2(x * freq + i * 17.3, y * freq + i * 9.1) * amp;
+    freq *= 2;
+    amp *= 0.5;
+  }
+  return sum;
+}
+
+// src/octants.ts
+var OCTANTS = [
+  32,
+  118440,
+  118443,
+  129922,
+  118016,
+  9624,
+  118017,
+  118018,
+  118019,
+  118020,
+  9629,
+  118021,
+  118022,
+  118023,
+  118024,
+  9600,
+  118025,
+  118026,
+  118027,
+  118028,
+  130022,
+  118029,
+  118030,
+  118031,
+  118032,
+  118033,
+  118034,
+  118035,
+  118036,
+  118037,
+  118038,
+  118039,
+  118040,
+  118041,
+  118042,
+  118043,
+  118044,
+  118045,
+  118046,
+  118047,
+  130023,
+  118048,
+  118049,
+  118050,
+  118051,
+  118052,
+  118053,
+  118054,
+  118055,
+  118056,
+  118057,
+  118058,
+  118059,
+  118060,
+  118061,
+  118062,
+  118063,
+  118064,
+  118065,
+  118066,
+  118067,
+  118068,
+  118069,
+  129925,
+  118435,
+  118070,
+  118071,
+  118072,
+  118073,
+  118074,
+  118075,
+  118076,
+  118077,
+  118078,
+  118079,
+  118080,
+  118081,
+  118082,
+  118083,
+  118084,
+  9622,
+  118085,
+  118086,
+  118087,
+  118088,
+  9612,
+  118089,
+  118090,
+  118091,
+  118092,
+  9630,
+  118093,
+  118094,
+  118095,
+  118096,
+  9627,
+  118097,
+  118098,
+  118099,
+  118100,
+  118101,
+  118102,
+  118103,
+  118104,
+  118105,
+  118106,
+  118107,
+  118108,
+  118109,
+  118110,
+  118111,
+  118112,
+  118113,
+  118114,
+  118115,
+  118116,
+  118117,
+  118118,
+  118119,
+  118120,
+  118121,
+  118122,
+  118123,
+  118124,
+  118125,
+  118126,
+  118127,
+  118128,
+  118432,
+  118129,
+  118130,
+  118131,
+  118132,
+  118133,
+  118134,
+  118135,
+  118136,
+  118137,
+  118138,
+  118139,
+  118140,
+  118141,
+  118142,
+  118143,
+  118144,
+  118145,
+  118146,
+  118147,
+  118148,
+  118149,
+  118150,
+  118151,
+  118152,
+  118153,
+  118154,
+  118155,
+  118156,
+  118157,
+  118158,
+  118159,
+  9623,
+  118160,
+  118161,
+  118162,
+  118163,
+  9626,
+  118164,
+  118165,
+  118166,
+  118167,
+  9616,
+  118168,
+  118169,
+  118170,
+  118171,
+  9628,
+  118172,
+  118173,
+  118174,
+  118175,
+  118176,
+  118177,
+  118178,
+  118179,
+  118180,
+  118181,
+  118182,
+  118183,
+  118184,
+  118185,
+  118186,
+  118187,
+  9602,
+  118188,
+  118189,
+  118190,
+  118191,
+  118192,
+  118193,
+  118194,
+  118195,
+  118196,
+  118197,
+  118198,
+  118199,
+  118200,
+  118201,
+  118202,
+  118203,
+  118204,
+  118205,
+  118206,
+  118207,
+  118208,
+  118209,
+  118210,
+  118211,
+  118212,
+  118213,
+  118214,
+  118215,
+  118216,
+  118217,
+  118218,
+  118219,
+  118220,
+  118221,
+  118222,
+  118223,
+  118224,
+  118225,
+  118226,
+  118227,
+  118228,
+  118229,
+  118230,
+  118231,
+  118232,
+  118233,
+  118234,
+  9604,
+  118235,
+  118236,
+  118237,
+  118238,
+  9625,
+  118239,
+  118240,
+  118241,
+  118242,
+  9631,
+  118243,
+  9606,
+  118244,
+  118245,
+  9608
+];
+
+// src/smooth.ts
+var below = (ax, ay, bx, by) => (x, y) => y >= ay + (by - ay) * (x - ax) / (bx - ax);
+var T1 = 1 / 3;
+var T2 = 2 / 3;
+var GLYPHS2 = [
+  [129852, below(0, T2, 0.5, 1)],
+  [129853, below(0, T2, 1, 1)],
+  [129854, below(0, T1, 0.5, 1)],
+  [129855, below(0, T1, 1, 1)],
+  [129856, below(0, 0, 0.5, 1)],
+  [129857, below(0, T1, 0.5, 0)],
+  [129858, below(0, T1, 1, 0)],
+  [129859, below(0, T2, 0.5, 0)],
+  [129860, below(0, T2, 1, 0)],
+  [129861, below(0, 1, 0.5, 0)],
+  [129862, below(0, T2, 1, T1)],
+  [129863, below(0.5, 1, 1, T2)],
+  [129864, below(0, 1, 1, T2)],
+  [129865, below(0.5, 1, 1, T1)],
+  [129866, below(0, 1, 1, T1)],
+  [129867, below(0.5, 1, 1, 0)],
+  [129868, below(0.5, 0, 1, T1)],
+  [129869, below(0, 0, 1, T1)],
+  [129870, below(0.5, 0, 1, T2)],
+  [129871, below(0, 0, 1, T2)],
+  [129872, below(0.5, 0, 1, 1)],
+  [129873, below(0, T1, 1, T2)],
+  [9699, below(0, 0, 1, 1)],
+  [9698, below(0, 1, 1, 0)],
+  [129900, (x, y) => x <= 0.5 - Math.abs(y - 0.5)],
+  [129901, (x, y) => y <= 0.5 - Math.abs(x - 0.5)],
+  [129902, (x, y) => x >= 0.5 + Math.abs(y - 0.5)],
+  [129903, (x, y) => y >= 0.5 + Math.abs(x - 0.5)],
+  ...[1, 3, 5, 7].map((n) => [9600 + n, (_x, y) => y >= 1 - n / 8]),
+  ...[1, 2, 3, 5, 6, 7].map((n) => [9616 - n, (x) => x < n / 8])
+];
+var SHAPES = new Map(GLYPHS2);
+function measure(inside, cols, rows) {
+  const steps = 16;
+  return Float32Array.from({ length: cols * rows }, (_, s) => {
+    let n = 0;
+    for (let a = 0;a < steps; a++)
+      for (let b = 0;b < steps; b++)
+        if (inside((s % cols + (a + 0.5) / steps) / cols, (Math.floor(s / cols) + (b + 0.5) / steps) / rows))
+          n++;
+    return n / (steps * steps);
+  });
+}
+var N = GLYPHS2.length;
+var COVER = new Float32Array(N * 8);
+var FINE = new Float32Array(N * 32);
+var CENTERED = new Float32Array(N * 32);
+var INVERSE = new Float32Array(N);
+GLYPHS2.forEach(([, inside], k) => {
+  COVER.set(measure(inside, 2, 4), k * 8);
+  const fine = measure(inside, 4, 8);
+  FINE.set(fine, k * 32);
+  const mean = fine.reduce((a, b) => a + b) / 32;
+  fine.forEach((v, s) => CENTERED[k * 32 + s] = v - mean);
+  INVERSE[k] = 1 / fine.reduce((a, v) => a + (v - mean) ** 2, 0);
+});
+var FIRST = 256;
+var EDGE = 24;
+var CLEAN = 0.15;
+var GAIN = 0.85;
+var RATIO = 1.35;
+var HYSTERESIS = 600;
+var bits = new Float32Array(32);
+var near = new Float32Array(24 * 3);
+var fine = new Float32Array(32 * 3);
+var along = new Float32Array(32);
+var low = new Float32Array(3);
+var high = new Float32Array(3);
+var fit = { fr: 0, fg: 0, fb: 0, br: 0, bg: 0, bb: 0, err: 0, worst: 0 };
+var sampleErr = new Float32Array(32);
+var grid = new Float32Array(0);
+var GW = 0;
+var GH = 0;
+var curve = new Uint8Array(256);
+var seen = new Float32Array(0);
+var scrim = new Float32Array(0);
+function prepareEdges(frame, width, height, tone, record, cover) {
+  grid = frame;
+  GW = width;
+  GH = height;
+  curve = tone;
+  seen = record;
+  scrim = cover;
+}
+function refineEdge(q, previous, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB) {
+  if (octant === 0 || octant === 255)
+    return octant;
+  let range = 0;
+  for (let c = 0;c < 3; c++) {
+    low[c] = 255;
+    high[c] = 0;
+    for (let s = 0;s < 8; s++) {
+      const v = q[s * 3 + c];
+      if (v < low[c])
+        low[c] = v;
+      if (v > high[c])
+        high[c] = v;
+    }
+    range = Math.max(range, high[c] - low[c]);
+  }
+  if (range < EDGE)
+    return octant;
+  let same = previous >= 0;
+  for (let s = 0;s < 24 && same; s++)
+    same = Math.abs(q[s] - seen[i * 24 + s]) < 3;
+  if (same)
+    return previous >= FIRST ? write(q, previous, char, fg, bg, i, o) : octant;
+  seen.set(q, i * 24);
+  for (let ny = 0;ny < 6; ny++) {
+    const row = Math.min(GH - 1, Math.max(0, y * 4 - 1 + ny)) * GW;
+    for (let nx = 0;nx < 4; nx++) {
+      const g = row + Math.min(GW - 1, Math.max(0, x * 2 - 1 + nx));
+      const a = g * 3;
+      const k = scrim[g];
+      const n = (ny * 4 + nx) * 3;
+      near[n] = curve[grid[a] | 0] * (1 - k) + deepR * k;
+      near[n + 1] = curve[grid[a + 1] | 0] * (1 - k) + deepG * k;
+      near[n + 2] = curve[grid[a + 2] | 0] * (1 - k) + deepB * k;
+    }
+  }
+  for (let f = 0;f < 32; f++) {
+    const sx = ((f & 3) >> 1) + 1;
+    const sy = (f >> 3) + 1;
+    const hx = sx + (f & 1 ? 1 : -1);
+    const vy = sy + (f >> 2 & 1 ? 1 : -1);
+    for (let c = 0;c < 3; c++)
+      fine[f * 3 + c] = near[(sy * 4 + sx) * 3 + c] * 0.5625 + (near[(sy * 4 + hx) * 3 + c] + near[(vy * 4 + sx) * 3 + c]) * 0.1875 + near[(vy * 4 + hx) * 3 + c] * 0.0625;
+    bits[f] = octant >> (f >> 3) * 2 + ((f & 3) >> 1) & 1;
+  }
+  fitCover(fine, 32, bits, 0);
+  const octantErr = fit.err;
+  const octantWorst = fit.worst;
+  for (let f = 0;f < 32; f++)
+    along[f] = fine[f * 3] * (fit.fr - fit.br) + fine[f * 3 + 1] * (fit.fg - fit.bg) + fine[f * 3 + 2] * (fit.fb - fit.bb);
+  let best = 0;
+  let score = -1;
+  for (let k = 0;k < N; k++) {
+    let dot = 0;
+    for (let f = 0;f < 32; f++)
+      dot += CENTERED[k * 32 + f] * along[f];
+    const v = dot * dot * INVERSE[k];
+    if (v > score)
+      score = v, best = k;
+  }
+  fitCover(fine, 32, FINE, best * 32);
+  const smoothErr = fit.err;
+  const smoothWorst = fit.worst;
+  if (previous >= FIRST) {
+    fitCover(fine, 32, FINE, (previous - FIRST) * 32);
+    if (fit.err <= Math.min(octantErr, smoothErr) * RATIO + HYSTERESIS && fit.worst <= octantWorst * RATIO + HYSTERESIS)
+      return write(q, previous, char, fg, bg, i, o);
+  } else if (previous === octant && octantErr <= smoothErr * RATIO + HYSTERESIS)
+    return octant;
+  if (smoothErr >= octantErr * GAIN || smoothErr > total(fine) * CLEAN || smoothWorst > octantWorst)
+    return octant;
+  return write(q, FIRST + best, char, fg, bg, i, o);
+}
+function total(samples) {
+  let err = 0;
+  for (let c = 0;c < 3; c++) {
+    let avg = 0;
+    for (let s = 0;s < 32; s++)
+      avg += samples[s * 3 + c] / 32;
+    for (let s = 0;s < 32; s++)
+      err += (samples[s * 3 + c] - avg) ** 2;
+  }
+  return err;
+}
+function write(q, id, char, fg, bg, i, o) {
+  fitCover(q, 8, COVER, (id - FIRST) * 8);
+  char[i] = GLYPHS2[id - FIRST][0];
+  fg[o] = fit.fr;
+  fg[o + 1] = fit.fg;
+  fg[o + 2] = fit.fb;
+  fg[o + 3] = 255;
+  bg[o] = fit.br;
+  bg[o + 1] = fit.bg;
+  bg[o + 2] = fit.bb;
+  bg[o + 3] = 255;
+  return id;
+}
+function fitCover(samples, n, cover, at) {
+  let mean = 0;
+  for (let s = 0;s < n; s++)
+    mean += cover[at + s] / n;
+  let spread = 0;
+  for (let s = 0;s < n; s++)
+    spread += (cover[at + s] - mean) ** 2;
+  let err = 0;
+  sampleErr.fill(0, 0, n);
+  for (let c = 0;c < 3; c++) {
+    let avg = 0;
+    let dot = 0;
+    for (let s = 0;s < n; s++) {
+      avg += samples[s * 3 + c] / n;
+      dot += (cover[at + s] - mean) * samples[s * 3 + c];
+    }
+    const slope = spread > 0 ? dot / spread : 0;
+    const b = Math.min(high[c], Math.max(low[c], avg - slope * mean));
+    const f = Math.min(high[c], Math.max(low[c], avg - slope * mean + slope));
+    for (let s = 0;s < n; s++)
+      sampleErr[s] += (samples[s * 3 + c] - b - cover[at + s] * (f - b)) ** 2;
+    if (c === 0)
+      fit.fr = f, fit.br = b;
+    if (c === 1)
+      fit.fg = f, fit.bg = b;
+    if (c === 2)
+      fit.fb = f, fit.bb = b;
+  }
+  let worst = 0;
+  for (let s = 0;s < n; s++) {
+    err += sampleErr[s];
+    if (sampleErr[s] > worst)
+      worst = sampleErr[s];
+  }
+  fit.err = err;
+  fit.worst = worst;
+}
+
+// src/wallpaper.ts
+var AGENT_EVENTS = ["busy", "idle", "done", "error"];
+var ACTIVITIES = ["calm", "lively", "teeming"];
+var TIMES = ["day", "sunset", "night"];
+var SEASONS = ["spring", "summer", "autumn", "winter"];
+var WEATHERS = ["clear", "overcast", "rain", "snow", "fog"];
+var BRIGHTNESSES = ["subtle", "normal", "vivid"];
+var POWERS = ["saver", "smooth"];
+
+// src/engine.tsx
+function parseEvents(spec = "") {
+  return spec.split(",").flatMap((part) => {
+    const [name, at] = part.trim().split("@");
+    const event = AGENT_EVENTS.find((e) => e === name);
+    return event && at && Number.isFinite(Number(at)) ? [{
+      event,
+      at: Number(at)
+    }] : [];
+  });
+}
+var UPPER_HALF = 9600;
+var LOWER_HALF = 9604;
+var BLOCKS_START = 9600;
+var BLOCKS_END = 9631;
+var SPACE = 32;
+var LIGHT_SCRIM = 0.15;
+var OPEN = 0.5;
+var PANEL = 0.5;
+var REACH = 7;
+function level(gain, wash, scrim2) {
+  const dark = new Uint8Array(256);
+  const light = new Uint8Array(256);
+  for (let v = 0;v < 256; v++) {
+    const x = v / 255 * gain;
+    const soft = x / (1 + x * 0.9);
+    dark[v] = Math.round(soft * 255);
+    light[v] = Math.round((wash + (1 - wash) * Math.min(1, soft * 1.9)) * 255);
+  }
+  return {
+    dark,
+    light,
+    scrim: scrim2
+  };
+}
+var LEVELS = {
+  subtle: level(0.6, 0.65, 0.53),
+  normal: level(1, 0.5, 0.58),
+  vivid: level(1.6, 0.35, 0.63)
+};
+var DESATURATE = {
+  day: 0.22,
+  sunset: 0.22,
+  night: 0.04
+};
+var FADE = 1.2;
+var MAP_COLS = 16;
+var MAP_ROWS = 9;
+var MAP_EVERY = 15;
+function mix(a, b, out, t) {
+  for (let p = 0;p < out.length; p++)
+    out[p] = a[p] + (b[p] - a[p]) * t;
+}
+function buildNearText(shapes, out, W, H) {
+  const GW2 = W * 2;
+  const GH2 = H * 4;
+  for (let gy = 0;gy < GH2; gy++) {
+    const row = (gy >> 2) * W;
+    for (let gx = 0;gx < GW2; gx++)
+      out[gy * GW2 + gx] = shapes[row + (gx >> 1)] === 1 ? 0 : 1e9;
+  }
+  distanceField(out, GW2, GH2);
+  const span = REACH - 0.5;
+  for (let gy = 0;gy < GH2; gy++) {
+    const row = (gy >> 2) * W;
+    for (let gx = 0;gx < GW2; gx++) {
+      const g = gy * GW2 + gx;
+      const t = Math.min(1, Math.max(0, (out[g] - 0.5) / span));
+      const near2 = 1 - t * t * (3 - 2 * t);
+      out[g] = shapes[row + (gx >> 1)] === 2 && near2 < PANEL ? PANEL : near2;
+    }
+  }
+}
+function distanceField(d, w, h) {
+  const D = Math.SQRT2;
+  for (let y = 0;y < h; y++)
+    for (let x = 0;x < w; x++) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x > 0 && d[i - 1] + 1 < v)
+        v = d[i - 1] + 1;
+      if (y > 0) {
+        if (d[i - w] + 1 < v)
+          v = d[i - w] + 1;
+        if (x > 0 && d[i - w - 1] + D < v)
+          v = d[i - w - 1] + D;
+        if (x < w - 1 && d[i - w + 1] + D < v)
+          v = d[i - w + 1] + D;
+      }
+      d[i] = v;
+    }
+  for (let y = h - 1;y >= 0; y--)
+    for (let x = w - 1;x >= 0; x--) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x < w - 1 && d[i + 1] + 1 < v)
+        v = d[i + 1] + 1;
+      if (y < h - 1) {
+        if (d[i + w] + 1 < v)
+          v = d[i + w] + 1;
+        if (x < w - 1 && d[i + w + 1] + D < v)
+          v = d[i + w + 1] + D;
+        if (x > 0 && d[i + w - 1] + D < v)
+          v = d[i + w - 1] + D;
+      }
+      d[i] = v;
+    }
+}
+var OCTANT_TERMINALS = /ghostty|kitty/i;
+var quad4 = new Float32Array(12);
+function mean8(q, c) {
+  return (q[c] + q[3 + c] + q[6 + c] + q[9 + c] + q[12 + c] + q[15 + c] + q[18 + c] + q[21 + c]) / 8;
+}
+var split = {
+  fr: 0,
+  fg: 0,
+  fb: 0,
+  br: 0,
+  bg: 0,
+  bb: 0,
+  err: 0
+};
+function evalMask(q, mask) {
+  let fr = 0;
+  let fg = 0;
+  let fb = 0;
+  let fn = 0;
+  let br = 0;
+  let bg = 0;
+  let bb = 0;
+  let bn = 0;
+  for (let s = 0;s < 8; s++) {
+    if (mask & 1 << s) {
+      fr += q[s * 3];
+      fg += q[s * 3 + 1];
+      fb += q[s * 3 + 2];
+      fn++;
+    } else {
+      br += q[s * 3];
+      bg += q[s * 3 + 1];
+      bb += q[s * 3 + 2];
+      bn++;
+    }
+  }
+  if (fn)
+    fr /= fn, fg /= fn, fb /= fn;
+  if (bn)
+    br /= bn, bg /= bn, bb /= bn;
+  let err = 0;
+  for (let s = 0;s < 8; s++) {
+    const on = mask & 1 << s;
+    const dr = q[s * 3] - (on ? fr : br);
+    const dg = q[s * 3 + 1] - (on ? fg : bg);
+    const db = q[s * 3 + 2] - (on ? fb : bb);
+    err += dr * dr + dg * dg + db * db;
+  }
+  split.fr = fr;
+  split.fg = fg;
+  split.fb = fb;
+  split.br = br;
+  split.bg = bg;
+  split.bb = bb;
+  split.err = err;
+}
+function writeOctant(q, order, previous, older, moving, char, fg, bg, i, o) {
+  for (let s = 0;s < 8; s++) {
+    const l = q[s * 3] * 0.2126 + q[s * 3 + 1] * 0.7152 + q[s * 3 + 2] * 0.0722;
+    let j = s;
+    while (j > 0 && luma8[order[j - 1]] > l) {
+      order[j] = order[j - 1];
+      j--;
+    }
+    order[j] = s;
+    luma8[s] = l;
+  }
+  let bestMask = 0;
+  let bestErr = Infinity;
+  let mask = 255;
+  let flatErr = 0;
+  for (let k = 0;k < 8; k++) {
+    if (k > 0)
+      mask &= ~(1 << order[k - 1]);
+    evalMask(q, k === 0 ? 0 : mask);
+    if (k === 0)
+      flatErr = split.err;
+    if (split.err < bestErr - 0.5) {
+      bestErr = split.err;
+      bestMask = k === 0 ? 0 : mask;
+    }
+  }
+  if (bestMask !== 0) {
+    evalMask(q, bestMask);
+    const {
+      fr,
+      fg: fgg,
+      fb,
+      br,
+      bg: bgg,
+      bb
+    } = split;
+    let refined = 0;
+    for (let s = 0;s < 8; s++) {
+      const r = q[s * 3];
+      const g = q[s * 3 + 1];
+      const b = q[s * 3 + 2];
+      const df = (r - fr) ** 2 + (g - fgg) ** 2 + (b - fb) ** 2;
+      const db = (r - br) ** 2 + (g - bgg) ** 2 + (b - bb) ** 2;
+      if (df < db)
+        refined |= 1 << s;
+    }
+    if (refined !== bestMask && refined !== 0 && refined !== 255) {
+      evalMask(q, refined);
+      if (split.err < bestErr) {
+        bestErr = split.err;
+        bestMask = refined;
+      }
+    }
+  }
+  const band = bandSplit(q, 4, previous, flatErr, bestErr);
+  softFit = band >= 0;
+  let chosen = band < 0 ? bestMask : band;
+  if (band < 0 && previous >= 0 && previous !== bestMask) {
+    evalMask(q, previous);
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS2))
+      chosen = previous;
+  }
+  evalMask(q, chosen);
+  if (chosen === 0 || chosen === 255) {
+    char[i] = 32;
+    const n = chosen === 0 ? split : {
+      br: split.fr,
+      bg: split.fg,
+      bb: split.fb
+    };
+    bg[o] = n.br;
+    bg[o + 1] = n.bg;
+    bg[o + 2] = n.bb;
+    bg[o + 3] = 255;
+    return chosen;
+  }
+  char[i] = OCTANTS[chosen];
+  bg[o] = split.br;
+  bg[o + 1] = split.bg;
+  bg[o + 2] = split.bb;
+  bg[o + 3] = 255;
+  fg[o] = split.fr;
+  fg[o + 1] = split.fg;
+  fg[o + 2] = split.fb;
+  fg[o + 3] = 255;
+  return chosen;
+}
+var luma8 = new Float32Array(8);
+var softFit = false;
+var HYSTERESIS2 = 150;
+var MOVING_REACH = 4;
+var MOVING_MIN = 30;
+var MOVING_MAX = 0.1;
+var PERSISTENCE = 0.45;
+var FPS = 15;
+var BUSY_PACE = {
+  calm: 1.12,
+  lively: 1.25,
+  teeming: 1.4
+};
+var ERROR_SHADE = 0.85;
+var GLOOM_MS = 120000;
+var IDLE_FPS = 5;
+var IDLE_MS = 30000;
+var MAX_STEP = 0.1;
+var PX_W = 3;
+var PX_H = 6;
+var SUPERSAMPLE = process.env.WALLPAPER_SUPERSAMPLE === "2" ? 2 : 1;
+var SHARPEN = 0.55;
+var QUADRANTS = [32, 9624, 9629, 9600, 9622, 9612, 9630, 9627, 9623, 9626, 9616, 9628, 9604, 9625, 9631, 9608];
+function writeQuadrant(q8, previous, older, moving, char, fg, bg, i, o) {
+  const q = quad4;
+  for (let s = 0;s < 4; s++) {
+    const top = ((s >> 1) * 4 + (s & 1)) * 3;
+    for (let c = 0;c < 3; c++)
+      q[s * 3 + c] = (q8[top + c] + q8[top + 6 + c]) / 2;
+  }
+  let bestMask = 0;
+  let bestErr = Infinity;
+  let flatErr = 0;
+  for (let m = 0;m < 8; m++) {
+    evalQuad(q, m);
+    if (m === 0)
+      flatErr = split.err;
+    if (split.err < bestErr - 0.5) {
+      bestErr = split.err;
+      bestMask = m;
+    }
+  }
+  const band = bandSplit(q, 2, previous, flatErr, bestErr);
+  let chosen = band < 0 ? bestMask : band;
+  if (band < 0 && previous >= 0 && previous !== bestMask) {
+    evalQuad(q, previous);
+    if (split.err <= tolerance(bestErr, bestMask, previous, older, moving, HYSTERESIS2 / 2))
+      chosen = previous;
+  }
+  evalQuad(q, chosen);
+  bg[o] = split.br;
+  bg[o + 1] = split.bg;
+  bg[o + 2] = split.bb;
+  bg[o + 3] = 255;
+  if (chosen === 0) {
+    char[i] = 32;
+    return chosen;
+  }
+  char[i] = QUADRANTS[chosen];
+  fg[o] = split.fr;
+  fg[o + 1] = split.fg;
+  fg[o + 2] = split.fb;
+  fg[o + 3] = 255;
+  return chosen;
+}
+function evalQuad(q, mask) {
+  let fr = 0;
+  let fg = 0;
+  let fb = 0;
+  let fn = 0;
+  let br = 0;
+  let bg = 0;
+  let bb = 0;
+  let bn = 0;
+  for (let s = 0;s < 4; s++) {
+    if (mask & 1 << s) {
+      fr += q[s * 3];
+      fg += q[s * 3 + 1];
+      fb += q[s * 3 + 2];
+      fn++;
+    } else {
+      br += q[s * 3];
+      bg += q[s * 3 + 1];
+      bb += q[s * 3 + 2];
+      bn++;
+    }
+  }
+  if (fn)
+    fr /= fn, fg /= fn, fb /= fn;
+  if (bn)
+    br /= bn, bg /= bn, bb /= bn;
+  let err = 0;
+  for (let s = 0;s < 4; s++) {
+    const on = mask & 1 << s;
+    const dr = q[s * 3] - (on ? fr : br);
+    const dg = q[s * 3 + 1] - (on ? fg : bg);
+    const db = q[s * 3 + 2] - (on ? fb : bb);
+    err += dr * dr + dg * dg + db * db;
+  }
+  split.fr = fr;
+  split.fg = fg;
+  split.fb = fb;
+  split.br = br;
+  split.bg = bg;
+  split.bb = bb;
+  split.err = err;
+}
+function markMoving(moving, touched, PW, PH, W, H) {
+  moving.fill(0);
+  if (!touched)
+    return;
+  const sx = W / PW;
+  const sy = H / PH;
+  for (let b = 0;b < touched.length; b += 4) {
+    const area = (touched[b + 2] - touched[b] + 1) * (touched[b + 3] - touched[b + 1] + 1);
+    if (area < MOVING_MIN || area > PW * PH * MOVING_MAX)
+      continue;
+    const x0 = Math.max(0, Math.floor((touched[b] - MOVING_REACH) * sx));
+    const x1 = Math.min(W, Math.ceil((touched[b + 2] + 1 + MOVING_REACH) * sx));
+    const y0 = Math.max(0, Math.floor((touched[b + 1] - MOVING_REACH) * sy));
+    const y1 = Math.min(H, Math.ceil((touched[b + 3] + 1 + MOVING_REACH) * sy));
+    for (let y = y0;y < y1; y++)
+      if (x0 < x1)
+        moving.fill(1, y * W + x0, y * W + x1);
+  }
+}
+function markOrbs(round, orbs, PW, PH, W, H) {
+  round.fill(0);
+  if (!orbs)
+    return;
+  for (let b = 0;b < orbs.length; b += 3) {
+    const r = orbs[b + 2] + 2;
+    const x0 = Math.max(0, Math.floor((orbs[b] - r) * W / PW));
+    const x1 = Math.min(W - 1, Math.floor((orbs[b] + r) * W / PW));
+    const y0 = Math.max(0, Math.floor((orbs[b + 1] - r) * H / PH));
+    const y1 = Math.min(H - 1, Math.floor((orbs[b + 1] + r) * H / PH));
+    for (let y = y0;y <= y1; y++)
+      if (x0 <= x1)
+        round.fill(1, y * W + x0, y * W + x1 + 1);
+  }
+}
+function tolerance(bestErr, best, previous, older, moving, margin) {
+  const d = best ^ previous;
+  return moving && (d & d - 1) === 0 && best !== older ? bestErr * 1.1 + margin * 0.6 : bestErr * 1.35 + margin;
+}
+var QUIET = 3;
+function quieten(char, fg, bg, inputFg, inputBg, shownChar, shownFg, shownBg, cells) {
+  for (let i = 0;i < cells; i++) {
+    if (char[i] !== shownChar[i]) {
+      shownChar[i] = char[i];
+      continue;
+    }
+    const o = i * 4;
+    holdColor(fg, inputFg, shownFg, o);
+    holdColor(bg, inputBg, shownBg, o);
+  }
+  shownFg.set(fg);
+  shownBg.set(bg);
+}
+function holdColor(colors, input, shown, o) {
+  if (colors[o] === input[o] && colors[o + 1] === input[o + 1] && colors[o + 2] === input[o + 2] && colors[o + 3] === input[o + 3])
+    return;
+  for (let c = o;c < o + 4; c++)
+    if (Math.abs(colors[c] - shown[c]) >= QUIET)
+      return;
+  for (let c = o;c < o + 4; c++)
+    colors[c] = shown[c];
+}
+var SOFT = 1500;
+var BAND_TOLERANCE = 8;
+var FLAT_HYSTERESIS = 8;
+var BAND_HYSTERESIS = 100;
+var above = new Float64Array(15);
+function bandSplit(q, rows, previous, flatErr, freeErr) {
+  const scale = rows / 4;
+  if (flatErr > SOFT * scale)
+    return -1;
+  const n = rows * 2;
+  const full = (1 << n) - 1;
+  let lr = 0;
+  let lg = 0;
+  let lb = 0;
+  let pr = 0;
+  let pg = 0;
+  let pb = 0;
+  let pn = 0;
+  let sq = 0;
+  above.fill(0);
+  for (let s = 0;s < n; s++) {
+    const o = ((s >> 1) + 1) * 3;
+    const r = q[s * 3];
+    const g = q[s * 3 + 1];
+    const b = q[s * 3 + 2];
+    sq += r * r + g * g + b * b;
+    above[o] += r;
+    above[o + 1] += g;
+    above[o + 2] += b;
+    if (!(s & 1))
+      lr += r, lg += g, lb += b;
+    if (previous > 0 && previous & 1 << s)
+      pr += r, pg += g, pb += b, pn++;
+  }
+  for (let o = 3;o < (rows + 1) * 3; o++)
+    above[o] += above[o - 3];
+  const t = rows * 3;
+  cell.sq = sq;
+  cell.r = above[t];
+  cell.g = above[t + 1];
+  cell.b = above[t + 2];
+  cell.n = n;
+  cell.flat = flatErr;
+  let best = full & 85;
+  let bestErr = splitErr(lr, lg, lb, rows);
+  for (let a = 0;a < rows - 1; a++)
+    for (let b = a + 1;b < rows; b++) {
+      const err = splitErr(above[b * 3] - above[a * 3], above[b * 3 + 1] - above[a * 3 + 1], above[b * 3 + 2] - above[a * 3 + 2], (b - a) * 2);
+      if (err < bestErr)
+        bestErr = err, best = (1 << b * 2) - 1 ^ (1 << a * 2) - 1;
+    }
+  if (bestErr > freeErr + BAND_TOLERANCE * scale)
+    return -1;
+  const kept = Math.max(0, previous);
+  if (kept === 0 || kept === full)
+    return flatErr <= bestErr + FLAT_HYSTERESIS * scale ? kept : best;
+  return splitErr(pr, pg, pb, pn) <= bestErr * 1.35 + BAND_HYSTERESIS * scale ? kept : best;
+}
+var cell = {
+  sq: 0,
+  r: 0,
+  g: 0,
+  b: 0,
+  n: 0,
+  flat: 0
+};
+function splitErr(r, g, b, n) {
+  if (n === 0 || n === cell.n)
+    return cell.flat;
+  return cell.sq - (r * r + g * g + b * b) / n - ((cell.r - r) ** 2 + (cell.g - g) ** 2 + (cell.b - b) ** 2) / (cell.n - n);
+}
+function isBlock(char) {
+  return char >= BLOCKS_START && char <= BLOCKS_END;
+}
+function applyTint(colors, o, tint) {
+  if (tint === NO_TINT || tint === TINT_ZERO)
+    return;
+  const dr = (tint >> 20 & 1023) - 256;
+  const dg = (tint >> 10 & 1023) - 256;
+  const db = (tint & 1023) - 256;
+  colors[o] = Math.max(0, Math.min(255, (colors[o] & 255) + dr));
+  colors[o + 1] = Math.max(0, Math.min(255, (colors[o + 1] & 255) + dg));
+  colors[o + 2] = Math.max(0, Math.min(255, (colors[o + 2] & 255) + db));
+}
+function fgKey(fg, o) {
+  return (fg[o] & 255) << 16 | (fg[o + 1] & 255) << 8 | fg[o + 2] & 255;
+}
+var NO_TINT = 2147483647;
+var TINT_RANGE = 110;
+var TINT_ZERO = 256 << 20 | 256 << 10 | 256;
+function packTint(dr, dg, db) {
+  return dr + 256 << 20 | dg + 256 << 10 | db + 256;
+}
+function key(bg, o) {
+  if ((bg[o + 1] >> 8 & 3) === 2)
+    return -1;
+  return (bg[o] & 255) << 16 | (bg[o + 1] & 255) << 8 | bg[o + 2] & 255;
+}
+function isSurface(k, light) {
+  if (k < 0)
+    return true;
+  const r = k >> 16 & 255;
+  const g = k >> 8 & 255;
+  const b = k & 255;
+  const luma = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  return (light ? luma > 170 : luma < 70) && Math.max(r, g, b) - Math.min(r, g, b) < 24;
+}
+function markCells(stale, boxes, cellX, cellY, W, PW, PH) {
+  for (let b = 0;b < boxes.length; b += 4) {
+    const x0 = Math.max(0, Math.floor(boxes[b]));
+    const y0 = Math.max(0, Math.floor(boxes[b + 1]));
+    const x1 = Math.min(PW - 1, Math.ceil(boxes[b + 2]));
+    const y1 = Math.min(PH - 1, Math.ceil(boxes[b + 3]));
+    if (x0 > x1 || y0 > y1)
+      continue;
+    for (let y = cellY[y0];y <= cellY[y1]; y++)
+      stale.fill(1, y * W + cellX[x0], y * W + cellX[x1] + 1);
+  }
+}
+function settle(px, blended, history, PW, W, H, colStart, rowStart, stale, moved, desaturate, shade, persistence, fresh) {
+  for (let cy = 0;cy < H; cy++)
+    for (let cx = 0;cx < W; cx++) {
+      const cell2 = cy * W + cx;
+      moved[cell2] = 0;
+      if (!stale[cell2])
+        continue;
+      let settled = true;
+      let same = true;
+      for (let y = rowStart[cy];y < rowStart[cy + 1]; y++)
+        for (let x = colStart[cx];x < colStart[cx + 1]; x++) {
+          const p = (y * PW + x) * 4;
+          const l = px[p] * 0.2126 + px[p + 1] * 0.7152 + px[p + 2] * 0.0722;
+          for (let c = p;c < p + 3; c++) {
+            const v = (px[c] + (l - px[c]) * desaturate) * shade;
+            const h = fresh ? v : history[c] * persistence + v * (1 - persistence);
+            const before = history[c];
+            history[c] = h;
+            if (history[c] !== before)
+              settled = false;
+            const was = blended[c];
+            blended[c] = h;
+            if (blended[c] !== was)
+              same = false;
+          }
+        }
+      stale[cell2] = settled ? 0 : 1;
+      moved[cell2] = same ? 0 : 1;
+    }
+}
+function regrid(px, PW, PH, GW2, GH2, W, H, raw, grid2, moved, refit) {
+  for (let cell2 = 0;cell2 < W * H; cell2++) {
+    if (!moved[cell2])
+      continue;
+    const cx = cell2 % W;
+    const cy = cell2 / W | 0;
+    for (let gy = cy * 4;gy < cy * 4 + 4; gy++) {
+      const y0 = Math.floor(gy * PH / GH2);
+      const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * PH / GH2));
+      for (let gx = cx * 2;gx < cx * 2 + 2; gx++) {
+        const x0 = Math.floor(gx * PW / GW2);
+        const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * PW / GW2));
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let yy = y0;yy < y1; yy++)
+          for (let xx = x0;xx < x1; xx++) {
+            const p = (yy * PW + xx) * 4;
+            r += px[p];
+            g += px[p + 1];
+            b += px[p + 2];
+          }
+        const n = (y1 - y0) * (x1 - x0);
+        const o = (gy * GW2 + gx) * 3;
+        raw[o] = r / n;
+        raw[o + 1] = g / n;
+        raw[o + 2] = b / n;
+      }
+    }
+  }
+  const row = GW2 * 3;
+  for (let cell2 = 0;cell2 < W * H; cell2++) {
+    refit[cell2] = 0;
+    const cx = cell2 % W;
+    const cy = cell2 / W | 0;
+    if (!moved[cell2] && !(cx > 0 && moved[cell2 - 1]) && !(cx < W - 1 && moved[cell2 + 1]) && !(cy > 0 && moved[cell2 - W]) && !(cy < H - 1 && moved[cell2 + W]))
+      continue;
+    for (let gy = cy * 4;gy < cy * 4 + 4; gy++) {
+      const up = gy > 0 ? -row : 0;
+      const down = gy < GH2 - 1 ? row : 0;
+      for (let gx = cx * 2;gx < cx * 2 + 2; gx++) {
+        const left = gx > 0 ? -3 : 0;
+        const right = gx < GW2 - 1 ? 3 : 0;
+        const o = (gy * GW2 + gx) * 3;
+        for (let c = o;c < o + 3; c++) {
+          const v = raw[c];
+          const out = v + (v * 4 - raw[c + up] - raw[c + down] - raw[c + left] - raw[c + right]) * (SHARPEN / 4);
+          const before = grid2[c];
+          grid2[c] = out < 0 ? 0 : out > 255 ? 255 : out;
+          if (grid2[c] !== before)
+            refit[cell2] = 1;
+        }
+      }
+    }
+  }
+}
+function reuseFit(i, o, char, fg, bg, fitChar, fitFg, fitBg) {
+  char[i] = fitChar[i];
+  for (let c = 0;c < 3; c++)
+    bg[o + c] = fitBg[i * 3 + c];
+  bg[o + 3] = 255;
+  if (char[i] === SPACE)
+    return;
+  for (let c = 0;c < 3; c++)
+    fg[o + c] = fitFg[i * 3 + c];
+  fg[o + 3] = 255;
+}
+function rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg) {
+  fitChar[i] = char[i];
+  for (let c = 0;c < 3; c++)
+    fitBg[i * 3 + c] = bg[o + c];
+  if (char[i] !== SPACE)
+    for (let c = 0;c < 3; c++)
+      fitFg[i * 3 + c] = fg[o + c];
+}
+
+class SceneLayer extends Renderable {
+  constructor(ctx, draw) {
+    super(ctx, {
+      id: "wallpaper-layer",
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: "100%",
+      height: "100%",
+      zIndex: -1e5
+    });
+    this.draw = draw;
+  }
+  renderSelf(buffer) {
+    this.draw(buffer);
+  }
+}
+function createLayer(renderer, draw) {
+  const layer = new SceneLayer(renderer, draw);
+  renderer.root.add(layer);
+  return {
+    dispose() {
+      renderer.root.remove(layer);
+      layer.destroy();
+    }
+  };
+}
+function createEngine(context, options = {}) {
+  const renderer = context.renderer;
+  const counts = new Map;
+  const surfaces = new Set;
+  const tints = new Map;
+  let wallpaper;
+  let settings;
+  let scene;
+  let busy = false;
+  let failed = false;
+  let lifting;
+  let pace = 1;
+  let shade = 1;
+  let from;
+  let fade = 1;
+  let fadeLength = FADE;
+  let mixed = new Uint8Array(0);
+  let frames = 0;
+  let dumped = false;
+  let fadeDumped = false;
+  let base = -2;
+  let mask = new Float32Array(0);
+  const quad = new Float32Array(24);
+  const order = new Uint8Array(8);
+  const octants = process.env.WALLPAPER_OCTANTS !== "0" && (process.env.WALLPAPER_OCTANTS === "1" || OCTANT_TERMINALS.test(`${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`));
+  const smooth = octants && process.env.WALLPAPER_SMOOTH !== "0";
+  let shapes = new Uint8Array(0);
+  let surface = new Uint8Array(0);
+  let cellTint = new Int32Array(0);
+  let previousMask = new Int16Array(0);
+  let olderMask = new Int16Array(0);
+  let moving = new Uint8Array(0);
+  let edgeSeen = new Float32Array(0);
+  let round = new Uint8Array(0);
+  let history = new Float32Array(0);
+  let shownChar = new Uint32Array(0);
+  let shownFg = new Uint16Array(0);
+  let shownBg = new Uint16Array(0);
+  let inputFg = new Uint16Array(0);
+  let inputBg = new Uint16Array(0);
+  let lastStep = 0;
+  let lastTarget = "";
+  let imageCell = new Uint8Array(0);
+  let open = new Uint8Array(0);
+  let openW = 0;
+  let pressed = -1;
+  let grid2 = new Float32Array(0);
+  let raw = new Float32Array(0);
+  let light = false;
+  const textMap = {
+    cols: MAP_COLS,
+    rows: MAP_ROWS,
+    cover: new Float32Array(MAP_COLS * MAP_ROWS)
+  };
+  const mapCount = new Float32Array(MAP_COLS * MAP_ROWS);
+  let mapped = false;
+  let mapFresh = false;
+  let dirty = true;
+  let blended = new Uint8Array(0);
+  let stale = new Uint8Array(0);
+  let moved = new Uint8Array(0);
+  let refit = new Uint8Array(0);
+  let fitted = new Uint8Array(0);
+  let fitChar = new Uint32Array(0);
+  let fitFg = new Uint16Array(0);
+  let fitBg = new Uint16Array(0);
+  let colStart = new Int32Array(0);
+  let rowStart = new Int32Array(0);
+  let cellX = new Int32Array(0);
+  let cellY = new Int32Array(0);
+  let lastSize = "";
+  let lastSource;
+  let lastBlend = "";
+  let lastScrim;
+  let lastCurve;
+  const dots = new Dots;
+  let imagePixels = new Uint8Array(0);
+  let pool;
+  let savedTransport;
+  let nextImage;
+  let layerPlaced = false;
+  let reservation = 0;
+  let layer;
+  const layerStats = {
+    calls: 0,
+    placed: 0,
+    noImage: 0
+  };
+  const drawLayer = (buffer) => {
+    layerStats.calls++;
+    if (!nextImage)
+      layerStats.noImage++;
+    if (!scene || !nextImage || !pixelMode())
+      return;
+    const resolution = renderer.resolution;
+    const placed = buffer.drawImage(nextImage, 0, 0, buffer.width, buffer.height, Math.round(resolution.width), Math.round(resolution.height), 0, 0, nextImage.width, nextImage.height, "kitty");
+    if (!placed) {
+      return;
+    }
+    layerStats.placed++;
+    layerPlaced = true;
+    reservation = buffer.buffers.char[0];
+  };
+  const pixelMode = () => {
+    const setting = process.env.WALLPAPER_PIXELS;
+    if (setting === "0")
+      return false;
+    const resolution = renderer.resolution;
+    if (!resolution || resolution.width <= 0 || resolution.height <= 0)
+      return false;
+    return setting === "1" && renderer.capabilities?.kitty_graphics === true;
+  };
+  const publishImage = (px, PW, PH, W, H, scrim2, curve2, k) => {
+    if (imagePixels.length !== PW * PH * 4)
+      imagePixels = new Uint8Array(PW * PH * 4);
+    const img = imagePixels;
+    const cw = PW / W;
+    const chh = PH / H;
+    for (let iy = 0;iy < PH; iy++) {
+      const row = Math.min(H - 1, Math.floor(iy / chh));
+      const depth = row / Math.max(1, H - 1);
+      const [deepR, deepG, deepB] = scrimAt(scrim2, depth, light);
+      for (let ix = 0;ix < PW; ix++) {
+        const ci = row * W + Math.min(W - 1, Math.floor(ix / cw));
+        const p = (iy * PW + ix) * 4;
+        img[p] = curve2[px[p]] * (1 - k) + deepR * k;
+        img[p + 1] = curve2[px[p + 1]] * (1 - k) + deepG * k;
+        img[p + 2] = curve2[px[p + 2]] * (1 - k) + deepB * k;
+        img[p + 3] = 255;
+        applyTint(img, p, cellTint[ci]);
+      }
+    }
+    if (!pool || pool.width !== PW || pool.height !== PH) {
+      pool?.dispose();
+      pool = new NativeImagePool({
+        width: PW,
+        height: PH,
+        capacity: 3
+      });
+    }
+    if (savedTransport === undefined) {
+      savedTransport = renderer.kittyImageTransport;
+      renderer.kittyImageTransport = process.env.WALLPAPER_TRANSPORT ?? "file";
+    }
+    return pool.publishRgba(img) ?? undefined;
+  };
+  let timer;
+  let interval = 0;
+  let power = "saver";
+  let focused = true;
+  let lastActivity = 0;
+  let unlisten;
+  const schedule = () => {
+    const saver = power === "saver";
+    const next = !scene || saver && !focused ? 0 : saver && Date.now() - lastActivity > IDLE_MS ? 1000 / IDLE_FPS : 1000 / FPS;
+    if (next === interval)
+      return;
+    clearInterval(timer);
+    timer = next ? setInterval(() => {
+      schedule();
+      renderer.requestRender();
+    }, next) : undefined;
+    interval = next;
+  };
+  const wake = () => {
+    lastActivity = Date.now();
+    schedule();
+  };
+  const onInput = (data) => {
+    if (!data.toString().startsWith("\x1B_G"))
+      wake();
+  };
+  const onFocus = () => {
+    focused = true;
+    if (!interval)
+      lastStep = 0;
+    wake();
+    renderer.requestRender();
+  };
+  const onBlur = () => {
+    focused = false;
+    schedule();
+  };
+  const tintOf = (k) => {
+    const cached = tints.get(k);
+    if (cached !== undefined)
+      return cached;
+    let result = NO_TINT;
+    if (surfaces.has(k))
+      result = packTint(0, 0, 0);
+    else if (k >= 0) {
+      const r = k >> 16 & 255;
+      const g = k >> 8 & 255;
+      const b = k & 255;
+      let nearest = NO_TINT;
+      let best = TINT_RANGE + 1;
+      for (const c of surfaces.has(base) ? surfaces : [...surfaces, base]) {
+        if (c < 0)
+          continue;
+        const d = Math.abs(r - (c >> 16 & 255)) + Math.abs(g - (c >> 8 & 255)) + Math.abs(b - (c & 255));
+        if (d < best)
+          best = d, nearest = c;
+      }
+      if (nearest !== NO_TINT && surfaces.has(nearest))
+        result = packTint(r - (nearest >> 16 & 255), g - (nearest >> 8 & 255), b - (nearest & 255));
+    }
+    tints.set(k, result);
+    return result;
+  };
+  const debug = process.env.WALLPAPER_DEBUG;
+  const log = (line) => {
+    if (debug)
+      appendFileSync(debug, `${line}
+`);
+  };
+  log(`host renderable: ${renderer.root instanceof Renderable}`);
+  const postProcess = (buf) => {
+    try {
+      render(buf);
+    } catch (error) {
+      lastSize = "";
+      log(`error: ${error instanceof Error ? error.stack : String(error)}`);
+    }
+  };
+  const render = (buf) => {
+    if (!scene)
+      return;
+    const W = buf.width;
+    const H = buf.height;
+    if (W < 4 || H < 2)
+      return;
+    const pixels = pixelMode();
+    const targetW = pixels ? W * PX_W : W * 2 * SUPERSAMPLE;
+    const targetH = pixels ? H * PX_H : H * 4 * SUPERSAMPLE;
+    const target = `${targetW}x${targetH}`;
+    const resized = target !== lastTarget;
+    lastTarget = target;
+    scene.resize(targetW, targetH, !pixels);
+    from?.scene.resize(targetW, targetH, !pixels);
+    const now = performance.now();
+    const advanced = resized || interval > 0 && now - lastStep >= interval - 2;
+    if (advanced) {
+      const dt = !interval ? 0 : lastStep ? Math.min(0.5, (now - lastStep) / 1000) : 1 / FPS;
+      if (interval)
+        lastStep = now;
+      watchEgg(dt);
+      const ease = 1 - Math.exp(-dt / 2.5);
+      pace += ((busy ? BUSY_PACE[settings.activity] : 1) - pace) * ease;
+      shade += ((failed ? ERROR_SHADE : 1) - shade) * ease;
+      const steps = Math.ceil(dt * pace / MAX_STEP);
+      for (let s = 0;s < steps; s++)
+        scene.step(dt * pace / steps);
+      scene.render();
+      fade = Math.min(1, fade + dt / fadeLength);
+      if (fade === 1)
+        from = undefined;
+      if (from) {
+        for (let s = 0;s < steps; s++)
+          from.scene.step(dt * pace / steps);
+        from.scene.render();
+        if (mixed.length !== scene.pixels.length)
+          mixed = new Uint8Array(scene.pixels.length);
+        mix(from.scene.pixels, scene.pixels, mixed, smoothstep(0, 1, fade));
+      }
+    }
+    const t = from ? smoothstep(0, 1, fade) : 1;
+    const was = from ?? {
+      wallpaper,
+      settings
+    };
+    const scrim2 = blendScrim(was.wallpaper.scrim[was.settings.time], wallpaper.scrim[settings.time], t);
+    const desaturate = lerp(DESATURATE[was.settings.time], DESATURATE[settings.time], t);
+    const persistence = interval > 1000 / FPS ? PERSISTENCE ** (interval / (1000 / FPS)) : PERSISTENCE;
+    if (advanced) {
+      dots.clear(W * H);
+      dots.gather(scene.points, t, scene.W, scene.H, W, H, desaturate, shade);
+      dots.gather(from?.scene.points, 1 - t, scene.W, scene.H, W, H, desaturate, shade);
+    }
+    paint(buf, from ? mixed : scene.pixels, scene.W, scene.H, advanced, pixels, desaturate, shade, persistence, scrim2, from ? undefined : scene.changed, from ? undefined : scene.touched, scene.orbs);
+    if (mapFresh) {
+      mapFresh = false;
+      scene.textMap?.(textMap);
+      from?.scene.textMap?.(textMap);
+    }
+    if (options.dump && !dumped && frames > 120) {
+      dumped = true;
+      write2(buf, options.dump);
+    }
+    if (options.dumpFade && !fadeDumped && from && fade >= 0.5) {
+      fadeDumped = true;
+      write2(buf, options.dumpFade);
+    }
+  };
+  const write2 = (buf, path) => {
+    Bun.write(path, JSON.stringify({
+      W: buf.width,
+      H: buf.height,
+      char: Array.from(buf.buffers.char),
+      text: new TextDecoder().decode(buf.getRealCharBytes(true)),
+      fg: Array.from(buf.buffers.fg, (v) => v & 255),
+      bg: Array.from(buf.buffers.bg, (v) => v & 255)
+    }));
+  };
+  const paint = (buf, px, PW, PH, advanced, pixels, desaturate, shade2, persistence, scrim2, changed, touched, orbs) => {
+    const W = buf.width;
+    const H = buf.height;
+    const GW2 = W * 2;
+    const GH2 = H * 4;
+    const cells = W * H;
+    const size = `${W}x${H} ${PW}x${PH}`;
+    const reset = size !== lastSize || history.length !== px.length || grid2.length !== GW2 * GH2 * 3;
+    if (reset) {
+      lastSize = size;
+      history = new Float32Array(px.length);
+      blended = new Uint8Array(px.length);
+      grid2 = new Float32Array(GW2 * GH2 * 3);
+      raw = new Float32Array(GW2 * GH2 * 3);
+      stale = new Uint8Array(cells);
+      moved = new Uint8Array(cells);
+      refit = new Uint8Array(cells);
+      fitted = new Uint8Array(cells);
+      fitChar = new Uint32Array(cells);
+      fitFg = new Uint16Array(cells * 3);
+      fitBg = new Uint16Array(cells * 3);
+      colStart = Int32Array.from({
+        length: W + 1
+      }, (_, x) => Math.floor(x * PW / W));
+      rowStart = Int32Array.from({
+        length: H + 1
+      }, (_, y) => Math.floor(y * PH / H));
+      cellX = new Int32Array(PW);
+      cellY = new Int32Array(PH);
+      for (let x = 0;x < W; x++)
+        cellX.fill(x, colStart[x], colStart[x + 1]);
+      for (let y = 0;y < H; y++)
+        cellY.fill(y, rowStart[y], rowStart[y + 1]);
+      moving = new Uint8Array(cells);
+      round = new Uint8Array(cells);
+      edgeSeen = new Float32Array(cells * 24).fill(-1);
+    }
+    if (advanced) {
+      markMoving(moving, touched, PW, PH, W, H);
+      markOrbs(round, orbs, PW, PH, W, H);
+      const blend = `${desaturate} ${shade2} ${persistence}`;
+      const everything = reset || !dirty || !changed || px !== lastSource || blend !== lastBlend;
+      lastSource = px;
+      lastBlend = blend;
+      if (everything)
+        stale.fill(1);
+      else
+        markCells(stale, changed, cellX, cellY, W, PW, PH);
+      settle(px, blended, history, PW, W, H, colStart, rowStart, stale, moved, desaturate, shade2, persistence, reset);
+      if (reset || !dirty)
+        moved.fill(1);
+      regrid(blended, PW, PH, GW2, GH2, W, H, raw, grid2, moved, refit);
+    } else
+      refit.fill(0);
+    const {
+      char,
+      fg,
+      bg
+    } = buf.buffers;
+    if (frames++ % 10 === 0) {
+      light = context.themeMode === "light";
+      counts.clear();
+      for (let i = 0;i < cells; i++) {
+        const k = key(bg, i * 4);
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+      base = -2;
+      let best = 0;
+      for (const [k, n] of counts)
+        if (n > best)
+          best = n, base = k;
+      surfaces.clear();
+      tints.clear();
+      surfaces.add(base);
+      for (const [k, n] of counts)
+        if (k !== base && n > cells * 0.002 && isSurface(k, light))
+          surfaces.add(k);
+    }
+    const look = LEVELS[settings.brightness ?? "normal"];
+    const curve2 = light ? look.light : look.dark;
+    const refitAll = reset || !dirty || scrim2 !== lastScrim || curve2 !== lastCurve;
+    lastScrim = scrim2;
+    lastCurve = curve2;
+    let reshaped = surface.length !== cells;
+    if (reshaped) {
+      surface = new Uint8Array(cells);
+      cellTint = new Int32Array(cells);
+      shapes = new Uint8Array(cells);
+      mask = new Float32Array(GW2 * GH2);
+    }
+    if (previousMask.length !== cells)
+      previousMask = new Int16Array(cells).fill(-1);
+    if (olderMask.length !== cells)
+      olderMask = new Int16Array(cells).fill(-1);
+    for (let i = 0;i < cells; i++) {
+      const k = key(bg, i * 4);
+      const tint = tintOf(k);
+      const on = tint !== NO_TINT;
+      surface[i] = on ? 1 : 0;
+      cellTint[i] = tint;
+      const shape = !on ? 0 : char[i] !== SPACE && !(isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT) ? 1 : k !== base && tint === TINT_ZERO ? 2 : 0;
+      if (shapes[i] !== shape)
+        shapes[i] = shape, reshaped = true;
+    }
+    if (reshaped)
+      buildNearText(shapes, mask, W, H);
+    if (open.length !== cells)
+      open = new Uint8Array(cells);
+    openW = W;
+    for (let i = 0;i < cells; i++)
+      open[i] = surface[i] && char[i] === SPACE && mask[(i / W | 0) * 4 * GW2 + i % W * 2] < OPEN ? 1 : 0;
+    if (frames % MAP_EVERY === 1) {
+      const cover = textMap.cover;
+      cover.fill(0);
+      mapCount.fill(0);
+      for (let i = 0;i < cells; i++) {
+        const g = Math.floor((i / W | 0) * MAP_ROWS / H) * MAP_COLS + Math.floor(i % W * MAP_COLS / W);
+        cover[g] += surface[i] ? mask[(i / W | 0) * 4 * GW2 + i % W * 2] : 1;
+        mapCount[g]++;
+      }
+      for (let g = 0;g < cover.length; g++)
+        cover[g] /= Math.max(1, mapCount[g]);
+      mapped = true;
+      mapFresh = true;
+    }
+    const cursor = renderer.getCursorState();
+    const cursorX = cursor.visible ? cursor.x - 1 : -1;
+    const cursorY = cursor.visible ? cursor.y - 1 : -1;
+    const atCursor = (x, y) => cursor.visible && (x === cursorX || x === cursorX + 1) && (y === cursorY || y === cursorY + 1);
+    if (imageCell.length !== cells)
+      imageCell = new Uint8Array(cells);
+    imageCell.fill(0);
+    if (pixels && layerPlaced && reservation !== 0) {
+      for (let i = 0;i < cells; i++) {
+        if (!surface[i] || char[i] !== SPACE || atCursor(i % W, i / W | 0))
+          continue;
+        imageCell[i] = 1;
+        char[i] = reservation;
+      }
+    }
+    layerPlaced = false;
+    if (shownChar.length !== cells) {
+      shownChar = new Uint32Array(cells);
+      shownFg = new Uint16Array(cells * 4);
+      shownBg = new Uint16Array(cells * 4);
+      inputFg = new Uint16Array(cells * 4);
+      inputBg = new Uint16Array(cells * 4);
+    }
+    inputFg.set(fg);
+    inputBg.set(bg);
+    const q = quad;
+    if (smooth)
+      prepareEdges(grid2, GW2, GH2, curve2, edgeSeen, mask);
+    for (let y = 0;y < H; y++) {
+      const [deepR, deepG, deepB] = scrimAt(scrim2, y / Math.max(1, H - 1), light);
+      for (let x = 0;x < W; x++) {
+        const i = y * W + x;
+        const reusable = fitted[i] === 1 && !refitAll && refit[i] === 0 && moving[i] === 0 && dots.size[i] === 0;
+        fitted[i] = 0;
+        if (imageCell[i])
+          continue;
+        const o = i * 4;
+        const ch = char[i];
+        const edgeTint = isBlock(ch) ? tintOf(fgKey(fg, o)) : NO_TINT;
+        const edge = edgeTint !== NO_TINT;
+        if (!surface[i] && !edge)
+          continue;
+        const fits = !edge && ch === SPACE && !atCursor(x, y);
+        if (fits && reusable) {
+          reuseFit(i, o, char, fg, bg, fitChar, fitFg, fitBg);
+          fitted[i] = 1;
+          applyTint(bg, o, cellTint[i]);
+          if (char[i] !== SPACE)
+            applyTint(fg, o, cellTint[i]);
+          continue;
+        }
+        const k = look.scrim;
+        for (let s = 0;s < 8; s++) {
+          const g = (y * 4 + (s >> 1)) * GW2 + x * 2 + (s & 1);
+          const a = g * 3;
+          q[s * 3] = curve2[grid2[a] | 0] * (1 - k) + deepR * k;
+          q[s * 3 + 1] = curve2[grid2[a + 1] | 0] * (1 - k) + deepG * k;
+          q[s * 3 + 2] = curve2[grid2[a + 2] | 0] * (1 - k) + deepB * k;
+        }
+        if (edge && (ch === UPPER_HALF || ch === LOWER_HALF)) {
+          const f = ch === UPPER_HALF ? 0 : 12;
+          const g = ch === UPPER_HALF ? 12 : 0;
+          for (let c = 0;c < 3; c++)
+            fg[o + c] = (q[f + c] + q[f + 3 + c] + q[f + 6 + c] + q[f + 9 + c]) / 4;
+          fg[o + 3] = 255;
+          applyTint(fg, o, edgeTint);
+          if (surface[i]) {
+            for (let c = 0;c < 3; c++)
+              bg[o + c] = (q[g + c] + q[g + 3 + c] + q[g + 6 + c] + q[g + 9 + c]) / 4;
+            bg[o + 3] = 255;
+            applyTint(bg, o, cellTint[i]);
+          }
+          continue;
+        }
+        if (edge) {
+          for (let c = 0;c < 3; c++)
+            fg[o + c] = mean8(q, c);
+          fg[o + 3] = 255;
+          applyTint(fg, o, edgeTint);
+          if (!surface[i])
+            continue;
+        }
+        if (fits) {
+          const was = previousMask[i];
+          if (dots.size[i] && placeDot(dots, i, x, y, q, grid2, mask, GW2, curve2, was === DOT, char, fg, bg, o)) {
+            previousMask[i] = DOT;
+            applyTint(bg, o, cellTint[i]);
+            applyTint(fg, o, cellTint[i]);
+            continue;
+          }
+          if (dots.size[i])
+            lightDot(dots, i, x, y, q, grid2, mask, GW2, curve2);
+          if (octants) {
+            const octant = writeOctant(q, order, was >= 0 && was < FIRST ? was : -1, olderMask[i], moving[i], char, fg, bg, i, o);
+            previousMask[i] = smooth && !softFit && !round[i] && !moving[i] ? refineEdge(q, was, octant, char, fg, bg, i, o, x, y, deepR, deepG, deepB) : octant;
+          } else
+            previousMask[i] = writeQuadrant(q, was, olderMask[i], moving[i], char, fg, bg, i, o);
+          if (previousMask[i] !== was)
+            olderMask[i] = was;
+          rememberFit(i, o, char, fg, bg, fitChar, fitFg, fitBg);
+          fitted[i] = dots.size[i] || moving[i] ? 0 : 1;
+          applyTint(bg, o, cellTint[i]);
+          if (char[i] !== SPACE)
+            applyTint(fg, o, cellTint[i]);
+          continue;
+        }
+        for (let c = 0;c < 3; c++)
+          bg[o + c] = mean8(q, c);
+        bg[o + 3] = 255;
+        applyTint(bg, o, cellTint[i]);
+      }
+    }
+    quieten(char, fg, bg, inputFg, inputBg, shownChar, shownFg, shownBg, cells);
+    if (pixels && (advanced || !nextImage)) {
+      const image = publishImage(blended, PW, PH, W, H, scrim2, curve2, look.scrim);
+      if (image) {
+        nextImage?.dispose();
+        nextImage = image;
+      }
+    }
+    if (debug && frames % 30 === 0)
+      log(`frame ${frames} pixels=${pixels} imageCells=${imageCell.reduce((n, v) => n + v, 0)} layer=${JSON.stringify(layerStats)} reservation=${reservation.toString(16)} resolution=${JSON.stringify(renderer.resolution)} kitty=${renderer.capabilities?.kitty_graphics}`);
+  };
+  const create = (next, chosen) => {
+    const created = next.create(chosen);
+    if (busy)
+      created.react?.("busy");
+    if (failed)
+      created.react?.("error");
+    if (mapped)
+      created.textMap?.(textMap);
+    return created;
+  };
+  const onMouse = (event) => {
+    if (event.button !== MouseButton.LEFT || event.modifiers.shift || event.modifiers.ctrl || event.modifiers.alt)
+      return;
+    if (event.type !== "down" && event.type !== "up")
+      return;
+    const cell2 = event.y * openW + event.x;
+    const clear = event.x >= 0 && event.x < openW && open[cell2] === 1 && !event.isDragging && !inOverlay(event.target);
+    if (event.type === "down") {
+      pressed = clear ? cell2 : -1;
+      return;
+    }
+    const hit = clear && pressed === cell2;
+    pressed = -1;
+    log(`click ${event.x},${event.y} ${hit ? "pokes" : "ignored"}`);
+    if (!hit || !scene?.poke)
+      return;
+    scene.poke((event.x + 0.5) / openW * (scene.W / scene.H), (event.y + 0.5) / (open.length / openW));
+    renderer.requestRender();
+  };
+  const engine = {
+    get wallpaper() {
+      return wallpaper;
+    },
+    start(next, chosen, seconds = FADE) {
+      const shows = (w, s) => w === next && s?.activity === chosen.activity && s.time === chosen.time && s.season === chosen.season && s.weather === chosen.weather;
+      if (shows(wallpaper, settings)) {
+        settings = chosen;
+        renderer.requestRender();
+        return;
+      }
+      if (scene) {
+        const back = shows(from?.wallpaper, from?.settings) ? from : undefined;
+        const incoming = back ? back.scene : create(next, chosen);
+        if (back || !from || fade >= 0.5)
+          from = {
+            scene,
+            wallpaper,
+            settings
+          };
+        scene = incoming;
+        fade = back ? 1 - fade : 0;
+        wallpaper = next;
+        settings = chosen;
+        fadeLength = seconds;
+        lastTarget = "";
+        return;
+      }
+      const created = create(next, chosen);
+      engine.stop();
+      wallpaper = next;
+      settings = chosen;
+      scene = created;
+      renderer.addPostProcessFn(postProcess);
+      lastStep = 0;
+      lastTarget = "";
+      history = new Float32Array(0);
+      previousMask = new Int16Array(0);
+      olderMask = new Int16Array(0);
+      shownChar = new Uint32Array(0);
+      dirty = process.env.WALLPAPER_DIRTY !== "0";
+      lastActivity = Date.now();
+      focused = true;
+      schedule();
+      renderer.on("focus", onFocus);
+      renderer.on("blur", onBlur);
+      renderer.stdin.on("data", onInput);
+      unlisten = context.data.listen(wake);
+      layer = (options.layer ?? createLayer)(renderer, drawLayer);
+      renderer.root.onMouse = onMouse;
+    },
+    stop() {
+      if (!scene)
+        return;
+      wallpaper = undefined;
+      settings = undefined;
+      scene = undefined;
+      from = undefined;
+      renderer.removePostProcessFn(postProcess);
+      schedule();
+      renderer.off("focus", onFocus);
+      renderer.off("blur", onBlur);
+      renderer.stdin.off("data", onInput);
+      unlisten?.();
+      unlisten = undefined;
+      layer?.dispose();
+      layer = undefined;
+      renderer.root.onMouse = undefined;
+      pressed = -1;
+      nextImage?.dispose();
+      nextImage = undefined;
+      pool?.dispose();
+      pool = undefined;
+      if (savedTransport !== undefined)
+        renderer.kittyImageTransport = savedTransport;
+      savedTransport = undefined;
+      renderer.requestRender();
+    },
+    react(event) {
+      log(`agent ${event}`);
+      busy = event === "busy";
+      failed = event === "error";
+      clearTimeout(lifting);
+      if (failed)
+        lifting = setTimeout(() => engine.react("idle"), GLOOM_MS);
+      scene?.react?.(event);
+      from?.scene.react?.(event);
+    },
+    power(mode) {
+      power = mode;
+      wake();
+    }
+  };
+  return engine;
+}
+function inOverlay(target) {
+  for (let r = target;r; r = r.parent)
+    if (r.zIndex > 0)
+      return true;
+  return false;
+}
+function scrimAt(scrim2, depth, light) {
+  const upper = depth < 0.5;
+  const from = upper ? scrim2[0] : scrim2[1];
+  const to = upper ? scrim2[1] : scrim2[2];
+  const t = upper ? depth * 2 : depth * 2 - 1;
+  const color = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t, from[2] + (to[2] - from[2]) * t];
+  if (!light)
+    return color;
+  return [255 - (255 - color[0]) * LIGHT_SCRIM, 255 - (255 - color[1]) * LIGHT_SCRIM, 255 - (255 - color[2]) * LIGHT_SCRIM];
+}
+function blendScrim(a, b, t) {
+  if (t === 1)
+    return b;
+  const at = (i) => [lerp(a[i][0], b[i][0], t), lerp(a[i][1], b[i][1], t), lerp(a[i][2], b[i][2], t)];
+  return [at(0), at(1), at(2)];
+}
+
+// src/forecast.ts
+var REFRESH = 30 * 60000;
+var cache = new Map;
+async function forecast(location) {
+  const cached = cache.get(location);
+  if (cached && Date.now() - cached.at < REFRESH)
+    return cached.result;
+  const result = await lookup(location).catch(() => ({ weather: "clear" }));
+  cache.set(location, { at: Date.now(), result });
+  return result;
+}
+function coordinatesOf(location) {
+  const match = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(location);
+  if (!match)
+    return;
+  return { latitude: Number(match[1]), longitude: Number(match[2]) };
+}
+async function lookup(location) {
+  const place = coordinatesOf(location) ?? await geocode(location);
+  const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=weather_code`, { signal: AbortSignal.timeout(1e4) });
+  const body = await response.json();
+  return { weather: weatherFor(body.current?.weather_code), latitude: place.latitude };
+}
+async function geocode(name) {
+  const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(name.split(",")[0].trim())}`, { signal: AbortSignal.timeout(1e4) });
+  const body = await response.json();
+  const place = body.results?.[0];
+  if (!place)
+    throw new Error(`no place called ${name}`);
+  return place;
+}
+function weatherFor(code) {
+  if (code === undefined)
+    return "clear";
+  if (code === 45 || code === 48)
+    return "fog";
+  if (code >= 71 && code <= 77 || code === 85 || code === 86)
+    return "snow";
+  if (code >= 51)
+    return "rain";
+  if (code === 3)
+    return "overcast";
+  return "clear";
+}
+
+// src/load.ts
+import { homedir } from "os";
+async function loadWallpapers(modules, builtin) {
+  const wallpapers = [];
+  const skipped = [];
+  if (modules === undefined)
+    return { wallpapers, skipped };
+  if (!Array.isArray(modules))
+    return { wallpapers, skipped: ["the wallpapers option must be a list of module paths or package names"] };
+  const taken = new Set(builtin.map((w) => w.id));
+  for (const spec of modules) {
+    if (typeof spec !== "string" || spec.startsWith(".")) {
+      skipped.push(`${JSON.stringify(spec)}: use an absolute path or a package name`);
+      continue;
+    }
+    const loaded = await (spec.startsWith("~/") ? import(homedir() + spec.slice(1)) : import(spec)).then((module) => module.default, (error) => new Error(String(error?.message ?? error)));
+    if (loaded instanceof Error) {
+      skipped.push(`${spec}: ${loaded.message}`);
+      continue;
+    }
+    if (loaded === undefined) {
+      skipped.push(`${spec}: no default export (a Wallpaper or an array of them)`);
+      continue;
+    }
+    for (const value of Array.isArray(loaded) ? loaded : [loaded]) {
+      const reason = problem(value, taken);
+      if (reason) {
+        skipped.push(`${spec}: ${reason}`);
+        continue;
+      }
+      const wallpaper = value;
+      taken.add(wallpaper.id);
+      wallpapers.push(wallpaper);
+    }
+  }
+  return { wallpapers, skipped };
+}
+function problem(value, taken) {
+  if (typeof value !== "object" || value === null)
+    return "not a wallpaper object";
+  const w = value;
+  if (typeof w.id !== "string" || !/^[a-z0-9-]+$/.test(w.id))
+    return `id ${JSON.stringify(w.id)} must be lowercase letters, digits and dashes`;
+  if (taken.has(w.id))
+    return `id "${w.id}" is already taken`;
+  if (typeof w.name !== "string" || typeof w.description !== "string")
+    return `${w.id}: name and description must be strings`;
+  if (typeof w.create !== "function")
+    return `${w.id}: create must be a function`;
+  const activity = w.activity;
+  if (!ACTIVITIES.every((a) => typeof activity?.[a] === "string"))
+    return `${w.id}: activity needs a description for each of ${ACTIVITIES.join(", ")}`;
+  const scrim2 = w.scrim;
+  const isScrim = (s) => Array.isArray(s) && s.length === 3 && s.every((c) => Array.isArray(c) && c.length === 3 && c.every((v) => typeof v === "number"));
+  if (!TIMES.every((t) => isScrim(scrim2?.[t])))
+    return `${w.id}: scrim needs three RGB colors for each of ${TIMES.join(", ")}`;
+}
+
+// src/orbs.ts
+var lists2 = new WeakMap;
+function trackOrbs(hdr, list) {
+  lists2.set(hdr, list);
+}
+function addOrb(hdr, cx, cy, r) {
+  lists2.get(hdr)?.push(cx, cy, r);
+}
+function onOrb(hdr, x, y, margin = 1) {
+  const list = lists2.get(hdr);
+  if (!list)
+    return false;
+  for (let i = 0;i < list.length; i += 3)
+    if ((x - list[i]) ** 2 + (y - list[i + 1]) ** 2 <= (list[i + 2] + margin) ** 2)
+      return true;
+  return false;
+}
+
+// src/shadow.ts
+var SQUASH = 0.38;
+function sunShade(time, orb, covered = false) {
+  const away = orb.x < 0.5 ? 1 : -1;
+  const looks = {
+    day: { tint: [0.36, 0.44, 0.64], contact: 0.75, cast: 0.6, length: 0.6, x: away, y: 0.45, radiate: false },
+    sunset: { tint: [0.32, 0.22, 0.42], contact: 0.7, cast: 0.75, length: 2.4, x: orb.x, y: orb.y, radiate: true },
+    night: { tint: [0.35, 0.45, 0.85], contact: 0.45, cast: 0.2, length: 0.6, x: away, y: 0.45, radiate: false }
+  };
+  const shade = looks[time];
+  return { ...shade, contact: covered ? shade.contact * 0.8 : shade.contact, cast: covered ? 0 : shade.cast };
+}
+function groundShadow(hdr, W, H, shade, x, y, w, h, tip = 0.7, lift2 = 0) {
+  const [tr, tg, tb] = shade.tint;
+  const up = clamp(lift2 / Math.max(1, h * 0.5), 0, 1);
+  const r = w * 0.6 * (1 + up * 0.6);
+  const cy = y + r * SQUASH * 0.3;
+  if (shade.contact > 0 && up < 1)
+    fillShadow(hdr, W, H, x, cy, x, cy, r, r, tr, tg, tb, shade.contact * (1 - up) ** 2, 1, 0.6);
+  if (shade.cast <= 0)
+    return;
+  const dx = shade.radiate ? x - shade.x * W : shade.x;
+  const dy = shade.radiate ? Math.max(0, y - shade.y * H) : shade.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const ux = dx / d;
+  const uy = dy / d * 0.5;
+  const near2 = lift2 * shade.length;
+  const far = near2 + h * shade.length;
+  fillShadow(hdr, W, H, x + ux * near2, y + uy * near2, x + ux * far, y + uy * far, w * 0.4, w * 0.4 * tip, tr, tg, tb, shade.cast * (1 - up * 0.5), 0.3, 0.55);
+}
+var depth = new WeakMap;
+function keepShadows(hdr) {
+  const d = depth.get(hdr);
+  if (!d)
+    return;
+  d.fixed = d.amount.slice();
+  d.dirty = false;
+}
+function clearShadows(hdr) {
+  const d = depth.get(hdr);
+  if (!d?.dirty)
+    return;
+  d.amount.set(d.fixed);
+  d.dirty = false;
+}
+function fillShadow(hdr, W, H, ax, ay, bx, by, r0, r1, tr, tg, tb, a, fade, soft) {
+  if (a <= 0)
+    return;
+  let d = depth.get(hdr);
+  if (!d || d.amount.length !== W * H) {
+    d = { amount: new Float32Array(W * H), fixed: new Float32Array(W * H), dirty: false };
+    depth.set(hdr, d);
+  }
+  d.dirty = true;
+  const amount = d.amount;
+  const R = Math.max(r0, r1);
+  const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - R));
+  const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx) + R));
+  const y0 = Math.max(0, Math.floor(Math.min(ay, by) - R * SQUASH));
+  const y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by) + R * SQUASH));
+  touch(hdr, x0, y0, x1, y1);
+  const dx = bx - ax;
+  const dy = (by - ay) / SQUASH;
+  const len2 = dx * dx + dy * dy;
+  for (let y = y0;y <= y1; y++) {
+    const oy = (y + 0.5 - ay) / SQUASH;
+    for (let x = x0;x <= x1; x++) {
+      const ox = x + 0.5 - ax;
+      const t = len2 > 0 ? clamp((ox * dx + oy * dy) / len2, 0, 1) : 0;
+      const r = r0 + (r1 - r0) * t;
+      const e = Math.hypot(ox - dx * t, oy - dy * t) / r;
+      if (e >= 1)
+        continue;
+      const k = clamp((1 - e) / (soft + (1 - soft) * t), 0, 1);
+      const s = a * k * k * (3 - 2 * k) * (1 + (fade - 1) * t);
+      const p = y * W + x;
+      const m = amount[p];
+      if (s <= m)
+        continue;
+      amount[p] = s;
+      const i = p * 3;
+      hdr[i] *= (1 - s * (1 - tr)) / (1 - m * (1 - tr));
+      hdr[i + 1] *= (1 - s * (1 - tg)) / (1 - m * (1 - tg));
+      hdr[i + 2] *= (1 - s * (1 - tb)) / (1 - m * (1 - tb));
+    }
+  }
+}
+
+// src/canvas.ts
+var BLOOM = 4;
+var BLOOM_THRESHOLD = 0.82;
+var BLOOM_EPSILON = 0.0001;
+var SUPERSAMPLE2 = 2;
+var LAYOUT_PIXELS = 600000;
+function cap(ax, ay, bx, by, r0, r1, color, ribs = 0) {
+  return { kind: "capsule", ax, ay, bx, by, r0, r1, color, ribs };
+}
+function ell(cx, cy, rx, ry, angle, color, ribs = 0) {
+  return { kind: "ellipse", cx, cy, rx, ry, angle, color, ribs };
+}
+function blade(spine, widths, color) {
+  return spine.slice(1).map(([bx, by], i) => {
+    const [ax, ay] = spine[i];
+    const half = Math.hypot(bx - ax, by - ay) * 0.75;
+    return ell((ax + bx) / 2, (ay + by) / 2, Math.max(half, 0.5), Math.max(0.5, (widths[i] + widths[i + 1]) / 2), Math.atan2(by - ay, bx - ax), color);
+  });
+}
+
+class Canvas {
+  W = 0;
+  H = 0;
+  A = 1;
+  cells = false;
+  hdr = new Float32Array(0);
+  pixels = new Uint8Array(0);
+  touched = [];
+  changed = [];
+  restored = false;
+  points = new Points;
+  orbs = [];
+  bw = 0;
+  bh = 0;
+  bloomA = new Float32Array(0);
+  bloomB = new Float32Array(0);
+  bw2 = 0;
+  bh2 = 0;
+  bloom2A = new Float32Array(0);
+  bloom2B = new Float32Array(0);
+  bloomUp = new Float32Array(0);
+  bloomRow = new Float32Array(0);
+  vignette = new Float32Array(0);
+  rowA = new Int32Array(0);
+  rowB = new Int32Array(0);
+  rowF = new Float32Array(0);
+  colA = new Int32Array(0);
+  colB = new Int32Array(0);
+  colF = new Float32Array(0);
+  still = new Float32Array(0);
+  stillSource = new Float32Array(0);
+  stillBloom = new Float32Array(0);
+  stillPixels = new Uint8Array(0);
+  stillExposure = NaN;
+  retone = new Uint8Array(0);
+  toned = new Uint8Array(0);
+  region = new Int32Array(4);
+  gloom = 0;
+  gloomy = false;
+  frame = 0;
+  react(event) {
+    this.gloomy = event === "error";
+    if (event === "done")
+      this.visit();
+  }
+  visit() {}
+  stepGloom(dt) {
+    this.gloom = clamp(this.gloom + (this.gloomy ? dt : -dt) * 0.3, 0, 1);
+  }
+  text;
+  textMap(map) {
+    this.text = map;
+  }
+  covered(x, y) {
+    const t = this.text;
+    if (!t)
+      return 0;
+    return t.cover[clamp(Math.floor(y * t.rows), 0, t.rows - 1) * t.cols + clamp(Math.floor(x / this.A * t.cols), 0, t.cols - 1)];
+  }
+  openSpot(x0, x1, y0, y1) {
+    let best = [rand(x0, x1), rand(y0, y1)];
+    let least = this.covered(best[0], best[1]);
+    for (let i = 0;i < 5 && least > 0.05; i++) {
+      const spot = [rand(x0, x1), rand(y0, y1)];
+      const c = this.covered(spot[0], spot[1]);
+      if (c >= least)
+        continue;
+      best = spot;
+      least = c;
+    }
+    return best;
+  }
+  openRow(y0, y1) {
+    let best = rand(y0, y1);
+    const t = this.text;
+    if (!t)
+      return best;
+    const cover = (y) => {
+      const row = clamp(Math.floor(y * t.rows), 0, t.rows - 1) * t.cols;
+      let sum = 0;
+      for (let c = 0;c < t.cols; c++)
+        sum += t.cover[row + c];
+      return sum;
+    };
+    let least = cover(best);
+    for (let i = 0;i < 4; i++) {
+      const y = rand(y0, y1);
+      const c = cover(y);
+      if (c >= least)
+        continue;
+      best = y;
+      least = c;
+    }
+    return best;
+  }
+  layout() {}
+  background = new Float32Array(0);
+  px = 1;
+  supersample = SUPERSAMPLE2;
+  resize(W, H, cells = false) {
+    W = Math.max(64, Math.round(W));
+    H = Math.max(36, Math.round(H));
+    if (W === this.W && H === this.H && cells === this.cells)
+      return;
+    this.W = W;
+    this.H = H;
+    this.cells = cells;
+    this.points.on = cells;
+    this.A = W / H;
+    this.hdr = new Float32Array(W * H * 3);
+    trackTouched(this.hdr, this.touched);
+    this.orbs.length = 0;
+    trackOrbs(this.hdr, this.orbs);
+    this.pixels = new Uint8Array(W * H * 4);
+    this.bw = Math.ceil(W / BLOOM);
+    this.bh = Math.ceil(H / BLOOM);
+    this.bloomA = new Float32Array(this.bw * this.bh * 3);
+    this.bloomB = new Float32Array(this.bw * this.bh * 3);
+    this.bloomUp = new Float32Array(this.bw * this.bh * 3);
+    this.bloomRow = new Float32Array(this.bw * 3);
+    this.bw2 = Math.ceil(this.bw / 2);
+    this.bh2 = Math.ceil(this.bh / 2);
+    this.bloom2A = new Float32Array(this.bw2 * this.bh2 * 3);
+    this.bloom2B = new Float32Array(this.bw2 * this.bh2 * 3);
+    this.stillSource = new Float32Array(this.bw * this.bh * 3);
+    this.stillBloom = new Float32Array(this.bw * this.bh * 3);
+    this.stillPixels = new Uint8Array(W * H * 4);
+    this.retone = new Uint8Array(this.bw * this.bh);
+    this.toned = new Uint8Array(this.bw * this.bh);
+    const invR = 1 / Math.hypot(W / 2, H / 2);
+    this.vignette = new Float32Array(W * H);
+    for (let y = 0;y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const dx = (x - W / 2) * invR;
+        const dy = (y - H / 2) * invR;
+        const corner = this.frame * smoothstep(0.45, 1, y / H) * (0.35 + 0.65 * (2 * Math.abs(x / W - 0.5)) ** 2);
+        this.vignette[y * W + x] = (1 - 0.62 * Math.pow(dx * dx + dy * dy, 1.25)) * (1 - corner);
+      }
+    this.rowA = new Int32Array(H);
+    this.rowB = new Int32Array(H);
+    this.rowF = new Float32Array(H);
+    for (let y = 0;y < H; y++) {
+      const by = (y + 0.5) * (this.bh / H) - 0.5;
+      const i = clamp(Math.floor(by), 0, this.bh - 1);
+      this.rowA[y] = i * this.bw * 3;
+      this.rowB[y] = Math.min(this.bh - 1, i + 1) * this.bw * 3;
+      this.rowF[y] = clamp(by - i, 0, 1);
+    }
+    this.colA = new Int32Array(W);
+    this.colB = new Int32Array(W);
+    this.colF = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const bx = (x + 0.5) * (this.bw / W) - 0.5;
+      const i = clamp(Math.floor(bx), 0, this.bw - 1);
+      this.colA[x] = i * 3;
+      this.colB[x] = Math.min(this.bw - 1, i + 1) * 3;
+      this.colF[x] = clamp(bx - i, 0, 1);
+    }
+    const S = W * H * this.supersample ** 2 <= LAYOUT_PIXELS ? this.supersample : 1;
+    let fine2;
+    if (S > 1) {
+      const hdr = this.hdr;
+      this.W = W * S;
+      this.H = H * S;
+      this.px = S;
+      this.hdr = new Float32Array(W * S * H * S * 3);
+      this.layout();
+      fine2 = this.hdr;
+      this.W = W;
+      this.H = H;
+      this.px = 1;
+      this.hdr = hdr;
+    }
+    this.layout();
+    keepShadows(this.hdr);
+    this.background = fine2 ? shrink(fine2, W, H, S, 3) : this.hdr.slice();
+    this.still = this.background;
+    this.stillExposure = NaN;
+  }
+  shrink(buf, channels = 3) {
+    return shrink(buf, this.W / this.px, this.H / this.px, this.px, channels);
+  }
+  thick(radius, min = 1) {
+    return this.cells ? Math.max(radius * this.H, min * this.px) : radius * this.H;
+  }
+  restore(background = this.background) {
+    if (background)
+      this.hdr.set(background);
+    this.touched.length = 0;
+    this.restored = true;
+  }
+  touch(x0, y0, x1, y1) {
+    addBox(this.touched, x0, y0, x1, y1);
+  }
+  add(x, y, r, g, b) {
+    const xi = x | 0;
+    const yi = y | 0;
+    if (xi < 0 || yi < 0 || xi >= this.W || yi >= this.H)
+      return;
+    const i = (yi * this.W + xi) * 3;
+    this.hdr[i] += r;
+    this.hdr[i + 1] += g;
+    this.hdr[i + 2] += b;
+    this.touch(xi, yi, xi, yi);
+  }
+  point(x, y, r, g, b, size = 1, glide = false) {
+    this.points.add(this.hdr, this.W, this.H, x, y, r, g, b, size, glide);
+  }
+  splat(x, y, r, g, b) {
+    splat(this.hdr, this.W, this.H, x, y, r, g, b);
+  }
+  blend(i, r, g, b, a) {
+    const h = this.hdr;
+    h[i] += (r - h[i]) * a;
+    h[i + 1] += (g - h[i + 1]) * a;
+    h[i + 2] += (b - h[i + 2]) * a;
+    const y = Math.floor(i / 3 / this.W);
+    const x = i / 3 - y * this.W;
+    this.touch(x, y, x, y);
+  }
+  disc(cx, cy, rad, r, g, b, a) {
+    fillDisc(this.hdr, this.W, this.H, cx, cy, rad, r, g, b, a);
+    this.touch(cx - rad - 2, cy - rad - 2, cx + rad + 2, cy + rad + 2);
+  }
+  ellipse(cx, cy, rx, ry, r, g, b, a) {
+    fillEllipse(this.hdr, this.W, this.H, cx, cy, rx, ry, r, g, b, a);
+    this.touch(cx - rx - 2, cy - ry - 2, cx + rx + 2, cy + ry + 2);
+  }
+  polygon(points, color, alpha = 1) {
+    fillPolygon(this.hdr, this.W, this.H, points, color[0], color[1], color[2], alpha);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [x, y] of points) {
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+    if (points.length)
+      this.touch(x0 - 2, y0 - 2, x1 + 2, y1 + 2);
+  }
+  shape(parts, lighting, light = 1) {
+    fillShape(this.hdr, this.W, this.H, parts, lighting, light, this.px);
+    for (const p of parts) {
+      const r = (p.kind === "capsule" ? Math.max(p.r0, p.r1) : Math.max(p.rx, p.ry)) + 2;
+      if (p.kind === "capsule")
+        this.touch(Math.min(p.ax, p.bx) - r, Math.min(p.ay, p.by) - r, Math.max(p.ax, p.bx) + r, Math.max(p.ay, p.by) + r);
+      else
+        this.touch(p.cx - r, p.cy - r, p.cx + r, p.cy + r);
+    }
+  }
+  finish(exposure = 1.25) {
+    this.points.resolve(this.hdr, this.W, this.vignette, exposure);
+    clearShadows(this.hdr);
+    const { W, H, bw, bh, retone } = this;
+    const fresh = exposure !== this.stillExposure;
+    if (fresh) {
+      bloomSource(this.still, W, H, bw, bh, this.stillSource, undefined, this.stillSource, retone, this.region);
+      this.bloomA.set(this.stillSource);
+      this.stillBloom.fill(0);
+      bloom(bw, bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.stillBloom, retone, 0, 0, bw - 1, bh - 1);
+      toneMap(this.still, this.stillPixels, W, H, bw, retone, this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure);
+      this.stillExposure = exposure;
+      this.pixels.set(this.stillPixels);
+      this.toned.fill(0);
+    }
+    if (this.restored)
+      markBlocks(retone, bw, bh, this.touched);
+    else
+      retone.fill(1);
+    this.restored = false;
+    bloomSource(this.hdr, W, H, bw, bh, this.bloomA, this.still, this.stillSource, retone, this.region);
+    const region = this.region;
+    const spread = region[2] >= region[0];
+    if (spread) {
+      this.bloomUp.set(this.stillBloom);
+      bloom(bw, bh, this.bloomA, this.bloomB, this.bw2, this.bh2, this.bloom2A, this.bloom2B, this.bloomUp, retone, region[0], region[1], region[2], region[3]);
+    }
+    settleBlocks(this.pixels, this.stillPixels, W, H, bw, bh, this.toned, retone, this.changed, fresh);
+    toneMap(this.hdr, this.pixels, W, H, bw, retone, spread ? this.bloomUp : this.stillBloom, this.bloomRow, this.vignette, this.rowA, this.rowB, this.rowF, this.colA, this.colB, this.colF, exposure);
+  }
+}
+function markBlocks(blocks, bw, bh, boxes) {
+  blocks.fill(0);
+  for (let b = 0;b < boxes.length; b += 4) {
+    const x0 = Math.max(0, Math.floor(boxes[b] / BLOOM));
+    const y0 = Math.max(0, Math.floor(boxes[b + 1] / BLOOM));
+    const x1 = Math.min(bw - 1, Math.floor(boxes[b + 2] / BLOOM));
+    const y1 = Math.min(bh - 1, Math.floor(boxes[b + 3] / BLOOM));
+    for (let y = y0;y <= y1; y++)
+      if (x0 <= x1)
+        blocks.fill(1, y * bw + x0, y * bw + x1 + 1);
+  }
+}
+function settleBlocks(pixels, stillPixels, W, H, bw, bh, toned, retone, changed, fresh) {
+  changed.length = 0;
+  if (fresh)
+    changed.push(0, 0, W - 1, H - 1);
+  for (let by = 0;by < bh; by++) {
+    let run = -1;
+    for (let bx = 0;bx <= bw; bx++) {
+      const b = by * bw + bx;
+      const moved = bx < bw && (toned[b] === 1 || retone[b] === 1);
+      if (bx < bw && toned[b] && !retone[b])
+        for (let y = by * BLOOM;y < Math.min(H, by * BLOOM + BLOOM); y++) {
+          const o = (y * W + bx * BLOOM) * 4;
+          pixels.set(stillPixels.subarray(o, (y * W + Math.min(W, bx * BLOOM + BLOOM)) * 4), o);
+        }
+      if (bx < bw)
+        toned[b] = retone[b];
+      if (moved && run < 0)
+        run = bx;
+      if (moved || run < 0)
+        continue;
+      if (!fresh)
+        changed.push(run * BLOOM, by * BLOOM, Math.min(W, bx * BLOOM) - 1, Math.min(H, by * BLOOM + BLOOM) - 1);
+      run = -1;
+    }
+  }
+}
+function blur(a, tmp, w, x0, y0, x1, y1) {
+  blurLines(a, tmp, x0, x1, 3, y0, y1, w * 3);
+  blurLines(tmp, a, y0, y1, w * 3, x0, x1, 3);
+}
+function blurLines(src, dst, k0, k1, step, l0, l1, lineStep) {
+  for (let l = l0;l <= l1; l++) {
+    const base = l * lineStep;
+    for (let k = k0;k <= k1; k++) {
+      const m3 = base + Math.max(k - 3, k0) * step;
+      const m2 = base + Math.max(k - 2, k0) * step;
+      const m1 = base + Math.max(k - 1, k0) * step;
+      const o = base + k * step;
+      const p1 = base + Math.min(k + 1, k1) * step;
+      const p2 = base + Math.min(k + 2, k1) * step;
+      const p3 = base + Math.min(k + 3, k1) * step;
+      for (let c = 0;c < 3; c++)
+        dst[o + c] = (src[m3 + c] + src[p3 + c] + 6 * (src[m2 + c] + src[p2 + c]) + 15 * (src[m1 + c] + src[p1 + c]) + 20 * src[o + c]) / 64;
+    }
+  }
+}
+function shrink(src, W, H, S, channels) {
+  const out = new Float32Array(W * H * channels);
+  const k = 1 / (S * S);
+  for (let y = 0;y < H; y++)
+    for (let sy = 0;sy < S; sy++) {
+      const row = (y * S + sy) * W * S;
+      for (let x = 0;x < W; x++)
+        for (let sx = 0;sx < S; sx++) {
+          const i = (row + x * S + sx) * channels;
+          const o = (y * W + x) * channels;
+          for (let c = 0;c < channels; c++)
+            out[o + c] += src[i + c] * k;
+        }
+    }
+  return out;
+}
+function fillDisc(hdr, W, H, cx, cy, rad, r, g, b, a) {
+  const x0 = Math.max(0, Math.floor(cx - rad - 1));
+  const x1 = Math.min(W - 1, Math.ceil(cx + rad + 1));
+  const y0 = Math.max(0, Math.floor(cy - rad - 1));
+  const y1 = Math.min(H - 1, Math.ceil(cy + rad + 1));
+  for (let y = y0;y <= y1; y++) {
+    const dy = y + 0.5 - cy;
+    for (let x = x0;x <= x1; x++) {
+      const dx = x + 0.5 - cx;
+      const cov = clamp(rad - Math.sqrt(dx * dx + dy * dy) + 0.5, 0, 1) * a;
+      if (cov <= 0)
+        continue;
+      const i = (y * W + x) * 3;
+      hdr[i] += (r - hdr[i]) * cov;
+      hdr[i + 1] += (g - hdr[i + 1]) * cov;
+      hdr[i + 2] += (b - hdr[i + 2]) * cov;
+    }
+  }
+}
+function fillEllipse(hdr, W, H, cx, cy, rx, ry, r, g, b, a) {
+  const x0 = Math.max(0, Math.floor(cx - rx - 1));
+  const x1 = Math.min(W - 1, Math.ceil(cx + rx + 1));
+  const y0 = Math.max(0, Math.floor(cy - ry - 1));
+  const y1 = Math.min(H - 1, Math.ceil(cy + ry + 1));
+  const m = Math.min(rx, ry);
+  for (let y = y0;y <= y1; y++) {
+    const dy = (y + 0.5 - cy) / ry;
+    for (let x = x0;x <= x1; x++) {
+      const dx = (x + 0.5 - cx) / rx;
+      const cov = clamp((1 - Math.sqrt(dx * dx + dy * dy)) * m + 0.5, 0, 1) * a;
+      if (cov <= 0)
+        continue;
+      const i = (y * W + x) * 3;
+      hdr[i] += (r - hdr[i]) * cov;
+      hdr[i + 1] += (g - hdr[i + 1]) * cov;
+      hdr[i + 2] += (b - hdr[i + 2]) * cov;
+    }
+  }
+}
+function fillShape(hdr, W, H, parts, lighting, light, unit) {
+  if (!parts.length)
+    return;
+  let cx0 = Infinity;
+  let cy0 = Infinity;
+  let cx1 = -Infinity;
+  let cy1 = -Infinity;
+  const boxes = new Float32Array(parts.length * 4);
+  for (let j = 0;j < parts.length; j++) {
+    const p = parts[j];
+    const radius = p.kind === "capsule" ? Math.max(p.r0, p.r1) : Math.max(p.rx, p.ry);
+    const pad = p.kind === "capsule" ? radius + 1 : radius * (1 + 0.5 / Math.max(0.01, Math.min(p.rx, p.ry))) + 1;
+    const [ax, ay, bx, by] = p.kind === "capsule" ? [p.ax, p.ay, p.bx, p.by] : [p.cx, p.cy, p.cx, p.cy];
+    cx0 = Math.min(cx0, ax - radius - 1, bx - radius - 1);
+    cy0 = Math.min(cy0, ay - radius - 1, by - radius - 1);
+    cx1 = Math.max(cx1, ax + radius + 1, bx + radius + 1);
+    cy1 = Math.max(cy1, ay + radius + 1, by + radius + 1);
+    boxes[j * 4] = Math.min(ax, bx) - pad;
+    boxes[j * 4 + 1] = Math.min(ay, by) - pad;
+    boxes[j * 4 + 2] = Math.max(ax, bx) + pad;
+    boxes[j * 4 + 3] = Math.max(ay, by) + pad;
+  }
+  const lx0 = lighting.style === "rim" ? lighting.x : 0;
+  const ly0 = lighting.style === "rim" ? lighting.y : 0;
+  const sl = Math.hypot(lx0 - (cx0 + cx1) / 2, ly0 - (cy0 + cy1) / 2) || 1;
+  const sx = (lx0 - (cx0 + cx1) / 2) / sl;
+  const sy = (ly0 - (cy0 + cy1) / 2) / sl;
+  for (let y = Math.max(0, Math.floor(cy0));y <= Math.min(H - 1, Math.ceil(cy1)); y++)
+    for (let x = Math.max(0, Math.floor(cx0));x <= Math.min(W - 1, Math.ceil(cx1)); x++) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      let best = Infinity;
+      let part = parts[0];
+      let nx = 0;
+      let ny = 0;
+      let e = 0;
+      let across = 0;
+      for (let j = 0;j < parts.length; j++) {
+        if (px < boxes[j * 4] || py < boxes[j * 4 + 1] || px > boxes[j * 4 + 2] || py > boxes[j * 4 + 3])
+          continue;
+        const p = parts[j];
+        if (p.kind === "capsule") {
+          const dx = p.bx - p.ax;
+          const dy = p.by - p.ay;
+          const len2 = dx * dx + dy * dy || 0.000001;
+          const t = clamp(((px - p.ax) * dx + (py - p.ay) * dy) / len2, 0, 1);
+          const ox2 = px - (p.ax + dx * t);
+          const oy2 = py - (p.ay + dy * t);
+          const r = p.r0 + (p.r1 - p.r0) * t;
+          const dist = Math.hypot(ox2, oy2) || 0.000001;
+          const d2 = dist - r;
+          if (d2 >= best)
+            continue;
+          best = d2;
+          part = p;
+          nx = ox2 / dist;
+          ny = oy2 / dist;
+          e = dist / Math.max(r, 0.5);
+          across = (ox2 * dy - oy2 * dx) / Math.sqrt(len2) / Math.max(r, 0.5);
+          continue;
+        }
+        const ca = Math.cos(p.angle);
+        const sa = Math.sin(p.angle);
+        const ox = px - p.cx;
+        const oy = py - p.cy;
+        const lx = ox * ca + oy * sa;
+        const ly = -ox * sa + oy * ca;
+        const radial = Math.sqrt((lx / p.rx) ** 2 + (ly / p.ry) ** 2);
+        const d = (radial - 1) * Math.min(p.rx, p.ry);
+        if (d >= best)
+          continue;
+        const gx = lx / (p.rx * p.rx);
+        const gy = ly / (p.ry * p.ry);
+        const gl = Math.hypot(gx, gy) || 0.000001;
+        best = d;
+        part = p;
+        nx = (gx * ca - gy * sa) / gl;
+        ny = (gx * sa + gy * ca) / gl;
+        e = radial;
+        across = lx / p.rx;
+      }
+      const cov = clamp(0.5 - best, 0, 1);
+      if (cov <= 0)
+        continue;
+      const k = part.ribs ? 0.8 + 0.2 * Math.cos(across * Math.PI * part.ribs) : 1;
+      const c = part.color;
+      const o = (y * W + x) * 3;
+      if (lighting.style === "front") {
+        const r = Math.min(1, e);
+        const lit2 = Math.max(0, nx * r * lighting.dir[0] + ny * r * lighting.dir[1] + Math.sqrt(1 - r * r) * lighting.dir[2]);
+        const shade = k * (1 - light + light * (0.45 + 0.75 * lit2));
+        hdr[o] += (c[0] * shade - hdr[o]) * cov;
+        hdr[o + 1] += (c[1] * shade - hdr[o + 1]) * cov;
+        hdr[o + 2] += (c[2] * shade - hdr[o + 2]) * cov;
+        continue;
+      }
+      const lit = light * clamp((best + 2.2 * unit) / (2.2 * unit), 0, 1) * Math.max(0, nx * sx + ny * sy) * 0.8;
+      hdr[o] += (c[0] * k + lighting.color[0] * lit - hdr[o]) * cov;
+      hdr[o + 1] += (c[1] * k + lighting.color[1] * lit - hdr[o + 1]) * cov;
+      hdr[o + 2] += (c[2] * k + lighting.color[2] * lit - hdr[o + 2]) * cov;
+    }
+}
+function toneMap(hdr, pixels, W, H, bw, retone, bloomUp, row, vignette, rowA, rowB, rowF, colA, colB, colF, exposure) {
+  for (let y = 0;y < H; y++) {
+    const blocks = (y / BLOOM | 0) * bw;
+    let blended = false;
+    for (let x = 0;x < W; x++) {
+      if (!retone[blocks + (x / BLOOM | 0)]) {
+        x += BLOOM - 1;
+        continue;
+      }
+      if (!blended) {
+        const fy = rowF[y];
+        for (let j = 0;j < bw * 3; j++)
+          row[j] = bloomUp[rowA[y] + j] * (1 - fy) + bloomUp[rowB[y] + j] * fy;
+        blended = true;
+      }
+      const i = y * W + x;
+      const fx = colF[x];
+      const a = colA[x];
+      const b = colB[x];
+      const k = vignette[i] * exposure;
+      const o = i * 4;
+      for (let c = 0;c < 3; c++) {
+        const v = (hdr[i * 3 + c] + row[a + c] * (1 - fx) + row[b + c] * fx) * k;
+        const mapped = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14) * 255;
+        pixels[o + c] = mapped < 0 ? 0 : mapped > 255 ? 255 : mapped;
+      }
+      pixels[o + 3] = 255;
+    }
+  }
+}
+function bloomSource(hdr, W, H, bw, bh, source, still, stillSource, retone, region) {
+  region[0] = bw;
+  region[1] = bh;
+  region[2] = -1;
+  region[3] = -1;
+  for (let by = 0;by < bh; by++)
+    for (let bx = 0;bx < bw; bx++) {
+      const o = (by * bw + bx) * 3;
+      const same = still !== undefined && (!retone[by * bw + bx] || sameBlock(hdr, still, W, H, bx, by));
+      retone[by * bw + bx] = same ? 0 : 1;
+      if (same) {
+        source[o] = source[o + 1] = source[o + 2] = 0;
+        continue;
+      }
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let yy = by * BLOOM;yy < Math.min(H, by * BLOOM + BLOOM); yy++)
+        for (let xx = bx * BLOOM;xx < Math.min(W, bx * BLOOM + BLOOM); xx++) {
+          const i = (yy * W + xx) * 3;
+          r += hdr[i];
+          g += hdr[i + 1];
+          b += hdr[i + 2];
+          n++;
+        }
+      r /= n;
+      g /= n;
+      b /= n;
+      const l = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      const k = l > 0.0001 ? Math.max(0, l - BLOOM_THRESHOLD) / l : 0;
+      source[o] = r * k - (still ? stillSource[o] : 0);
+      source[o + 1] = g * k - (still ? stillSource[o + 1] : 0);
+      source[o + 2] = b * k - (still ? stillSource[o + 2] : 0);
+      if (!source[o] && !source[o + 1] && !source[o + 2])
+        continue;
+      region[0] = Math.min(region[0], bx);
+      region[1] = Math.min(region[1], by);
+      region[2] = Math.max(region[2], bx);
+      region[3] = Math.max(region[3], by);
+    }
+}
+function sameBlock(hdr, still, W, H, bx, by) {
+  for (let y = by * BLOOM;y < Math.min(H, by * BLOOM + BLOOM); y++)
+    for (let i = (y * W + bx * BLOOM) * 3;i < (y * W + Math.min(W, bx * BLOOM + BLOOM)) * 3; i++)
+      if (hdr[i] !== still[i])
+        return false;
+  return true;
+}
+function bloom(bw, bh, bloomA, bloomB, bw2, bh2, bloom2A, bloom2B, out, retone, x0, y0, x1, y1) {
+  const ax0 = Math.max(0, x0 - 6);
+  const ay0 = Math.max(0, y0 - 6);
+  const ax1 = Math.min(bw - 1, x1 + 6);
+  const ay1 = Math.min(bh - 1, y1 + 6);
+  blur(bloomA, bloomB, bw, ax0, ay0, ax1, ay1);
+  blur(bloomA, bloomB, bw, ax0, ay0, ax1, ay1);
+  const cx0 = Math.max(0, (ax0 >> 1) - 6);
+  const cy0 = Math.max(0, (ay0 >> 1) - 6);
+  const cx1 = Math.min(bw2 - 1, (ax1 >> 1) + 6);
+  const cy1 = Math.min(bh2 - 1, (ay1 >> 1) + 6);
+  bloom2A.fill(0);
+  for (let y = cy0;y <= cy1; y++)
+    for (let x = cx0;x <= cx1; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let yy = y * 2;yy < Math.min(bh, y * 2 + 2); yy++)
+        for (let xx = x * 2;xx < Math.min(bw, x * 2 + 2); xx++) {
+          const i = (yy * bw + xx) * 3;
+          r += bloomA[i];
+          g += bloomA[i + 1];
+          b += bloomA[i + 2];
+          n++;
+        }
+      const o = (y * bw2 + x) * 3;
+      bloom2A[o] = r / n;
+      bloom2A[o + 1] = g / n;
+      bloom2A[o + 2] = b / n;
+    }
+  blur(bloom2A, bloom2B, bw2, cx0, cy0, cx1, cy1);
+  blur(bloom2A, bloom2B, bw2, cx0, cy0, cx1, cy1);
+  for (let y = Math.max(0, cy0 * 2 - 3);y <= Math.min(bh - 1, cy1 * 2 + 3); y++) {
+    const sy = clamp((y + 0.5) * (bh2 / bh) - 0.5, 0, bh2 - 1);
+    const sy0 = Math.floor(sy);
+    const sy1 = Math.min(bh2 - 1, sy0 + 1);
+    const fy = sy - sy0;
+    for (let x = Math.max(0, cx0 * 2 - 3);x <= Math.min(bw - 1, cx1 * 2 + 3); x++) {
+      const sx = clamp((x + 0.5) * (bw2 / bw) - 0.5, 0, bw2 - 1);
+      const sx0 = Math.floor(sx);
+      const sx1 = Math.min(bw2 - 1, sx0 + 1);
+      const fx = sx - sx0;
+      const o = (y * bw + x) * 3;
+      let change = 0;
+      for (let c = 0;c < 3; c++) {
+        const a = bloom2A[(sy0 * bw2 + sx0) * 3 + c] * (1 - fx) + bloom2A[(sy0 * bw2 + sx1) * 3 + c] * fx;
+        const b = bloom2A[(sy1 * bw2 + sx0) * 3 + c] * (1 - fx) + bloom2A[(sy1 * bw2 + sx1) * 3 + c] * fx;
+        const v = bloomA[o + c] * 1.1 + (a * (1 - fy) + b * fy) * 1.4;
+        out[o + c] += v;
+        change += Math.abs(v);
+      }
+      if (change < BLOOM_EPSILON)
+        continue;
+      for (let yy = Math.max(0, y - 1);yy <= Math.min(bh - 1, y + 1); yy++)
+        for (let xx = Math.max(0, x - 1);xx <= Math.min(bw - 1, x + 1); xx++)
+          retone[yy * bw + xx] = 1;
+    }
+  }
+}
+function fillPolygon(hdr, W, H, pts, r, g, b, a) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [x, y] of pts) {
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  }
+  const n = pts.length;
+  for (let y = Math.max(0, Math.floor(y0 - 1));y <= Math.min(H - 1, Math.ceil(y1 + 1)); y++)
+    for (let x = Math.max(0, Math.floor(x0 - 1));x <= Math.min(W - 1, Math.ceil(x1 + 1)); x++) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      let inside = false;
+      let dmin = 0.5;
+      for (let i = 0, j = n - 1;i < n; j = i++) {
+        const [ax, ay] = pts[j];
+        const [bx, by] = pts[i];
+        if (ay > py !== by > py && px < (bx - ax) * (py - ay) / (by - ay) + ax)
+          inside = !inside;
+        if (px < Math.min(ax, bx) - 0.5 || px > Math.max(ax, bx) + 0.5 || py < Math.min(ay, by) - 0.5 || py > Math.max(ay, by) + 0.5)
+          continue;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 0.000001)));
+        dmin = Math.min(dmin, Math.hypot(px - ax - dx * t, py - ay - dy * t));
+      }
+      const cov = Math.max(0, Math.min(1, (inside ? dmin : -dmin) + 0.5)) * a;
+      if (cov <= 0)
+        continue;
+      const o = (y * W + x) * 3;
+      hdr[o] += (r - hdr[o]) * cov;
+      hdr[o + 1] += (g - hdr[o + 1]) * cov;
+      hdr[o + 2] += (b - hdr[o + 2]) * cov;
+    }
+}
+
+// src/creature.ts
+function gait(face = 1, phase = 0) {
+  return { phase, go: 0, turn: face, lag: 0, lagV: 0 };
+}
+function stepGait(g, strides, dt, face, rate = 3) {
+  g.phase += strides;
+  g.go = clamp(g.go + (strides > 0 ? dt : -dt) * 2.5, 0, 1);
+  const before = g.turn;
+  g.turn = face > g.turn ? Math.min(face, g.turn + dt * rate) : Math.max(face, g.turn - dt * rate);
+  const target = g.go + Math.abs(g.turn - before) / Math.max(dt, 0.000001) * 0.15;
+  g.lagV += ((target - g.lag) * 40 - g.lagV * 5) * dt;
+  g.lag += g.lagV * dt;
+}
+function view(turn) {
+  const a = (1 - turn) * Math.PI / 2;
+  return [Math.cos(a), Math.sin(a)];
+}
+function stride(phase, offset = 0, duty = 0.6) {
+  const p = ((phase + offset) % 1 + 1) % 1;
+  if (p < duty)
+    return [1 - 2 * p / duty, 0];
+  const q = (p - duty) / (1 - duty);
+  return [-1 + 2 * smoothstep(0, 1, q), Math.sin(Math.PI * q)];
+}
+function bob(phase, duty = 0.6) {
+  return 0.5 + 0.5 * Math.cos(TAU * 2 * (phase - duty / 2));
+}
+function joint(ax, ay, bx, by, a, b, bend) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const d = Math.hypot(dx, dy) || 0.000001;
+  const r = clamp(d, Math.abs(a - b) + 0.000001, a + b - 0.000001);
+  const along2 = (a * a - b * b + r * r) / (2 * r);
+  const h = Math.sqrt(Math.max(0, a * a - along2 * along2)) * bend;
+  return [ax + dx / d * along2 - dy / d * h, ay + dy / d * along2 + dx / d * h];
+}
+function limb(P, ax, ay, bx, by, a, b, bend, r0, r1, r2, color) {
+  const [jx, jy] = joint(ax, ay, bx, by, a, b, bend);
+  return [cap(...P(ax, ay), ...P(jx, jy), r0, r1, color), cap(...P(jx, jy), ...P(bx, by), r1, r2, color)];
+}
+function body(x, y, S, turn) {
+  const [along2, across] = view(turn);
+  const P = (u, v, w = 0) => [x + (u * along2 - w * across) * S, y + v * S];
+  return Object.assign(P, { S, along: along2, across, len: (u, w) => (u * Math.abs(along2) + w * across) * S });
+}
+function quadruped(P, g, far, o) {
+  const S = P.S;
+  const [r0, r1, r2] = o.r;
+  const k = (o.top - r2) * 1.06 / (o.a + o.b);
+  const along2 = view(g.turn)[0];
+  const legs = [
+    [o.fore, o.w, 0],
+    [-o.hind, -o.w, 0],
+    [o.fore, -o.w, 0.5],
+    [-o.hind, o.w, 0.5]
+  ];
+  return legs.filter(([, w]) => w * along2 < 0 === far).flatMap(([u, w, offset]) => {
+    const [reach, lift2] = stride(g.phase, offset);
+    const fu = u + reach * o.reach * g.go;
+    const fv = -lift2 * o.lift * g.go - r2;
+    const Q = (a, b) => P(a, b, w);
+    const parts = limb(Q, u, -o.top, fu, fv, o.a * k, o.b * k, u > 0 ? -1 : 1, r0 * S, r1 * S, r2 * S, o.color);
+    return o.paw ? [...parts, cap(...Q(fu, fv), ...Q(fu + o.paw[0], fv + r2 * 0.1), r2 * 1.15 * S, r2 * S, o.paw[1])] : parts;
+  });
+}
+function chain(path, n, r0, r1, color) {
+  return Array.from({ length: n }, (_, i) => cap(...path(i / n), ...path((i + 1) / n), r0 + (r1 - r0) * (i / n), r0 + (r1 - r0) * ((i + 1) / n), color));
+}
+
+// src/grade.ts
+function haze(hdr, sky, W, H, y0, y1, far, near2 = 0, top = 0) {
+  for (let y = Math.max(0, Math.floor(top * H));y < Math.min(H, Math.ceil(y1 * H)); y++) {
+    const k = lerp(far, near2, smoothstep(y0, y1, (y + 0.5) / H));
+    if (k <= 0)
+      continue;
+    for (let o = y * W * 3;o < (y + 1) * W * 3; o++)
+      hdr[o] += (sky[o] - hdr[o]) * k;
+  }
+}
+function mottle(hdr, W, H, y0, y1, size, warm, cool) {
+  const span = 1 - y0 + 0.04;
+  for (let y = Math.max(0, Math.ceil(y0 * H));y < Math.min(H, Math.ceil(y1 * H)); y++) {
+    const v = (y + 0.5) / H;
+    const z = Math.min(6, span / (v - y0 + 0.04));
+    const fade = smoothstep(y0, y0 + 0.08, v);
+    for (let x = 0;x < W; x++) {
+      const n = Math.max(-1, Math.min(1, (fbm2(x / H * z / size, z * span / size, 3) - 0.5) * 3.2)) * fade;
+      const t = n > 0 ? warm : cool;
+      const a = Math.abs(n);
+      const o = (y * W + x) * 3;
+      hdr[o] *= 1 + (t[0] - 1) * a;
+      hdr[o + 1] *= 1 + (t[1] - 1) * a;
+      hdr[o + 2] *= 1 + (t[2] - 1) * a;
+    }
+  }
+}
+
+// src/flock.ts
+function startle(birds, x, y, count) {
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  for (let i = 0;i < count; i++)
+    birds.push({ x: x + rand(-0.03, 0.03), y: y + rand(-0.01, 0.01), vx: dir * rand(0.1, 0.18), vy: -rand(0.12, 0.2), phase: Math.random() * TAU });
+}
+function flyAway(birds, dt, A) {
+  for (const b of birds) {
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.vy *= Math.exp(-dt * 0.4);
+    b.phase += dt * 20;
+  }
+  return birds.filter((b) => b.y > -0.1 && b.x > -0.1 && b.x < A + 0.1);
+}
+function bird(b, H, size, color) {
+  const x = b.x * H;
+  const y = b.y * H;
+  const flap = Math.sin(b.phase);
+  return [
+    ell(x, y, 0.3 * size, 0.13 * size, 0, color),
+    cap(x, y, x - size, y - size * (0.15 + flap * 0.55), 0.12 * size, 0.04 * size, color),
+    cap(x, y, x + size, y - size * (0.15 + flap * 0.55), 0.12 * size, 0.04 * size, color)
+  ];
+}
+
+// src/light.ts
+function lightPool(hdr, W, H, cx, cy, rx, ry, color, lift2, glow) {
+  const x0 = Math.max(0, Math.floor(cx - rx));
+  const x1 = Math.min(W - 1, Math.ceil(cx + rx));
+  const y0 = Math.max(0, Math.floor(cy - ry));
+  const y1 = Math.min(H - 1, Math.ceil(cy + ry));
+  touch(hdr, x0, y0, x1, y1);
+  const lr = color[0] * lift2;
+  const lg = color[1] * lift2;
+  const lb = color[2] * lift2;
+  const gr = color[0] * glow;
+  const gg = color[1] * glow;
+  const gb = color[2] * glow;
+  for (let y = y0;y <= y1; y++) {
+    const dy = (y + 0.5 - cy) / ry;
+    for (let x = x0;x <= x1; x++) {
+      const dx = (x + 0.5 - cx) / rx;
+      const d = 1 - dx * dx - dy * dy;
+      if (d <= 0)
+        continue;
+      const f = d * d;
+      const o = (y * W + x) * 3;
+      const m = Math.min(0.2, Math.max(hdr[o], hdr[o + 1], hdr[o + 2]));
+      hdr[o] += (m * lr + gr) * f;
+      hdr[o + 1] += (m * lg + gg) * f;
+      hdr[o + 2] += (m * lb + gb) * f;
+    }
+  }
+}
+function fireflyLight(hdr, W, H, x, y, k) {
+  lightPool(hdr, W, H, x, y, 0.045 * H, 0.045 * H, [0.75, 1, 0.25], 4 * k, 0.012 * k);
+}
+function campfire(x, gy, H, t) {
+  const flicker = 0.85 + 0.1 * Math.sin(t * 7.1) + 0.05 * Math.sin(t * 13.3 + 1);
+  const log = [0.05, 0.025, 0.02];
+  const logs = [cap(x - 0.03 * H, gy, x + 0.025 * H, gy - 0.008 * H, 0.006 * H, 0.005 * H, log), cap(x + 0.03 * H, gy, x - 0.02 * H, gy - 0.01 * H, 0.006 * H, 0.005 * H, log)];
+  const flames = [
+    [-0.008, 0.036, 0.009, false],
+    [0.008, 0.03, 0.008, false],
+    [0, 0.046, 0.011, false],
+    [0, 0.026, 0.006, true]
+  ].map(([dx, h, r, core]) => {
+    const sway = Math.sin(t * 3 + dx * 400) * 0.003 * H;
+    const height = h * H * (0.8 + 0.2 * Math.sin(t * 5.3 + dx * 900 + h * 100)) * flicker;
+    return [cap(x + dx * H, gy - 0.004 * H, x + dx * H + sway, gy - height, r * H, 0.0015 * H, core ? [2.6, 1.5, 0.3] : [2, 0.6, 0.08])];
+  });
+  return { flicker, logs, flames };
+}
+
+// src/lightmap.ts
+class LightMap {
+  cell = 1;
+  cols = 0;
+  rows = 0;
+  W = 0;
+  H = 0;
+  lift = new Float32Array(0);
+  glow = new Float32Array(0);
+  lit = new Uint8Array(0);
+  dim = new Float32Array(0);
+  box = [0, 0, -1, -1];
+  clear(W, H) {
+    if (W !== this.W || H !== this.H) {
+      this.W = W;
+      this.H = H;
+      this.cell = Math.max(4, Math.round(H / 30));
+      this.cols = Math.floor((W - 0.5) / this.cell) + 2;
+      this.rows = Math.floor((H - 0.5) / this.cell) + 2;
+      this.lift = new Float32Array(this.cols * this.rows * 3);
+      this.glow = new Float32Array(this.cols * this.rows * 3);
+      this.lit = new Uint8Array(this.cols * this.rows);
+      this.dim = Float32Array.from({ length: this.cols }, (_, i) => 1 - 0.45 * smoothstep(0.4, 0.15, Math.abs(i * this.cell / W - 0.5)));
+      this.box = [0, 0, -1, -1];
+    }
+    const [i0, j0, i1, j1] = this.box;
+    for (let j = j0;j <= j1; j++) {
+      this.lift.fill(0, (j * this.cols + i0) * 3, (j * this.cols + i1 + 1) * 3);
+      this.glow.fill(0, (j * this.cols + i0) * 3, (j * this.cols + i1 + 1) * 3);
+      this.lit.fill(0, j * this.cols + i0, j * this.cols + i1 + 1);
+    }
+    this.box = [this.cols, this.rows, -1, -1];
+  }
+  node(i, j, color, lift2, glow) {
+    const n = j * this.cols + i;
+    const o = n * 3;
+    this.lift[o] += color[0] * lift2;
+    this.lift[o + 1] += color[1] * lift2;
+    this.lift[o + 2] += color[2] * lift2;
+    this.glow[o] += color[0] * glow;
+    this.glow[o + 1] += color[1] * glow;
+    this.glow[o + 2] += color[2] * glow;
+    this.lit[n] = 1;
+    const b = this.box;
+    if (i < b[0])
+      b[0] = i;
+    if (j < b[1])
+      b[1] = j;
+    if (i > b[2])
+      b[2] = i;
+    if (j > b[3])
+      b[3] = j;
+  }
+  pool(cx, cy, rx, ry, color, lift2, glow) {
+    const c = this.cell;
+    for (let j = Math.max(0, Math.ceil((cy - ry) / c));j <= Math.min(this.rows - 1, Math.floor((cy + ry) / c)); j++) {
+      const dy = (j * c - cy) / ry;
+      for (let i = Math.max(0, Math.ceil((cx - rx) / c));i <= Math.min(this.cols - 1, Math.floor((cx + rx) / c)); i++) {
+        const dx = (i * c - cx) / rx;
+        const d = 1 - dx * dx - dy * dy;
+        if (d > 0)
+          this.node(i, j, color, lift2 * d * d, glow * d * d);
+      }
+    }
+  }
+  apply(hdr) {
+    const [i0, j0, i1, j1] = this.box;
+    if (i1 < i0)
+      return;
+    applyLight(hdr, this.W, this.H, this.cell, this.cols, this.lift, this.glow, this.lit, this.dim, Math.max(0, i0 - 1), Math.max(0, j0 - 1), Math.min(this.cols - 2, i1), Math.min(this.rows - 2, j1));
+  }
+}
+function firelight(t, seed) {
+  return 0.8 + 0.13 * noise1(t * 1.1, seed) + 0.07 * noise1(t * 2.4, seed + 3);
+}
+function applyLight(hdr, W, H, cell2, cols, lift2, glow, lit, dim, bi0, bj0, bi1, bj1) {
+  for (let bj = bj0;bj <= bj1; bj++) {
+    let run = -1;
+    for (let bi = bi0;bi <= bi1 + 1; bi++) {
+      const a = bj * cols + bi;
+      const c = a + cols;
+      const on = bi <= bi1 && (lit[a] || lit[a + 1] || lit[c] || lit[c + 1]);
+      if (!on && run >= 0)
+        touch(hdr, run * cell2, bj * cell2, bi * cell2 - 1, (bj + 1) * cell2 - 1);
+      if (!on) {
+        run = -1;
+        continue;
+      }
+      if (run < 0)
+        run = bi;
+      const dl = dim[bi];
+      const dr = dim[bi + 1];
+      const x0 = bi * cell2;
+      const x1 = Math.min(W, x0 + cell2);
+      for (let y = bj * cell2;y < Math.min(H, (bj + 1) * cell2); y++) {
+        const fy = (y + 0.5) / cell2 - bj;
+        const gy = 1 - fy;
+        const lr = (lift2[a * 3] * gy + lift2[c * 3] * fy) * dl;
+        const lg = (lift2[a * 3 + 1] * gy + lift2[c * 3 + 1] * fy) * dl;
+        const lb = (lift2[a * 3 + 2] * gy + lift2[c * 3 + 2] * fy) * dl;
+        const rr = (lift2[a * 3 + 3] * gy + lift2[c * 3 + 3] * fy) * dr;
+        const rg = (lift2[a * 3 + 4] * gy + lift2[c * 3 + 4] * fy) * dr;
+        const rb = (lift2[a * 3 + 5] * gy + lift2[c * 3 + 5] * fy) * dr;
+        const gl = (glow[a * 3] * gy + glow[c * 3] * fy) * dl;
+        const gg = (glow[a * 3 + 1] * gy + glow[c * 3 + 1] * fy) * dl;
+        const gb = (glow[a * 3 + 2] * gy + glow[c * 3 + 2] * fy) * dl;
+        const hr = (glow[a * 3 + 3] * gy + glow[c * 3 + 3] * fy) * dr;
+        const hg = (glow[a * 3 + 4] * gy + glow[c * 3 + 4] * fy) * dr;
+        const hb = (glow[a * 3 + 5] * gy + glow[c * 3 + 5] * fy) * dr;
+        for (let x = x0;x < x1; x++) {
+          const fx = (x + 0.5) / cell2 - bi;
+          const o = (y * W + x) * 3;
+          const m = Math.min(0.2, Math.max(hdr[o], hdr[o + 1], hdr[o + 2]));
+          hdr[o] += m * (lr + (rr - lr) * fx) + gl + (hr - gl) * fx;
+          hdr[o + 1] += m * (lg + (rg - lg) * fx) + gg + (hg - gg) * fx;
+          hdr[o + 2] += m * (lb + (rb - lb) * fx) + gb + (hb - gb) * fx;
+        }
+      }
+    }
+  }
+}
+
+// src/sky.ts
+var STAR_TINTS = [
+  [0.55, 0.75, 1.2],
+  [1.15, 0.85, 0.45],
+  [1.1, 0.6, 0.85],
+  [0.7, 0.6, 1.2]
+];
+function paintSky(hdr, W, H, stops, orb, px = 1) {
+  const ox = orb.x * W;
+  const oy = orb.y * H;
+  const R = orb.r * H;
+  addOrb(hdr, ox, oy, R);
+  for (let y = 0;y < H; y++) {
+    const v = y / H;
+    const i = stops.findIndex(([at]) => at >= v);
+    const [a, from] = stops[Math.max(0, i - 1)];
+    const [b, to] = stops[i < 0 ? stops.length - 1 : i];
+    const k = b > a ? smoothstep(a, b, v) : 1;
+    for (let x = 0;x < W; x++) {
+      const d = Math.hypot(x - ox, y - oy) / H;
+      const glow = orb.near * Math.exp(-d / (orb.r * 1.8)) + orb.wide * Math.exp(-d / 0.35);
+      const o = (y * W + x) * 3;
+      hdr[o] = lerp(from[0], to[0], k) + glow * orb.glow[0];
+      hdr[o + 1] = lerp(from[1], to[1], k) + glow * orb.glow[1];
+      hdr[o + 2] = lerp(from[2], to[2], k) + glow * orb.glow[2];
+      const r = d * H;
+      const cov = Math.min(1, Math.max(0, R - r + 0.5));
+      if (cov <= 0)
+        continue;
+      const limb2 = 0.85 + 0.15 * Math.sqrt(Math.max(0, 1 - (r / R) ** 2));
+      const maria = orb.moon ? 1 - 0.18 * smoothstep(0.55, 0.75, fbm1((x - ox) / px * 0.25 + 3, 7) + fbm1((y - oy) / px * 0.25 + 1, 9) * 0.6) : 1;
+      const m = limb2 * maria;
+      hdr[o] += (orb.core[0] * m - hdr[o]) * cov;
+      hdr[o + 1] += (orb.core[1] * m - hdr[o + 1]) * cov;
+      hdr[o + 2] += (orb.core[2] * m - hdr[o + 2]) * cov;
+    }
+  }
+}
+function makeStars(count, top) {
+  return Array.from({ length: count }, () => ({ x: Math.random(), y: Math.random() * top, b: 0.4 + Math.random() * 0.6, phase: Math.random() * TAU, tint: STAR_TINTS[Math.floor(Math.random() * STAR_TINTS.length)] }));
+}
+function paintStars(hdr, W, H, stars, time, top, brightness, points) {
+  for (const s of stars) {
+    const x = s.x * W | 0;
+    const y = s.y * H | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H || onOrb(hdr, x + 0.5, y + 0.5, 1.5))
+      continue;
+    const k = s.b * Math.max(0, 1 - s.y / top) * (0.7 + 0.3 * Math.sin(time * 0.8 + s.phase)) * brightness;
+    if (points) {
+      points.add(hdr, W, H, x, y, k * s.tint[0], k * s.tint[1], k * s.tint[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1);
+      continue;
+    }
+    const o = (y * W + x) * 3;
+    hdr[o] += k * s.tint[0];
+    hdr[o + 1] += k * s.tint[1];
+    hdr[o + 2] += k * s.tint[2];
+    touch(hdr, x, y, x, y);
+  }
+}
+var KINDS = {
+  cumulus: { size: [0.08, 0.13], speed: [0.003, 0.007], edge: [0.02, 0.28], alpha: 1, thin: 0 },
+  towering: { size: [0.09, 0.14], speed: [0, 0], edge: [0.02, 0.28], alpha: 0.85, thin: 0 },
+  ash: { size: [0.1, 0.16], speed: [0.004, 0.007], edge: [0, 0.6], alpha: 0.8, thin: 0 },
+  cirrus: { size: [0.14, 0.24], speed: [0.005, 0.009], edge: [0.05, 0.8], alpha: 0.9, thin: 0.7 },
+  wisp: { size: [0.12, 0.2], speed: [0.003, 0.006], edge: [0.04, 0.85], alpha: 0.75, thin: 0.6 },
+  stratus: { size: [0.25, 0.45], speed: [0.002, 0.004], edge: [0.12, 0.75], alpha: 0.75, thin: 0.5 },
+  shadow: { size: [0.2, 0.45], speed: [0.004, 0.01], edge: [0, 0.8], alpha: 1, thin: 0 }
+};
+function makeClouds(count, kind, y0, y1) {
+  return Array.from({ length: count }, (_, i) => {
+    const size = rand(KINDS[kind].size[0], KINDS[kind].size[1]);
+    const [parts, base] = shapeParts(kind, size);
+    return { x: (i + Math.random() * 0.8) / count * 2, y: y0 + Math.random() * (y1 - y0), speed: rand(KINDS[kind].speed[0], KINDS[kind].speed[1]), kind, w: halfWidth(parts), parts, base, seed: Math.random() * 100 };
+  });
+}
+function makeShadows(count, y0, y1) {
+  return Array.from({ length: count }, (_, i) => {
+    const near2 = (i + Math.random()) / count;
+    const w = lerp(KINDS.shadow.size[0], KINDS.shadow.size[1], near2);
+    const parts = [{ x: 0, y: 0, r: w, s: w * (0.12 + 0.12 * near2), t: 0 }];
+    return { x: Math.random() * 2, y: lerp(y0, y1, near2), speed: lerp(KINDS.shadow.speed[0], KINDS.shadow.speed[1], near2), kind: "shadow", w, parts, base: Infinity, seed: Math.random() * 100 };
+  });
+}
+function driftClouds(clouds, A, dt) {
+  for (const c of clouds) {
+    c.x += c.speed * dt;
+    if (c.x > A + c.w)
+      c.x = -c.w;
+  }
+}
+function makeStorm() {
+  return makeClouds(8, "cumulus", 0.04, 0.26);
+}
+function paintStorm(hdr, W, H, clouds, top, bottom, gloom) {
+  if (gloom <= 0)
+    return;
+  paintClouds(hdr, W, H, clouds, [top[0] * 0.45, top[1] * 0.45, top[2] * 0.5], [bottom[0] * 0.4, bottom[1] * 0.4, bottom[2] * 0.45], smoothstep(0, 1, gloom) * 0.8);
+}
+function paintClouds(hdr, W, H, clouds, top, bottom, alpha, orb) {
+  const [lit, shade] = luma(top) >= luma(bottom) ? [top, bottom] : [bottom, top];
+  const low2 = !!orb && !orb.moon && orb.y > 0.3;
+  const sky = !orb ? 1 : orb.moon ? 0.25 : low2 ? 0 : 0.35;
+  const edge = !orb ? 0 : orb.moon ? 0.6 : low2 ? 0.3 : 0.15;
+  const k = !orb ? 0 : orb.moon ? 1.6 : low2 ? 1.4 : 0.6;
+  for (const c of clouds) {
+    const s = spriteFor(c, H);
+    const dx = orb ? orb.x * (W / H) - c.x : 0;
+    const dy = orb ? orb.y - c.y - s.cy : -1;
+    const dist = Math.hypot(dx, dy) || 1;
+    const back = orb ? Math.exp(-dist / 0.3) : 0;
+    const glow = orb?.glow ?? lit;
+    const m = orb?.moon ? back : 1;
+    const rim = [lerp(lit[0] * 2.5, glow[0] * k, m), lerp(lit[1] * 2.5, glow[1] * k, m), lerp(lit[2] * 2.5, glow[2] * k, m)];
+    drawCloud(hdr, W, H, s, c.x * H, c.y * H, lit, shade, rim, dx / dist, dy / dist, back, edge, sky, alpha);
+  }
+}
+function paintShadows(hdr, W, H, shadows, ground, orb) {
+  if (!orb || orb.moon || orb.y > 0.3)
+    return;
+  for (const c of shadows)
+    drawShadow(hdr, W, H, spriteFor(c, H), c.x * H, c.y * H, ground * H);
+}
+function paintHaze(hdr, W, H, y0, y1, color, alpha) {
+  for (let y = Math.max(0, Math.floor(y0 * H));y < Math.min(H, Math.ceil(y1 * H)); y++) {
+    const v = (y / H - y0) / (y1 - y0);
+    const band = smoothstep(0, 1, v) * (1 - smoothstep(0.92, 1, v) * 0.5) * alpha;
+    for (let x = 0;x < W; x++) {
+      const a = Math.min(1, band * (0.55 + 0.9 * fbm2(x / H * 2.5, y / H * 18, 3)));
+      const o = (y * W + x) * 3;
+      hdr[o] += (color[0] - hdr[o]) * a;
+      hdr[o + 1] += (color[1] - hdr[o + 1]) * a;
+      hdr[o + 2] += (color[2] - hdr[o + 2]) * a;
+    }
+  }
+}
+function luma(c) {
+  return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+}
+function shapeParts(kind, size) {
+  const part = (x, y, r, s = 0, t = 0) => ({ x, y, r, s, t });
+  if (kind === "cumulus") {
+    const h = size * rand(0.6, 0.8);
+    const n = 5 + Math.floor(Math.random() * 3);
+    const row = Array.from({ length: n }, (_, i) => {
+      const f = i / (n - 1) * 2 - 1;
+      const r = h * (0.6 - 0.3 * Math.abs(f)) * rand(0.7, 1.2);
+      return part(f * size * 0.7 + rand(-0.06, 0.06) * size, h * 0.35 - r * rand(0.5, 0.95), r);
+    });
+    const heap = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => part(rand(-0.4, 0.4) * size, -h * rand(0.35, 0.55), h * rand(0.3, 0.42)));
+    return [[...row, ...heap], h * 0.35];
+  }
+  if (kind === "towering") {
+    const h = size * rand(1.4, 1.9);
+    const lean = rand(-0.25, 0.25) * size;
+    const foot = Array.from({ length: 5 }, (_, i) => part((i / 4 * 2 - 1) * size * 0.72 + rand(-0.05, 0.05) * size, -size * rand(0.1, 0.2), size * rand(0.26, 0.36)));
+    const column = Array.from({ length: 9 }, (_, i) => {
+      const f = (i + 1) / 9;
+      const r = size * (0.5 - 0.22 * f) * rand(0.8, 1.1);
+      return part(lean * f + rand(-0.3, 0.3) * size * (1 - 0.5 * f), -h * f * 0.75, r);
+    });
+    return [[...foot, ...column], 0];
+  }
+  if (kind === "ash")
+    return [Array.from({ length: 11 }, () => part(rand(-0.8, 0.8) * size, rand(-0.12, 0.12) * size, size * rand(0.16, 0.3))), Infinity];
+  if (kind === "cirrus")
+    return [Array.from({ length: 3 + Math.floor(Math.random() * 2) }, () => part(rand(-0.35, 0.35) * size, rand(-0.03, 0.03), size * rand(0.45, 0.7), rand(0.007, 0.012), rand(-0.1, 0.02))), Infinity];
+  if (kind === "wisp")
+    return [Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => part(rand(-0.3, 0.3) * size, rand(-0.012, 0.012), size * rand(0.55, 0.85), rand(0.007, 0.012), rand(-0.05, 0.05))), Infinity];
+  return [Array.from({ length: 3 }, () => part(rand(-0.25, 0.25) * size, rand(-0.01, 0.01), size * rand(0.65, 0.9), rand(0.013, 0.022))), Infinity];
+}
+function halfWidth(parts) {
+  return parts.reduce((m, p) => Math.max(m, Math.abs(p.x) + p.r * 1.12), 0);
+}
+function spriteFor(c, H) {
+  if (c.sprite?.H !== H)
+    c.sprite = buildSprite(c, H);
+  return c.sprite;
+}
+function buildSprite(c, H) {
+  const kind = KINDS[c.kind];
+  const puffy = c.kind === "cumulus" || c.kind === "towering" || c.kind === "ash";
+  const grow = puffy ? 1.12 : 1;
+  const x0 = Math.floor((-c.w - 0.01) * H);
+  const top = c.parts.reduce((m, p) => Math.min(m, p.y - (puffy ? p.r * grow : p.s * 4 + Math.abs(p.t) * p.r + (c.kind === "cirrus" ? 0.02 : 0))), 0);
+  const bottom = c.parts.reduce((m, p) => Math.max(m, Math.min(c.base, p.y + (puffy ? p.r * grow : p.s * 4 + Math.abs(p.t) * p.r))), 0);
+  const y0 = Math.floor(top * H) - 1;
+  const w = Math.ceil((c.w + 0.01) * H) - x0;
+  const h = Math.ceil(bottom * H) + 1 - y0;
+  const n = w * h;
+  const field = new Float32Array(n);
+  const a = new Float32Array(n);
+  const d = new Float32Array(n);
+  const [lo, hi] = kind.edge;
+  for (let j = 0;j < h; j++)
+    for (let i = 0;i < w; i++) {
+      const u = (x0 + i + 0.5) / H;
+      const v = (y0 + j + 0.5) / H;
+      const f = shapeAt(c, u, v, puffy);
+      const k = j * w + i;
+      field[k] = f;
+      a[k] = smoothstep(lo, hi, f) * kind.alpha;
+      d[k] = smoothstep(lo, 1, f);
+    }
+  const r = Math.max(1, Math.round(H * 0.01));
+  const blurred = boxBlur(boxBlur(field, w, h, r, 1, 0), w, h, r, 0, 1);
+  const nx = new Float32Array(n);
+  const ny = new Float32Array(n);
+  const nz = new Float32Array(n);
+  const e = new Float32Array(n);
+  const scale = H * 0.02;
+  for (let j = 0;j < h; j++)
+    for (let i = 0;i < w; i++) {
+      const k = j * w + i;
+      const gx = -(blurred[j * w + Math.min(w - 1, i + 1)] - blurred[j * w + Math.max(0, i - 1)]) * scale;
+      const gy = -(blurred[Math.min(h - 1, j + 1) * w + i] - blurred[Math.max(0, j - 1) * w + i]) * scale;
+      const l = Math.hypot(gx, gy, 1);
+      nx[k] = gx / l;
+      ny[k] = gy / l;
+      nz[k] = 1 / l;
+      e[k] = (1 - d[k]) ** 2 * Math.sqrt(a[k]);
+    }
+  return { H, w, h, x0, y0, cy: (y0 + h / 2) / H, thin: kind.thin, a, nx, ny, nz, d, e };
+}
+function shapeAt(c, u, v, puffy) {
+  let f = -1;
+  for (const p of c.parts) {
+    if (puffy) {
+      f = Math.max(f, 1 - ((u - p.x) ** 2 + (v - p.y) ** 2) / (p.r * p.r));
+      continue;
+    }
+    const along2 = (u - p.x) / p.r;
+    if (along2 <= -1 || along2 >= 1)
+      continue;
+    const cirrus = c.kind === "cirrus";
+    const dv = v - p.y - p.t * (u - p.x) + (cirrus ? 0.02 * Math.max(0, along2) ** 3 : 0);
+    const s = p.s * (cirrus ? 1.3 - 0.6 * along2 : 0.5 + 1.1 * fbm1(u * 6 + p.x * 50, 3));
+    const ends = 1 - along2 * along2 + (c.kind === "stratus" ? (fbm1(v * 60 + p.y * 90, 2) - 0.45) * 0.8 : 0);
+    f = Math.max(f, ends * Math.exp(-((dv / s) ** 2)));
+  }
+  const seed = c.seed;
+  const fray = (fbm2(u * 28 + seed, v * 28 + seed * 0.7, 3) - 0.44) * 2.4 * (1 - clamp(f, 0, 1));
+  const base = c.base + (fbm1(u * 40 + seed, 3) - 0.5) * 0.008;
+  if (c.kind === "cumulus")
+    return (f + fray) * smoothstep(base + 0.004, base - 0.01, v);
+  if (c.kind === "towering")
+    return (f + fray * 0.8) * smoothstep(0.002, -0.008, v);
+  if (c.kind === "ash")
+    return f + fray * 1.2;
+  if (c.kind === "cirrus")
+    return f * clamp((fbm2(u * 5 + seed, v * 70, 3) - 0.25) * 2.6, 0, 1.3);
+  if (c.kind === "wisp")
+    return f * (0.55 + 0.9 * fbm2(u * 5 + seed, v * 45, 3));
+  if (c.kind === "stratus")
+    return f + fray * smoothstep(0, 0.2, f);
+  return f * (0.6 + 0.8 * fbm2(u * 6 + seed, v * 18, 2));
+}
+function boxBlur(src, w, h, r, dx, dy) {
+  const out = new Float32Array(src.length);
+  for (let j = 0;j < h; j++)
+    for (let i = 0;i < w; i++) {
+      let sum = 0;
+      for (let t = -r;t <= r; t++)
+        sum += src[clamp(j + t * dy, 0, h - 1) * w + clamp(i + t * dx, 0, w - 1)];
+      out[j * w + i] = sum / (2 * r + 1);
+    }
+  return out;
+}
+function drawCloud(hdr, W, H, s, x, y, lit, shade, rim, lx, ly, back, edge, sky, alpha) {
+  const l = Math.hypot(lx, ly, 0.4);
+  const Lx = lx / l;
+  const Ly = ly / l;
+  const Lz = 0.4 / l;
+  const px = x + s.x0;
+  const X0 = Math.floor(px);
+  const f = px - X0;
+  const Y0 = Math.round(y) + s.y0;
+  const sw = s.w;
+  touch(hdr, X0, Y0, X0 + sw, Y0 + s.h - 1);
+  for (let j = Math.max(0, -Y0);j < Math.min(s.h, H - Y0); j++)
+    for (let i = Math.max(0, -X0);i <= Math.min(sw, W - 1 - X0); i++) {
+      const k = j * sw + i;
+      const a = ((i < sw ? s.a[k] : 0) * (1 - f) + (i > 0 ? s.a[k - 1] : 0) * f) * alpha;
+      if (a < 0.003)
+        continue;
+      const q = i < sw ? k : k - 1;
+      const nx = s.nx[q];
+      const ny = s.ny[q];
+      const light = (Math.max(0, nx * Lx + ny * Ly + s.nz[q] * Lz) * (1 - sky) + (0.5 - 0.5 * ny) * sky) * (1 - 0.5 * back * s.d[q]);
+      const t = light + (1 - light) * s.thin;
+      const g = (back + edge) * s.e[q] * Math.max(0, nx * lx + ny * ly) * alpha;
+      const o = ((Y0 + j) * W + X0 + i) * 3;
+      hdr[o] += (shade[0] + (lit[0] - shade[0]) * t - hdr[o]) * a + rim[0] * g;
+      hdr[o + 1] += (shade[1] + (lit[1] - shade[1]) * t - hdr[o + 1]) * a + rim[1] * g;
+      hdr[o + 2] += (shade[2] + (lit[2] - shade[2]) * t - hdr[o + 2]) * a + rim[2] * g;
+    }
+}
+function drawShadow(hdr, W, H, s, x, y, ground) {
+  const px = x + s.x0;
+  const X0 = Math.floor(px);
+  const f = px - X0;
+  const Y0 = Math.round(y) + s.y0;
+  const sw = s.w;
+  const fade = H * 0.03;
+  touch(hdr, X0, Math.max(Y0, Math.floor(ground)), X0 + sw, Y0 + s.h - 1);
+  for (let j = Math.max(0, -Y0, Math.floor(ground) - Y0);j < Math.min(s.h, H - Y0); j++) {
+    const row = clamp((Y0 + j - ground) / fade, 0, 1) * 0.38;
+    for (let i = Math.max(0, -X0);i <= Math.min(sw, W - 1 - X0); i++) {
+      const k = j * sw + i;
+      const a = ((i < sw ? s.a[k] : 0) * (1 - f) + (i > 0 ? s.a[k - 1] : 0) * f) * row;
+      if (a < 0.003)
+        continue;
+      const o = ((Y0 + j) * W + X0 + i) * 3;
+      hdr[o] *= 1 - a;
+      hdr[o + 1] *= 1 - a * 0.88;
+      hdr[o + 2] *= 1 - a * 0.62;
+    }
+  }
+}
+
+// src/water.ts
+var wave = new Float32Array(0);
+function reflect(hdr, W, H, y0, y1, rows, amp, weight, tint, time, still) {
+  if (wave.length !== W)
+    wave = new Float32Array(W);
+  touch(hdr, 0, y0, W - 1, y1 - 1);
+  for (let x = 0;x < W; x++)
+    wave[x] = 2.4 * Math.sin(x / H * 9 + time * 0.35) + 1.2 * Math.sin(x / H * 23 - time * 0.6);
+  for (let y = Math.max(0, y0);y < Math.min(H, y1); y++) {
+    const r = y - y0;
+    const a = amp[r];
+    const phase = y / H * 150 + time * 1.2;
+    for (let x = 0;x < W; x++) {
+      const w = weight[r * W + x];
+      if (w <= 0)
+        continue;
+      const o = (y * W + x) * 3;
+      const s = (r * W + x) * 3;
+      if (still && (hdr[o] !== still[s] || hdr[o + 1] !== still[s + 1] || hdr[o + 2] !== still[s + 2]))
+        continue;
+      const p = phase + wave[x];
+      const sx = Math.min(W - 1.001, Math.max(0, x + a * Math.sin(p)));
+      const sy = Math.min(H - 1, Math.max(0, Math.round(rows[r] + a * 0.6 * Math.cos(p))));
+      const x0 = sx | 0;
+      const f = sx - x0;
+      const m = (sy * W + x0) * 3;
+      hdr[o] += ((hdr[m] + (hdr[m + 3] - hdr[m]) * f) * tint[0] - hdr[o]) * w;
+      hdr[o + 1] += ((hdr[m + 1] + (hdr[m + 4] - hdr[m + 1]) * f) * tint[1] - hdr[o + 1]) * w;
+      hdr[o + 2] += ((hdr[m + 2] + (hdr[m + 5] - hdr[m + 2]) * f) * tint[2] - hdr[o + 2]) * w;
+    }
+  }
+}
+
+// src/weather.ts
+var PALETTES = {
+  day: {
+    deck: [
+      [0.3, 0.34, 0.41],
+      [0.58, 0.62, 0.67]
+    ],
+    scud: [
+      [0.5, 0.53, 0.58],
+      [0.24, 0.26, 0.3]
+    ],
+    rain: [0.6, 0.68, 0.8],
+    snow: [0.95, 0.97, 1],
+    fog: [0.58, 0.62, 0.67],
+    desaturate: 0.35
+  },
+  sunset: {
+    deck: [
+      [0.06, 0.035, 0.07],
+      [0.42, 0.18, 0.14]
+    ],
+    scud: [
+      [0.3, 0.12, 0.12],
+      [0.05, 0.025, 0.05]
+    ],
+    rain: [0.9, 0.45, 0.25],
+    snow: [1, 0.66, 0.6],
+    fog: [0.34, 0.16, 0.14],
+    desaturate: 0.2
+  },
+  night: {
+    deck: [
+      [0.005, 0.009, 0.028],
+      [0.022, 0.04, 0.1]
+    ],
+    scud: [
+      [0.03, 0.05, 0.12],
+      [0.004, 0.007, 0.02]
+    ],
+    rain: [0.12, 0.32, 0.95],
+    snow: [0.25, 0.45, 0.9],
+    fog: [0.02, 0.055, 0.13],
+    desaturate: 0
+  }
+};
+var KINDS2 = {
+  clear: { cover: 0, dim: 1, gray: 0, fog: 0, rain: 0, snow: 0 },
+  overcast: { cover: 0.88, dim: 0.82, gray: 0.5, fog: 0.06, rain: 0, snow: 0 },
+  rain: { cover: 0.985, dim: 0.7, gray: 0.7, fog: 0.14, rain: 1, snow: 0 },
+  snow: { cover: 0.85, dim: 0.9, gray: 0.5, fog: 0.12, rain: 0, snow: 1 },
+  fog: { cover: 0.55, dim: 0.92, gray: 0.4, fog: 0.62, rain: 0, snow: 0 }
+};
+var RAIN = 110;
+var SNOW = 80;
+var MAX_ASPECT = 5;
+var SPLASHES = 128;
+var SPLASH_LIFE = 0.3;
+var WISP_N = 1024;
+var WISP_A = buildWisps(5);
+var WISP_B = buildWisps(17);
+
+class WeatherLayer {
+  horizon;
+  covered;
+  scud;
+  palette;
+  kind;
+  time = 0;
+  aspect = 1;
+  drops;
+  flakes;
+  splashes = new Float32Array(SPLASHES * 4).fill(-1);
+  nextSplash = 0;
+  fogRows = new Float32Array(0);
+  rainCount = 0;
+  snowCount = 0;
+  constructor(weather, time, horizon, light = false) {
+    this.horizon = horizon;
+    const kind = KINDS2[weather];
+    this.kind = light ? { cover: 0, dim: 1, gray: 0, fog: 0, rain: kind.rain * 0.5, snow: kind.snow * 0.55 } : kind;
+    this.covered = this.kind.cover > 0;
+    this.palette = PALETTES[time];
+    this.scud = this.covered ? this.palette.scud : undefined;
+    this.drops = new Float32Array(this.kind.rain ? RAIN * MAX_ASPECT * 3 : 0);
+    for (let i = 0;i < this.drops.length; i += 3) {
+      this.drops[i] = Math.random();
+      this.drops[i + 1] = Math.random() * 1.2 - 0.2;
+      this.drops[i + 2] = Math.random();
+    }
+    this.flakes = new Float32Array(this.kind.snow ? SNOW * MAX_ASPECT * 4 : 0);
+    for (let i = 0;i < this.flakes.length; i += 4) {
+      this.flakes[i] = Math.random();
+      this.flakes[i + 1] = Math.random();
+      this.flakes[i + 2] = Math.random();
+      this.flakes[i + 3] = Math.random();
+    }
+  }
+  step(dt) {
+    this.time += dt;
+    const d = this.drops;
+    for (let i = 0;i < this.rainCount * 3; i += 3) {
+      const z = d[i + 2];
+      const fall = (1.4 + z * 1.2) * dt;
+      d[i + 1] += fall;
+      d[i] += fall * 0.12 / this.aspect;
+      const ground = this.horizon + 0.03 + (1.02 - this.horizon) * z;
+      if (d[i + 1] < ground)
+        continue;
+      if (z > 0.3 && Math.random() < 0.4) {
+        const s = this.nextSplash * 4;
+        this.splashes[s] = d[i];
+        this.splashes[s + 1] = ground;
+        this.splashes[s + 2] = 0;
+        this.splashes[s + 3] = z;
+        this.nextSplash = (this.nextSplash + 1) % SPLASHES;
+      }
+      d[i] = Math.random();
+      d[i + 1] = -0.05 - Math.random() * 0.15;
+    }
+    for (let s = 0;s < this.splashes.length; s += 4)
+      if (this.splashes[s + 2] >= 0)
+        this.splashes[s + 2] += dt;
+    const f = this.flakes;
+    for (let i = 0;i < this.snowCount * 4; i += 4) {
+      f[i + 1] += (0.04 + f[i + 2] * 0.06) * dt;
+      f[i] += (Math.sin(this.time * 0.6 + f[i + 3] * 20) * 0.008 + 0.005) * dt / this.aspect;
+      if (f[i + 1] > 1.02) {
+        f[i + 1] -= 1.04;
+        f[i] = Math.random();
+      }
+      if (f[i] > 1)
+        f[i] -= 1;
+    }
+  }
+  cover(hdr, W, H) {
+    if (this.covered)
+      paintDeck(hdr, W, H, this.horizon, this.kind.cover, this.palette.deck[0], this.palette.deck[1]);
+  }
+  draw(hdr, W, H) {
+    if (this.fogRows.length !== H) {
+      this.aspect = W / H;
+      this.rainCount = Math.min(MAX_ASPECT * RAIN, Math.round(RAIN * this.kind.rain * this.aspect));
+      this.snowCount = Math.min(MAX_ASPECT * SNOW, Math.round(SNOW * this.kind.snow * this.aspect));
+      this.fogRows = new Float32Array(H);
+      for (let y = 0;y < H; y++) {
+        const v = y / H;
+        const band = Math.exp(-(((v - this.horizon) / 0.16) ** 2));
+        this.fogRows[y] = this.kind.fog * (0.45 + 0.55 * band) * (v > this.horizon ? 1 - 0.5 * smoothstep(this.horizon, 1, v) : 1);
+      }
+    }
+    const p = this.palette;
+    const k = this.kind;
+    if (k.dim < 1 || k.fog > 0) {
+      grade(hdr, W, H, k.dim, p.desaturate * k.gray, p.fog, this.fogRows, this.time);
+      touch(hdr, 0, 0, W - 1, H - 1);
+    }
+    const f = this.flakes;
+    for (let i = 0;i < this.snowCount * 4; i += 4) {
+      const z = f[i + 2];
+      const b = (0.35 + z * 0.5) * (0.6 + 0.4 * f[i + 3]);
+      flake(hdr, W, H, f[i] * W, f[i + 1] * H, p.snow[0], p.snow[1], p.snow[2], b);
+      if (z > 0.55)
+        flake(hdr, W, H, f[i] * W + 0.8, f[i + 1] * H + 0.6, p.snow[0], p.snow[1], p.snow[2], b);
+      touch(hdr, f[i] * W - 2, f[i + 1] * H - 2, f[i] * W + 2, f[i + 1] * H + 2);
+    }
+    const d = this.drops;
+    for (let i = 0;i < this.rainCount * 3; i += 3) {
+      const z = d[i + 2];
+      const len = (0.025 + z * 0.035) * H;
+      const b = 0.05 + z * 0.12;
+      streak(hdr, W, H, d[i] * W, d[i + 1] * H, len * 0.12, len, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b);
+      touch(hdr, d[i] * W - len * 0.12 - 2, d[i + 1] * H - len - 1, d[i] * W + 1, d[i + 1] * H + 1);
+    }
+    const s = this.splashes;
+    for (let i = 0;i < s.length; i += 4) {
+      const age = s[i + 2];
+      if (age < 0)
+        continue;
+      if (age > SPLASH_LIFE) {
+        s[i + 2] = -1;
+        continue;
+      }
+      const t = age / SPLASH_LIFE;
+      const b = (1 - t) * (0.12 + s[i + 3] * 0.2);
+      const rx = (0.003 + s[i + 3] * 0.006) * H * (0.6 + t * 1.6);
+      splash(hdr, W, H, s[i] * W, s[i + 1] * H, rx, t, p.rain[0] * b, p.rain[1] * b, p.rain[2] * b);
+      touch(hdr, s[i] * W - rx - 2, s[i + 1] * H - rx - 2, s[i] * W + rx + 2, s[i + 1] * H + rx * 0.3 + 2);
+    }
+  }
+}
+function paintDeck(hdr, W, H, horizon, cover, top, bottom) {
+  for (let y = 0;y < Math.min(H, Math.ceil(horizon * H)); y++) {
+    const v = y / H;
+    const g = smoothstep(0, horizon, v);
+    const k = cover * (1 - 0.3 * smoothstep(horizon - 0.1, horizon, v));
+    for (let x = 0;x < W; x++) {
+      const lump = 0.8 + 0.4 * fbm2(x / H * 3.5, v * 12 + x / H * 0.6, 4);
+      const o = (y * W + x) * 3;
+      hdr[o] += ((top[0] + (bottom[0] - top[0]) * g) * lump - hdr[o]) * k;
+      hdr[o + 1] += ((top[1] + (bottom[1] - top[1]) * g) * lump - hdr[o + 1]) * k;
+      hdr[o + 2] += ((top[2] + (bottom[2] - top[2]) * g) * lump - hdr[o + 2]) * k;
+    }
+  }
+}
+function grade(hdr, W, H, dim, desaturate, fog, rows, time) {
+  const drift = time * 5;
+  for (let y = 0;y < H; y++) {
+    const base = rows[y];
+    for (let x = 0;x < W; x++) {
+      const o = (y * W + x) * 3;
+      const r = hdr[o];
+      const g = hdr[o + 1];
+      const b = hdr[o + 2];
+      const l = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      const wisp = WISP_A[(x * 0.7 + y * 0.25 + drift | 0) & WISP_N - 1] * WISP_B[(x * 0.45 - y * 0.15 - drift * 0.6 + 400 | 0) & WISP_N - 1];
+      const f = clamp(base * (0.7 + 0.9 * wisp), 0, 0.95);
+      hdr[o] = (r + (l - r) * desaturate) * dim * (1 - f) + fog[0] * f;
+      hdr[o + 1] = (g + (l - g) * desaturate) * dim * (1 - f) + fog[1] * f;
+      hdr[o + 2] = (b + (l - b) * desaturate) * dim * (1 - f) + fog[2] * f;
+    }
+  }
+}
+function streak(hdr, W, H, x, y, dx, dy, r, g, b) {
+  const n = Math.ceil(dy);
+  for (let i = 0;i < n; i++) {
+    const t = i / n;
+    const py = y - dy * t | 0;
+    if (py < 0 || py >= H)
+      continue;
+    const px = x - dx * t - 0.5;
+    const x0 = Math.floor(px);
+    const fx = px - x0;
+    const k = 1 - t;
+    if (x0 >= 0 && x0 < W) {
+      const o = (py * W + x0) * 3;
+      hdr[o] += r * k * (1 - fx);
+      hdr[o + 1] += g * k * (1 - fx);
+      hdr[o + 2] += b * k * (1 - fx);
+    }
+    if (x0 + 1 >= 0 && x0 + 1 < W) {
+      const o = (py * W + x0 + 1) * 3;
+      hdr[o] += r * k * fx;
+      hdr[o + 1] += g * k * fx;
+      hdr[o + 2] += b * k * fx;
+    }
+  }
+}
+function splash(hdr, W, H, x, y, rx, t, r, g, b) {
+  for (let i = 0;i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    splat(hdr, W, H, x + Math.cos(a) * rx, y + Math.sin(a) * rx * 0.3, r, g, b);
+  }
+  const up = Math.sin(t * Math.PI) * rx * 0.9;
+  for (const side of [-1, 1])
+    splat(hdr, W, H, x + side * rx * 0.7, y - up, r * 2, g * 2, b * 2);
+}
+function flake(hdr, W, H, x, y, r, g, b, a) {
+  const px = x - 0.5;
+  const py = y - 0.5;
+  const x0 = Math.floor(px);
+  const y0 = Math.floor(py);
+  const fx = px - x0;
+  const fy = py - y0;
+  for (let j = 0;j < 2; j++)
+    for (let i = 0;i < 2; i++) {
+      const xi = x0 + i;
+      const yi = y0 + j;
+      if (xi < 0 || yi < 0 || xi >= W || yi >= H)
+        continue;
+      const k = (i ? fx : 1 - fx) * (j ? fy : 1 - fy) * a;
+      const o = (yi * W + xi) * 3;
+      hdr[o] += (r - hdr[o]) * k;
+      hdr[o + 1] += (g - hdr[o + 1]) * k;
+      hdr[o + 2] += (b - hdr[o + 2]) * k;
+    }
+}
+function buildWisps(seed) {
+  const tex = new Float32Array(WISP_N);
+  for (let k = 0;k < 10; k++) {
+    const c = hash(seed + k * 3.1) * WISP_N;
+    const w = 30 + hash(seed + k * 7.7) * 90;
+    const amp = 0.4 + hash(seed + k * 1.3) * 0.6;
+    for (let i = 0;i < WISP_N; i++) {
+      const d = Math.min(Math.abs(i - c), WISP_N - Math.abs(i - c));
+      tex[i] += amp * Math.exp(-(d * d) / (w * w));
+    }
+  }
+  const max = tex.reduce((m, v) => Math.max(m, v), 0);
+  return tex.map((v) => v / max);
+}
+
+// src/wind.ts
+var SLOT = 14;
+var SPEED = 0.45;
+var RISE = 1.1;
+var FALL = 3.2;
+var PHASE = 15.5;
+function gust(x, t) {
+  const s = t - x / SPEED + PHASE;
+  const n = Math.floor(s / SLOT);
+  const strength = hash(n * 7.31 + 2.1);
+  if (strength < 0.3)
+    return 0;
+  const u = s - n * SLOT - hash(n * 3.17 + 0.5) * (SLOT - RISE - FALL);
+  if (u <= 0 || u >= RISE + FALL)
+    return 0;
+  return (u < RISE ? smoothstep(0, RISE, u) : 1 - smoothstep(RISE, RISE + FALL, u)) * (0.6 + 0.4 * (strength - 0.3) / 0.7);
+}
+function sway(x, t, phase = 0, rate = 0.7) {
+  const g = gust(x, t);
+  return Math.sin(t * rate + phase) * (1 + 0.4 * g) + g * (1.65 + 0.22 * Math.sin(t * rate * 2.7 + phase * 1.7));
+}
+
+class SwayLayer {
+  dir;
+  before = new Float32Array(0);
+  x0 = 0;
+  y0 = 0;
+  w = 0;
+  h = 0;
+  reach = 0;
+  bare = new Float32Array(0);
+  layer = new Float32Array(0);
+  cover = new Uint8Array(0);
+  weight = new Float32Array(0);
+  shift = new Float32Array(0);
+  top = new Int32Array(0);
+  bottom = new Int32Array(0);
+  constructor(dir = 1) {
+    this.dir = dir;
+  }
+  begin(hdr) {
+    this.before = hdr.slice();
+  }
+  end(hdr, W, H, reach, weight) {
+    const before = this.before;
+    this.before = new Float32Array(0);
+    let x0 = W;
+    let y0 = H;
+    let x1 = -1;
+    let y1 = -1;
+    for (let y = 0;y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        if (hdr[o] === before[o] && hdr[o + 1] === before[o + 1] && hdr[o + 2] === before[o + 2])
+          continue;
+        if (weight(x, y) <= 0)
+          continue;
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+    this.w = 0;
+    if (x1 < 0)
+      return;
+    const pad = Math.ceil(reach) + 1;
+    this.x0 = Math.max(0, x0 - pad);
+    this.y0 = y0;
+    this.w = Math.min(W - 1, x1 + pad) - this.x0 + 1;
+    this.h = y1 - y0 + 1;
+    this.reach = reach;
+    const n = this.w * this.h;
+    this.bare = new Float32Array(n * 3);
+    this.layer = new Float32Array(n * 3);
+    this.cover = new Uint8Array(n);
+    this.weight = new Float32Array(n);
+    this.shift = new Float32Array(this.w);
+    for (let y = 0;y < this.h; y++)
+      for (let x = 0;x < this.w; x++) {
+        const i = y * this.w + x;
+        const o = ((this.y0 + y) * W + this.x0 + x) * 3;
+        for (let c = 0;c < 3; c++) {
+          this.bare[i * 3 + c] = before[o + c];
+          this.layer[i * 3 + c] = hdr[o + c];
+        }
+        this.cover[i] = hdr[o] !== before[o] || hdr[o + 1] !== before[o + 1] || hdr[o + 2] !== before[o + 2] ? 1 : 0;
+        this.weight[i] = Math.max(0, weight(this.x0 + x, this.y0 + y));
+      }
+  }
+  seal(hdr, W) {
+    for (let y = 0;y < this.h; y++)
+      for (let x = 0;x < this.w; x++) {
+        const i = y * this.w + x;
+        const o = ((this.y0 + y) * W + this.x0 + x) * 3;
+        if (hdr[o] !== this.layer[i * 3] || hdr[o + 1] !== this.layer[i * 3 + 1] || hdr[o + 2] !== this.layer[i * 3 + 2])
+          this.cover[i] = 2;
+      }
+  }
+  offset(x, y) {
+    const i = Math.round(x) - this.x0;
+    const j = Math.round(y) - this.y0;
+    if (i < 0 || j < 0 || i >= this.w || j >= this.h)
+      return 0;
+    return this.shift[i] * this.weight[j * this.w + i];
+  }
+  draw(hdr, W, H, t) {
+    if (!this.w)
+      return;
+    let any = false;
+    for (let x = 0;x < this.w; x++) {
+      const u = (this.dir > 0 ? this.x0 + x : W - this.x0 - x) / H;
+      const g = gust(u, t);
+      this.shift[x] = this.dir * g * this.reach * (0.64 + 0.19 * Math.sin(t * 2.3 + u * 9));
+      if (g > 0)
+        any = true;
+    }
+    if (!any)
+      return;
+    if (this.top.length !== this.w) {
+      this.top = new Int32Array(this.w);
+      this.bottom = new Int32Array(this.w);
+    }
+    shear(hdr, W, this.x0, this.y0, this.w, this.h, this.bare, this.layer, this.cover, this.weight, this.shift, this.top, this.bottom);
+    let run = -1;
+    let y0 = 0;
+    let y1 = 0;
+    for (let x = 0;x <= this.w; x++) {
+      const moved = x < this.w && this.top[x] <= this.bottom[x];
+      if (moved && run < 0)
+        run = x, y0 = this.top[x], y1 = this.bottom[x];
+      if (moved)
+        y0 = Math.min(y0, this.top[x]), y1 = Math.max(y1, this.bottom[x]);
+      if (moved || run < 0)
+        continue;
+      touch(hdr, this.x0 + run, this.y0 + y0, this.x0 + x - 1, this.y0 + y1);
+      run = -1;
+    }
+  }
+}
+function shear(hdr, W, x0, y0, w, h, bare, layer, cover, weight, shift, top, bottom) {
+  top.fill(h);
+  bottom.fill(-1);
+  for (let y = 0;y < h; y++) {
+    const row = y * w;
+    for (let x = 0;x < w; x++) {
+      const i = row + x;
+      if (cover[i] === 2)
+        continue;
+      const d = shift[x] * weight[i];
+      if (d < 0.02 && d > -0.02)
+        continue;
+      const sx = x - d;
+      const xa = Math.floor(sx);
+      const f = sx - xa;
+      const a = xa >= 0 && cover[row + xa] ? 1 - f : 0;
+      const b = xa + 1 < w && xa + 1 >= 0 && cover[row + xa + 1] ? f : 0;
+      if (a + b === 0 && cover[i] === 0)
+        continue;
+      const o = ((y0 + y) * W + x0 + x) * 3;
+      const k = 1 - a - b;
+      const ia = (row + xa) * 3;
+      for (let c = 0;c < 3; c++)
+        hdr[o + c] = bare[i * 3 + c] * k + (a ? layer[ia + c] * a : 0) + (b ? layer[ia + 3 + c] * b : 0);
+      if (y < top[x])
+        top[x] = y;
+      bottom[x] = y;
+    }
+  }
+}
+
+// wallpapers/beach.ts
+var TIME_SCALE = 0.35;
+var CREATURE_SPEED = 0.25;
+var HORIZON = 0.5;
+var BOTTLE = 95;
+var RING = 4;
+var WAKE = 7;
+var LOOKS = {
+  day: {
+    style: "front",
+    light: [1, 0.97, 0.88],
+    sky: [
+      [0, [0.1, 0.35, 0.75]],
+      [0.3, [0.3, 0.6, 0.88]],
+      [HORIZON, [0.7, 0.85, 0.92]]
+    ],
+    orb: { x: 0.18, y: 0.14, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.6, 0.68, 0.8], alpha: 0.9 },
+    sea: [
+      [0.04, 0.26, 0.56],
+      [0.03, 0.54, 0.6]
+    ],
+    sand: [
+      [0.8, 0.65, 0.43],
+      [0.5, 0.4, 0.27]
+    ],
+    foam: [0.92, 0.96, 1],
+    glitter: 0.15,
+    mirror: [0.82, 0.9, 0.95],
+    tint: [1, 1, 1],
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.6, 0.62],
+    sky: [
+      [0, [0.03, 0.1, 0.14]],
+      [0.2, [0.1, 0.24, 0.3]],
+      [0.36, [0.6, 0.32, 0.5]],
+      [HORIZON, [1, 0.5, 0.55]]
+    ],
+    orb: { x: 0.55, y: 0.465, r: 0.05, core: [2.6, 1.4, 1.2], glow: [1, 0.5, 0.58], near: 0.45, wide: 0.22 },
+    stars: 12,
+    clouds: { top: [0.2, 0.2, 0.3], bottom: [1, 0.5, 0.62], alpha: 0.8 },
+    sea: [
+      [0.8, 0.36, 0.5],
+      [0.04, 0.24, 0.27]
+    ],
+    sand: [
+      [0.4, 0.22, 0.27],
+      [0.2, 0.13, 0.19]
+    ],
+    foam: [1, 0.76, 0.8],
+    glitter: 1,
+    mirror: [0.9, 0.78, 0.72],
+    tint: [0.2, 0.16, 0.22],
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [0.3, 0.62, 1.5],
+    sky: [
+      [0, [0.004, 0.008, 0.03]],
+      [0.25, [0.014, 0.024, 0.07]],
+      [0.4, [0.035, 0.055, 0.14]],
+      [HORIZON, [0.07, 0.1, 0.24]]
+    ],
+    orb: { x: 0.7, y: 0.16, r: 0.03, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 140,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.7 },
+    sea: [
+      [0.045, 0.085, 0.2],
+      [0.01, 0.03, 0.07]
+    ],
+    sand: [
+      [0.06, 0.08, 0.17],
+      [0.03, 0.05, 0.11]
+    ],
+    foam: [0.1, 0.85, 1.1],
+    glitter: 0.7,
+    mirror: [0.75, 0.9, 1],
+    tint: [0.02, 0.032, 0.075],
+    night: true
+  }
+};
+var DAYLIGHT = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [-0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var OFF_SEASON = {
+  sea: [
+    [0.14, 0.3, 0.42],
+    [0.13, 0.38, 0.42]
+  ],
+  sand: [
+    [0.74, 0.69, 0.56],
+    [0.52, 0.47, 0.38]
+  ]
+};
+var UMBRELLAS = [
+  [0.64, 0.86, [0.85, 0.15, 0.12]],
+  [0.32, 0.84, [0.95, 0.72, 0.1]],
+  [0.78, 0.82, [0.15, 0.58, 0.35]],
+  [0.48, 0.9, [0.2, 0.45, 0.88]],
+  [0.22, 0.93, [0.95, 0.45, 0.12]],
+  [0.42, 0.8, [0.8, 0.2, 0.55]]
+];
+var SKIN = [
+  [0.85, 0.62, 0.48],
+  [0.55, 0.36, 0.24],
+  [0.95, 0.75, 0.6]
+];
+var TRUNK = [0.5, 0.36, 0.22];
+var FROND = [0.18, 0.45, 0.14];
+
+class Beach extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT };
+  shade;
+  stars;
+  clouds;
+  towers = makeClouds(3, "towering", HORIZON, HORIZON);
+  shadows = makeShadows(3, HORIZON + 0.06, 0.95);
+  storm = makeStorm();
+  palms = [];
+  boat = { x: -9, dir: 1, next: 14 };
+  dolphins = [];
+  splashes = [];
+  rings = [];
+  sea = { y0: 0, y1: 0, rows: new Float32Array(0), amp: new Float32Array(0), gloss: new Float32Array(0), still: new Float32Array(0) };
+  crab = { x: 0.5, dir: 1, rest: 0, phase: 0 };
+  surfer = { x: -0.2, phase: 0 };
+  startled = [];
+  bottle = { wait: eggWait() * TIME_SCALE, t: -1 };
+  season;
+  weather;
+  lights = new LightMap;
+  swimmers = [];
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.season = settings.season ?? "spring";
+    const offSeason = this.season === "autumn" || this.season === "winter";
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON);
+    const look = offSeason && settings.time === "day" ? { ...LOOKS.day, ...OFF_SEASON } : LOOKS[settings.time];
+    this.look = this.weather.covered ? { ...look, glitter: look.glitter * 0.15 } : look;
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.shade = sunShade(settings.time, look.orb, this.weather.covered);
+    if (this.season === "summer" && !this.look.night)
+      this.swimmers = Array.from({ length: { calm: 1, lively: 3, teeming: 5 }[settings.activity] }, (_, i) => ({ x: 0.25 + i * 0.13 + hash(i) * 0.05, y: 0.69 + hash(i * 3.3) * 0.03, phase: i * 1.9 }));
+    this.stars = makeStars(this.look.stars, 0.45);
+    this.clouds = settings.time === "sunset" ? makeClouds(4, "cirrus", 0.08, 0.3) : makeClouds(4, "cumulus", 0.07, 0.24);
+    if (settings.activity !== "calm")
+      this.dolphins = [0, 1].map((i) => ({ t: -1, x: 0, y: 0, dir: 1, wait: 4 + i * 9, under: -1 }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED;
+    this.creatureTime += cdt;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.shadows, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.stepBoat(dt);
+    for (const d of this.dolphins)
+      this.stepDolphin(d, dt, cdt);
+    for (const s of this.splashes) {
+      s.age += dt;
+      s.vy += 0.15 * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+    }
+    this.splashes = this.splashes.filter((s) => s.age < 1.2);
+    for (const r of this.rings)
+      r.age += dt;
+    this.rings = this.rings.filter((r) => r.age < RING);
+    this.startled = flyAway(this.startled, dt, this.A);
+    const b = this.bottle;
+    if (b.t >= 0)
+      b.t += dt;
+    if (b.t > BOTTLE) {
+      b.t = -1;
+      b.wait = eggWait(true) * TIME_SCALE;
+    }
+    if (b.t < 0) {
+      b.wait -= dt;
+      if (b.wait <= 0)
+        b.t = 0;
+    }
+    if (this.activity === "teeming") {
+      const c = this.crab;
+      if (c.rest > 0)
+        c.rest -= cdt;
+      else {
+        c.x += c.dir * 0.04 * cdt;
+        c.phase += 0.04 * cdt / 0.02;
+        if (Math.random() < cdt * 0.3)
+          c.rest = rand(2, 5);
+        if (c.x > 0.75 * this.A)
+          c.dir = -1;
+        if (c.x < 0.3 * this.A)
+          c.dir = 1;
+      }
+      this.surfer.phase += dt;
+      this.surfer.x += 0.025 * dt;
+      if (this.surfer.x > this.A + 0.2)
+        this.surfer.x = -0.2;
+    }
+  }
+  poke(x, y) {
+    startle(this.startled, x, Math.max(y, HORIZON + 0.08), 4);
+  }
+  render() {
+    this.restore();
+    if (!this.weather.covered)
+      paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3, this.points);
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    const orb = this.weather.covered ? undefined : this.look.orb;
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    this.drawSea();
+    paintShadows(this.hdr, this.W, this.H, this.shadows, HORIZON + 0.01, orb);
+    this.sea.still.set(this.hdr.subarray(this.sea.y0 * this.W * 3, this.sea.y1 * this.W * 3));
+    this.drawWakes();
+    for (const s2 of this.swimmers)
+      this.drawSwimmer(s2);
+    this.drawBoat();
+    for (const d of this.dolphins)
+      this.drawDolphin(d);
+    if (this.activity === "teeming")
+      this.drawSurfer();
+    this.drawSplashes();
+    if (this.bottle.t >= 0)
+      this.drawBottle();
+    if (this.activity !== "calm" && !this.look.night)
+      this.drawGulls();
+    if (this.activity === "teeming")
+      this.drawCrab();
+    for (const b of this.startled)
+      this.shape(bird(b, this.H, 0.03 * this.H, this.paint([0.75, 0.78, 0.82])), this.lighting, 0.5);
+    if (this.look.night)
+      this.drawBonfire();
+    const s = this.sea;
+    reflect(this.hdr, this.W, this.H, s.y0, s.y1, s.rows, s.amp, s.gloss, this.look.mirror, this.time, s.still);
+    for (const p of this.palms) {
+      this.drawTrunk(p);
+      this.drawFronds(p);
+    }
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.boat.x < -5)
+      this.boat.next = 0;
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px);
+    this.weather.cover(this.hdr, W, H);
+    const sky = this.hdr.slice();
+    if (!this.weather.covered)
+      paintClouds(this.hdr, W, H, this.towers, look.clouds.top, look.clouds.bottom, look.clouds.alpha, look.orb);
+    const ix = 0.16 * A;
+    this.polygon(Array.from({ length: 21 }, (_, i) => [(ix + Math.cos(i / 20 * Math.PI) * 0.08) * H, (HORIZON - Math.sin(i / 20 * Math.PI) * 0.025) * H]), this.paint([0.2, 0.35, 0.22]));
+    this.shape([cap(ix * H, (HORIZON - 0.02) * H, (ix + 0.01) * H, (HORIZON - 0.06) * H, 0.003 * H, 0.002 * H, this.paint(TRUNK))], this.lighting, 0.4);
+    for (let i = 0;i < 5; i++) {
+      const a = Math.PI + i / 4 * Math.PI;
+      this.shape([cap((ix + 0.01) * H, (HORIZON - 0.06) * H, (ix + 0.01 + Math.cos(a) * 0.025) * H, (HORIZON - 0.06 + Math.sin(a) * 0.012 + 0.01) * H, 0.004 * H, 0.001 * H, this.paint(FROND))], this.lighting, 0.3);
+    }
+    const [dry] = look.sand;
+    const px = this.px;
+    for (let y = Math.floor(HORIZON * H);y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const u = x / px;
+        const v = y / px;
+        const ripple = 0.92 + 0.08 * Math.sin(u * 0.4 + v * 1.1 + fbm1(u * 0.05 + v * 0.02, 3) * 5) + (hash2(Math.floor(u), Math.floor(v)) - 0.5) * 0.06;
+        const o = (y * W + x) * 3;
+        this.hdr[o] = dry[0] * ripple;
+        this.hdr[o + 1] = dry[1] * ripple;
+        this.hdr[o + 2] = dry[2] * ripple;
+      }
+    if (look.style === "front") {
+      haze(this.hdr, sky, W, H, HORIZON, HORIZON + 0.01, 0.4);
+      mottle(this.hdr, W, H, HORIZON, 1, 0.6, [1.12, 1, 0.8], [0.72, 0.78, 0.92]);
+    }
+    const season = this.season;
+    if (season === "summer")
+      for (const [i, [x, y, stripe]] of UMBRELLAS.slice(0, { calm: 2, lively: 4, teeming: 6 }[this.activity]).entries())
+        this.drawUmbrella(x * A, y, stripe, i % 3 === 2 ? undefined : SKIN[i % SKIN.length]);
+    if (season === "autumn" || season === "winter")
+      this.drawDriftwood(0.56 * A, 0.9);
+    if (this.activity === "teeming" && season !== "autumn" && season !== "winter")
+      this.drawBeachThings();
+    this.palms = [
+      { base: [0.12, 1.03], crown: [0.35, 0.33], lean: 1 },
+      { base: [A - 0.1, 1], crown: [A - 0.27, 0.39], lean: -1 }
+    ];
+    const y0 = Math.floor(HORIZON * H);
+    const y1 = Math.min(H, Math.ceil(0.77 * H) + 3);
+    const n = y1 - y0;
+    this.sea = {
+      y0,
+      y1,
+      rows: Float32Array.from({ length: n }, (_, r) => y0 - 1 - r * 0.85),
+      amp: Float32Array.from({ length: n }, (_, r) => (0.3 + r / (0.24 * H) * 2.6) * (H / 180)),
+      gloss: new Float32Array(n * W),
+      still: new Float32Array(n * W * 3)
+    };
+  }
+  ground(x, y, w, h, tip, lift2) {
+    const H = this.H;
+    groundShadow(this.hdr, this.W, H, this.shade, x * H, y * H, w * H, h * H, tip, lift2);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  shore(u) {
+    return 0.74 + 0.01 * Math.sin(u * 2.3 + 1) + 0.012 * Math.sin(this.time * 0.5);
+  }
+  drawSea() {
+    const { W, H, hdr, look, sea } = this;
+    const t = this.time;
+    const [far, near2] = look.sea;
+    const [, wet] = look.sand;
+    const sky = look.sky[look.sky.length - 1][1];
+    const ox = look.orb.x * W;
+    const roll = t * 0.08 % 1;
+    const thin = H / 180;
+    let bottom = 0;
+    sea.gloss.fill(0);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const edge = this.shore(u) * H;
+      const reach = (0.74 + 0.01 * Math.sin(u * 2.3 + 1) + 0.014) * H;
+      const wave2 = lerp(0.62, edge / H - 0.005, roll) * H;
+      const broken = smoothstep(0.42, 0.6, fbm1(u * 6 + t * 0.1, 4));
+      const bend = 1.4 * Math.sin(u * 2.7 + t * 0.05) + 0.7 * Math.sin(u * 7.3 - t * 0.08);
+      bottom = Math.max(bottom, reach + 2, look.night ? edge + 0.05 * H : 0);
+      for (let y = sea.y0;y < Math.min(H, reach + 2); y++) {
+        const o = (y * W + x) * 3;
+        const gi = (y - sea.y0) * W + x;
+        if (y > edge) {
+          const k = clamp((reach - y) / (reach - edge + 1), 0, 1) * 0.8;
+          hdr[o] += (wet[0] - hdr[o]) * k;
+          hdr[o + 1] += (wet[1] - hdr[o + 1]) * k;
+          hdr[o + 2] += (wet[2] - hdr[o + 2]) * k;
+          sea.gloss[gi] = k * 0.3;
+          continue;
+        }
+        const d = y / H - HORIZON;
+        const depth2 = clamp(d / (edge / H - HORIZON), 0, 1);
+        const phase = 51 * Math.log(d + 0.15) - t * 0.6 + bend;
+        const n = phase / TAU - Math.round(phase / TAU);
+        const swell = 0.94 + 0.06 * Math.cos(phase);
+        const mist = look.style === "front" ? (1 - depth2) ** 4 * 0.5 : 0;
+        let r = lerp(lerp(far[0], near2[0], depth2) * swell, sky[0], mist);
+        let g = lerp(lerp(far[1], near2[1], depth2) * swell, sky[1], mist);
+        let b = lerp(lerp(far[2], near2[2], depth2) * swell, sky[2], mist);
+        const across = Math.abs(n) * (TAU * (d + 0.15) * H / 51);
+        const crest = Math.max(0, 1 - across / ((0.7 + depth2 * 1.2) * thin)) * smoothstep(0.008, 0.03, d);
+        let shine = 0;
+        if (crest > 0) {
+          const path = Math.max(0, 1 - Math.abs(x - ox) / ((0.03 + depth2 * 0.14) * H)) ** 1.5;
+          const dash = smoothstep(0.45 - path * 0.25, 0.72 - path * 0.25, noise1(u * 2.4 / (d + 0.02) + Math.round(phase / TAU) * 17.3, 5));
+          const glint = crest * dash * 0.14 * (1 - path);
+          const sun = crest * dash * path * look.glitter * 1.6;
+          shine = glint + sun;
+          r += look.light[0] * glint + look.orb.glow[0] * sun;
+          g += look.light[1] * glint + look.orb.glow[1] * sun;
+          b += look.light[2] * glint + look.orb.glow[2] * sun;
+        }
+        const breaker = Math.max(0, 1 - Math.abs(y - wave2) / 1.2) * (0.5 + 0.5 * Math.sin(u * 40 + t)) * (1 - roll) * broken;
+        const lap = Math.max(0, 1 - (edge - y) / 2.2) * (0.7 + 0.3 * Math.sin(u * 30 - t * 2));
+        const foam = Math.max(breaker, lap);
+        r += (look.foam[0] - r) * foam;
+        g += (look.foam[1] - g) * foam;
+        b += (look.foam[2] - b) * foam;
+        hdr[o] = r;
+        hdr[o + 1] = g;
+        hdr[o + 2] = b;
+        sea.gloss[gi] = (0.1 + 0.7 * Math.exp(-d * 12)) * (1 - foam) * (1 - Math.min(1, shine * 1.5));
+      }
+      if (look.night)
+        for (let y = Math.floor(edge);y < Math.min(H, edge + 0.05 * H); y++) {
+          const k = Math.exp(-(y - edge) / (0.012 * H)) * 0.2;
+          const o = (y * W + x) * 3;
+          hdr[o] += look.foam[0] * k;
+          hdr[o + 1] += look.foam[1] * k;
+          hdr[o + 2] += look.foam[2] * k;
+        }
+    }
+    this.touch(0, sea.y0, W - 1, bottom);
+  }
+  drawBonfire() {
+    const H = this.H;
+    const x = 0.17 * this.A * H;
+    const gy = 0.92 * H;
+    const fire = campfire(x, gy, H * 1.2, this.time);
+    this.lights.clear(this.W, H);
+    this.lights.pool(x + (noise1(this.time * 0.9, 5) - 0.5) * 0.05 * H, gy - 0.03 * H, 0.36 * H, 0.13 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker);
+    this.lights.apply(this.hdr);
+    this.shape(fire.logs, { style: "rim", color: [1.4, 0.5, 0.1], x, y: gy - 0.03 * H });
+    for (const flame of fire.flames)
+      this.shape(flame, { style: "front", dir: [0, 0, 1] }, 0);
+  }
+  drawTrunk(p) {
+    const H = this.H;
+    const mid = [p.base[0] - p.lean * 0.02, (p.base[1] + p.crown[1]) / 2 + 0.03];
+    const at = (t) => [(1 - t) ** 2 * p.base[0] + 2 * (1 - t) * t * mid[0] + t * t * p.crown[0], (1 - t) ** 2 * p.base[1] + 2 * (1 - t) * t * mid[1] + t * t * p.crown[1]];
+    const trunk = this.paint(TRUNK);
+    const parts = [];
+    for (let i = 0;i < 14; i++) {
+      const [ax, ay] = at(i / 14);
+      const [bx, by] = at((i + 1) / 14);
+      parts.push(cap(ax * H, ay * H, bx * H, by * H, lerp(0.022, 0.013, i / 14) * H, lerp(0.022, 0.013, (i + 1) / 14) * H, trunk));
+    }
+    this.shape(parts, this.lighting);
+    const scar = this.paint([0.32, 0.22, 0.13]);
+    for (let i = 1;i < 20; i++) {
+      const [x, y] = at(i / 20);
+      const r = lerp(0.022, 0.013, i / 20) * H;
+      this.shape([cap(x * H - r, y * H + 0.002 * H, x * H + r, y * H - 0.002 * H, 0.0015 * H, 0.0015 * H, scar)], this.lighting, 0);
+    }
+    const nut = this.paint([0.35, 0.22, 0.1]);
+    this.shape([ell((p.crown[0] - 0.01) * H, (p.crown[1] + 0.012) * H, 0.009 * H, 0.009 * H, 0, nut), ell((p.crown[0] + 0.008) * H, (p.crown[1] + 0.014) * H, 0.009 * H, 0.009 * H, 0, nut), ell(p.crown[0] * H, (p.crown[1] + 0.022) * H, 0.009 * H, 0.009 * H, 0, nut)], this.lighting);
+  }
+  drawFronds(p) {
+    const H = this.H;
+    const frond = this.paint(FROND);
+    const [cx, cy] = [p.crown[0] * H, p.crown[1] * H];
+    for (let i = 0;i < 8; i++) {
+      const base = -Math.PI / 2 + (i / 7 * 2 - 1) * 1.6 + p.lean * 0.15;
+      const bend = sway(p.crown[0], this.time, i * 1.3 + p.lean, 0.8) * 0.06 * (Math.sin(base) > 0 ? -1 : 1);
+      const length = (0.17 + hash(i * 3.1 + p.lean) * 0.05) * H;
+      const parts = [];
+      let [x, y] = [cx, cy];
+      const spine = [[x, y]];
+      const widths = [this.thick(0.005)];
+      let angle = base + bend;
+      for (let s = 0;s < 8; s++) {
+        const q = s / 8;
+        angle += (Math.cos(base) > 0 ? 1 : -1) * 0.06 * (0.3 + Math.abs(Math.cos(base))) + 0.02;
+        const nx = x + Math.cos(angle) * (length / 8);
+        const ny = y + Math.sin(angle) * (length / 8) + q * q * 0.006 * H;
+        parts.push(cap(x, y, nx, ny, this.thick(lerp(0.005, 0.0015, q)), this.thick(lerp(0.005, 0.0015, q + 0.125), 0.7), frond));
+        const leaf = (1 - q * 0.6) * 0.03 * H;
+        spine.push([nx, ny]);
+        widths.push(leaf * 0.5);
+        if (!this.cells)
+          for (const side of [-1, 1]) {
+            const la = angle + side * 1.1 + 0.4;
+            parts.push(cap(nx, ny, nx + Math.cos(la) * leaf, ny + Math.sin(la) * leaf, 0.0028 * H, 0.0008 * H, frond));
+          }
+        [x, y] = [nx, ny];
+      }
+      if (this.cells)
+        parts.push(...blade(spine, widths, frond));
+      this.shape(parts, this.lighting, this.look.style === "rim" ? 0.3 : 0.7);
+    }
+  }
+  drawUmbrella(ux, uy, stripe, skin) {
+    const H = this.H;
+    const s = 0.75 + (uy - 0.84) * 3;
+    const P = (dx, dy) => [(ux + dx * s) * H, (uy + dy * s) * H];
+    this.polygon([P(-0.06, 0.04), P(0.07, 0.035), P(0.09, 0.075), P(-0.04, 0.08)], this.paint([0.2, 0.45, 0.85]));
+    this.polygon([P(-0.03, 0.042), P(0, 0.04), P(0.025, 0.078), P(-0.008, 0.079)], this.paint([0.92, 0.92, 0.88]));
+    if (skin) {
+      const c = this.paint(skin);
+      this.shape([cap(...P(-0.035, 0.06), ...P(0.045, 0.056), 0.009 * s * H, 0.006 * s * H, c), ell(...P(-0.048, 0.059), 0.01 * s * H, 0.009 * s * H, 0, c)], this.lighting, 0.6);
+      this.shape([cap(...P(-0.012, 0.06), ...P(0.012, 0.059), 0.0095 * s * H, 0.0095 * s * H, this.paint(stripe))], this.lighting, 0.4);
+    }
+    this.ground(ux, uy + 0.05 * s, 0.18 * s, 0.17 * s, 1.2);
+    this.shape([cap(...P(0, 0.05), ...P(0, -0.12), 0.003 * s * H, 0.003 * s * H, this.paint([0.85, 0.85, 0.82]))], this.lighting, 0.4);
+    for (let k = 0;k < 6; k++) {
+      const a0 = Math.PI + k / 6 * Math.PI;
+      const a1 = Math.PI + (k + 1) / 6 * Math.PI;
+      const color = this.paint(k % 2 ? [0.92, 0.92, 0.88] : stripe);
+      this.polygon([P(0, -0.15), P(Math.cos(a0) * 0.09, -0.12 + Math.sin(a0) * -0.02 + 0.02), P(Math.cos(a1) * 0.09, -0.12 + Math.sin(a1) * -0.02 + 0.02)], color);
+    }
+  }
+  drawDriftwood(x, y) {
+    const H = this.H;
+    const wood = this.paint([0.62, 0.55, 0.45]);
+    this.ground(x, y + 0.006, 0.13, 0.02, 1);
+    this.shape([cap((x - 0.07) * H, y * H, (x + 0.06) * H, (y - 0.008) * H, 0.009 * H, 0.006 * H, wood, 2), cap((x + 0.02) * H, (y - 0.005) * H, (x + 0.05) * H, (y - 0.03) * H, 0.004 * H, 0.002 * H, wood)], this.lighting, 0.7);
+  }
+  drawSwimmer(s) {
+    const H = this.H;
+    const x = s.x * this.A * H;
+    const y = (s.y + Math.sin(this.time * 1.4 + s.phase) * 0.003) * H;
+    const foam = this.look.foam;
+    this.ellipse(x, y + 0.006 * H, 0.014 * H, 0.004 * H, foam[0], foam[1], foam[2], 0.35);
+    this.shape([ell(x, y, 0.007 * H, 0.008 * H, 0, this.paint(SKIN[Math.floor(s.phase) % SKIN.length])), ell(x, y - 0.004 * H, 0.0072 * H, 0.0045 * H, 0, this.paint([0.15, 0.1, 0.06]))], this.lighting, 0.6);
+  }
+  drawBeachThings() {
+    const { A, H } = this;
+    if (this.season !== "summer")
+      this.drawUmbrella(0.64 * A, 0.86, [0.85, 0.15, 0.12]);
+    const [sx, sy] = [0.42 * A, 0.92];
+    const sand = this.paint([0.78, 0.66, 0.42]);
+    this.ground(sx, sy, 0.1, 0.09, 0.5);
+    this.ground(0.53 * A, 0.95, 0.028, 0.032);
+    const box = (x0, y0, x1, y1) => [[x0 * H, y0 * H], [x1 * H, y0 * H], [x1 * H, y1 * H], [x0 * H, y1 * H]];
+    this.polygon(box(sx - 0.05, sy - 0.03, sx + 0.05, sy), sand);
+    for (const [dx, h] of [[-0.04, 0.06], [0, 0.08], [0.04, 0.06]]) {
+      this.polygon(box(sx + dx - 0.012, sy - h, sx + dx + 0.012, sy - 0.02), sand);
+      for (const k of [-1, 0, 1])
+        this.polygon(box(sx + dx + k * 0.009 - 0.003, sy - h - 0.006, sx + dx + k * 0.009 + 0.003, sy - h), sand);
+    }
+    this.shape([cap(sx * H, (sy - 0.086) * H, sx * H, (sy - 0.11) * H, 0.0012 * H, 0.0012 * H, this.paint([0.4, 0.3, 0.2]))], this.lighting, 0);
+    this.polygon([[sx * H, (sy - 0.11) * H], [(sx + 0.016) * H, (sy - 0.104) * H], [sx * H, (sy - 0.098) * H]], this.paint([0.85, 0.15, 0.12]));
+    const [bx, by] = [0.53 * A, 0.95];
+    for (const [k, color] of [[0, [0.9, 0.2, 0.15]], [1, [0.95, 0.85, 0.2]], [2, [0.2, 0.45, 0.9]]])
+      this.shape([ell((bx + (k - 1) * 0.008) * H, (by - 0.016) * H, 0.009 * H, 0.016 * H, 0, this.paint([...color]))], this.lighting, 0.6);
+  }
+  stepBoat(dt) {
+    const b = this.boat;
+    if (b.x < -5) {
+      b.next -= dt;
+      if (b.next > 0)
+        return;
+      b.dir = Math.random() < 0.5 ? 1 : -1;
+      b.x = b.dir > 0 ? -0.1 : this.A + 0.1;
+      return;
+    }
+    b.x += b.dir * 0.03 * dt;
+    if (b.x < -0.2 || b.x > this.A + 0.2) {
+      b.x = -9;
+      b.next = rand(40, 75);
+    }
+  }
+  drawBoat() {
+    const b = this.boat;
+    if (b.x < -5)
+      return;
+    const H = this.H;
+    const x = b.x * H;
+    const y = (HORIZON + 0.004 + Math.sin(this.time * 1.2) * 0.001) * H;
+    const s = 0.05 * H;
+    this.polygon([[x - s * 0.6, y - s * 0.12], [x + s * 0.6, y - s * 0.12], [x + s * 0.42, y + s * 0.05], [x - s * 0.42, y + s * 0.05]], this.paint([0.3, 0.2, 0.15]));
+    this.polygon([[x - s * 0.05, y - s * 0.15], [x - s * 0.05, y - s * 1.1], [x + s * 0.55 * b.dir, y - s * 0.15]], this.paint([0.92, 0.9, 0.84]));
+    this.polygon([[x - s * 0.12, y - s * 0.15], [x - s * 0.12, y - s * 0.85], [x - s * 0.5 * b.dir, y - s * 0.15]], this.paint([0.85, 0.82, 0.76]));
+    if (!this.look.night)
+      return;
+    const lx = x - s * 0.45 * b.dir;
+    lightPool(this.hdr, this.W, H, lx, y, s * 1.4, s * 0.9, [1, 0.55, 0.15], 2.5, 0.03);
+    this.disc(lx, y - s * 0.25, Math.max(1, s * 0.07), 1.6, 0.85, 0.2, 1);
+  }
+  stepDolphin(d, dt, cdt) {
+    if (d.under >= 0)
+      d.under = d.under + dt > WAKE ? -1 : d.under + dt;
+    if (d.t < 0) {
+      d.wait -= cdt;
+      if (d.wait > 0)
+        return;
+      d.t = 0;
+      d.dir = Math.random() < 0.5 ? 1 : -1;
+      [d.x, d.y] = this.openSpot(0.2 * this.A, 0.8 * this.A, 0.56, 0.66);
+      this.splash(d.x, d.y);
+      return;
+    }
+    d.t += dt / 2.5;
+    if (d.t >= 1) {
+      this.splash(d.x + d.dir * 0.16, d.y);
+      d.t = -1;
+      d.wait = rand(10, 25);
+      d.under = 0;
+    }
+  }
+  splash(x, y) {
+    for (let i = 0;i < 10; i++)
+      this.splashes.push({ x, y, vx: (Math.random() - 0.5) * 0.06, vy: -(0.03 + Math.random() * 0.05), age: 0 });
+    this.rings.push({ x, y, age: 0 });
+  }
+  drawWakes() {
+    const { H, look } = this;
+    for (const r of this.rings) {
+      const f = r.age / RING;
+      this.ring(r.x * H, r.y * H, (0.012 + f * 0.05) * H, (1 - f) ** 2 * (look.night ? 0.5 : 0.2));
+    }
+    for (const d of this.dolphins) {
+      if (d.under < 0)
+        continue;
+      const x0 = d.x + d.dir * 0.16;
+      const head = x0 + d.dir * (0.02 + 0.03 * d.under);
+      this.trail(head * H, x0 * H, d.y * H, (1 - d.under / WAKE) ** 1.5 * (look.night ? 0.7 : 0.15));
+    }
+    if (this.activity === "teeming") {
+      const s = this.surfer;
+      this.trail((s.x - 0.04) * H, (s.x - 0.3) * H, (0.65 + Math.sin(s.phase * 1.5) * 0.004) * H, look.night ? 0.8 : 0.35);
+    }
+  }
+  ring(cx, cy, R, k) {
+    const { W, H, hdr, look } = this;
+    const glow = look.night;
+    for (let y = Math.max(0, Math.floor(cy - R * 0.25 - 2));y <= Math.min(H - 1, Math.ceil(cy + R * 0.25 + 2)); y++)
+      for (let x = Math.max(0, Math.floor(cx - R - 2));x <= Math.min(W - 1, Math.ceil(cx + R + 2)); x++) {
+        const d = Math.hypot(x + 0.5 - cx, (y + 0.5 - cy) / 0.25);
+        const a = Math.max(0, 1 - Math.abs(d - R) / (1.6 * (H / 180) + 0.6)) * k;
+        if (a <= 0)
+          continue;
+        const o = (y * W + x) * 3;
+        for (let c = 0;c < 3; c++)
+          hdr[o + c] += glow ? look.foam[c] * a : (look.foam[c] - hdr[o + c]) * a;
+      }
+  }
+  trail(head, tail, cy, k) {
+    const { W, H, hdr, look } = this;
+    const glow = look.night;
+    const len = Math.abs(head - tail);
+    const w = 0.02 * H;
+    for (let x = Math.max(0, Math.floor(Math.min(head, tail)));x <= Math.min(W - 1, Math.ceil(Math.max(head, tail))); x++) {
+      const f = Math.abs(x - head) / len;
+      if (f > 1)
+        continue;
+      const half = (0.15 + 0.85 * f) * w;
+      const fade = (1 - f) ** 1.5 * k;
+      for (let y = Math.max(0, Math.floor(cy - half - 1));y <= Math.min(H - 1, Math.ceil(cy + half + 1)); y++) {
+        const v = Math.abs(y + 0.5 - cy) / half;
+        const a = Math.max(0, 1 - Math.abs(v - 0.7) * 2.2) * fade * (0.6 + 0.4 * hash2(x >> 1, y));
+        if (a <= 0)
+          continue;
+        const o = (y * W + x) * 3;
+        for (let c = 0;c < 3; c++)
+          hdr[o + c] += glow ? look.foam[c] * a : (look.foam[c] - hdr[o + c]) * a;
+      }
+    }
+  }
+  drawSplashes() {
+    const { H, look } = this;
+    for (const s of this.splashes) {
+      const k = (1 - s.age / 1.2) * 0.8;
+      this.disc(s.x * H, s.y * H, 0.9, look.foam[0], look.foam[1], look.foam[2], k);
+    }
+  }
+  drawDolphin(d) {
+    if (d.t < 0)
+      return;
+    const H = this.H;
+    const S = 0.15 * H * (0.7 + (d.y - 0.56) * 3);
+    const x = (d.x + d.dir * 0.16 * d.t) * H;
+    const y = (d.y - Math.sin(Math.PI * d.t) * 0.08) * H;
+    const angle = Math.atan2(-Math.cos(Math.PI * d.t) * 0.08 * Math.PI, d.dir * 0.16);
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
+    const f = Math.sign(ca || 1);
+    const bend = 0.35 * Math.cos(Math.PI * d.t) * f;
+    const P = (u, v) => {
+      const w = v + bend * Math.min(0, u) ** 2;
+      return [x + (u * ca - w * sa) * S, y + (u * sa + w * ca) * S];
+    };
+    const back = this.paint([0.42, 0.52, 0.62]);
+    const spine = [[0.52, 0.018], [0.42, 0.03], [0.36, 0.07], [0.26, 0.1], [0.08, 0.115], [-0.12, 0.1], [-0.3, 0.06], [-0.46, 0.026]];
+    const parts = spine.slice(1).map(([u, r], i) => cap(...P(spine[i][0], i < 2 ? 0.02 : 0), ...P(u, i < 1 ? 0.02 : 0), spine[i][1] * S, r * S, back));
+    const beat = Math.sin(d.t * TAU * 1.5) * 0.04;
+    parts.push(cap(...P(-0.46, 0), ...P(-0.62, -0.05 + beat), 0.03 * S, 0.012 * S, back), cap(...P(-0.46, 0), ...P(-0.6, 0.06 + beat), 0.03 * S, 0.012 * S, back), cap(...P(0.02, -0.1), ...P(-0.06, -0.22), 0.055 * S, 0.012 * S, back), cap(...P(-0.06, -0.22), ...P(-0.12, -0.24), 0.012 * S, 0.006 * S, back), cap(...P(0.18, 0.07), ...P(0.06, 0.17), 0.035 * S, 0.01 * S, back));
+    this.shape(parts, this.lighting, 0.7);
+    this.shape([cap(...P(-0.2, 0.06), ...P(0.3, 0.065), 0.03 * S, 0.045 * S, this.paint([0.68, 0.72, 0.76]))], this.lighting, 0.5);
+    this.add(...P(0.36, -0.01), 0.02, 0.02, 0.02);
+  }
+  drawGulls() {
+    const H = this.H;
+    const count = this.activity === "teeming" ? 4 : 2;
+    for (let i = 0;i < count; i++) {
+      const a = this.creatureTime * (0.4 + i * 0.08) + i * 1.7;
+      const x = (0.5 * this.A + Math.cos(a) * (0.25 + i * 0.06)) * H;
+      const y = (0.22 + Math.sin(a) * 0.04 + i * 0.03) * H;
+      const flap = Math.sin(this.time * 3 + i) * 0.4;
+      const s = 0.035 * H;
+      const wing = this.paint([0.75, 0.78, 0.82]);
+      const tip = this.paint([0.1, 0.1, 0.12]);
+      this.shape([
+        cap(x, y, x - s * 0.55, y - s * (0.25 + flap * 0.3), 0.1 * s, 0.07 * s, wing),
+        cap(x - s * 0.55, y - s * (0.25 + flap * 0.3), x - s, y - s * (0.05 + flap * 0.5), 0.07 * s, 0.03 * s, tip),
+        cap(x, y, x + s * 0.55, y - s * (0.25 + flap * 0.3), 0.1 * s, 0.07 * s, wing),
+        cap(x + s * 0.55, y - s * (0.25 + flap * 0.3), x + s, y - s * (0.05 + flap * 0.5), 0.07 * s, 0.03 * s, tip),
+        ell(x, y, 0.25 * s, 0.12 * s, 0, this.paint([0.95, 0.95, 0.95]))
+      ], this.lighting, 0.5);
+    }
+  }
+  drawBottle() {
+    const { A, H } = this;
+    const t = this.bottle.t;
+    const land = 0.38 * A;
+    const beached = 0.75 + 0.01 * Math.sin(land * 2.3 + 1);
+    const come = smoothstep(0, 22, t);
+    const go = smoothstep(52, BOTTLE, t);
+    const x = lerp(lerp(-0.08, land, come), A + 0.1, go);
+    const afloat = 1 - smoothstep(18, 22, t) + smoothstep(52, 56, t);
+    const y = lerp(lerp(0.62, beached, come), 0.66, smoothstep(52, 62, t)) + Math.sin(this.time * 1.4) * 0.004 * clamp(afloat, 0, 1);
+    const tilt = 0.35 + Math.sin(this.time * 1.1) * 0.25 * clamp(afloat, 0, 1);
+    const S = 0.09 * H;
+    if (afloat < 1)
+      this.ground(x, y + 0.012, 0.07, 0.025, 1, clamp(afloat, 0, 1) * 0.03 * H);
+    const ca = Math.cos(tilt);
+    const sa = Math.sin(tilt);
+    const P = (u, v) => [x * H + (u * ca - v * sa) * S, y * H + (u * sa + v * ca) * S];
+    this.shape([
+      cap(...P(-0.35, 0), ...P(0.15, 0), 0.14 * S, 0.14 * S, this.paint([0.2, 0.5, 0.3])),
+      cap(...P(0.15, 0), ...P(0.38, 0), 0.07 * S, 0.05 * S, this.paint([0.2, 0.5, 0.3])),
+      cap(...P(0.38, 0), ...P(0.46, 0), 0.055 * S, 0.055 * S, this.paint([0.5, 0.32, 0.18]))
+    ], this.lighting, 0.6);
+    this.shape([cap(...P(-0.28, 0.01), ...P(0.08, 0.01), 0.07 * S, 0.07 * S, this.paint([0.88, 0.82, 0.62]))], this.lighting, 0.3);
+    this.add(...P(-0.1, -0.1), this.look.light[0] * 0.5, this.look.light[1] * 0.5, this.look.light[2] * 0.5);
+  }
+  drawCrab() {
+    const H = this.H;
+    const c = this.crab;
+    const S = 0.065 * H;
+    const going = c.rest > 0 ? 0 : 1;
+    const x = (c.x + Math.sin(c.phase * TAU * 2) * 0.006 * going) * H;
+    const y = 0.97 * H;
+    const red = this.paint([0.85, 0.25, 0.12]);
+    const dark = this.paint([0.55, 0.13, 0.07]);
+    const wave2 = (1 - going) * Math.max(0, Math.sin(this.creatureTime * 2.5)) ** 2;
+    this.ground(c.x, 0.97, 0.07, 0.045);
+    const parts = [];
+    for (const side of [-1, 1])
+      for (let k = 0;k < 4; k++) {
+        const [reach, lift2] = stride(c.phase, (k + (side > 0 ? 1 : 0)) % 2 * 0.5);
+        const hx = x + side * (0.2 + k * 0.05) * S;
+        const fx = x + (side * (0.5 + k * 0.1) + reach * c.dir * 0.08 * going) * S;
+        const fy = y - (lift2 * 0.08 * going + 0.02) * S;
+        parts.push(...limb((u, v) => [u, v], hx, y - 0.25 * S, fx, fy, 0.22 * S, 0.28 * S, -side, 0.05 * S, 0.04 * S, 0.02 * S, k % 2 ? red : dark));
+      }
+    parts.push(ell(x, y - 0.3 * S, 0.38 * S, 0.2 * S, 0, red));
+    for (const side of [-1, 1]) {
+      parts.push(cap(x + side * 0.08 * S, y - 0.42 * S, x + side * 0.1 * S, y - 0.56 * S, 0.025 * S, 0.02 * S, red));
+      const lift2 = side > 0 ? wave2 * 0.25 : 0;
+      const [cx, cy] = [x + side * 0.5 * S, y - (0.66 + lift2) * S];
+      parts.push(cap(x + side * 0.28 * S, y - 0.34 * S, x + side * 0.4 * S, y - (0.5 + lift2 * 0.6) * S, 0.045 * S, 0.035 * S, red), ell(cx, cy, 0.13 * S, 0.1 * S, side * 0.5, red), cap(cx + side * 0.04 * S, cy - 0.06 * S, cx + side * 0.06 * S, cy - (0.2 + wave2 * 0.05) * S, 0.05 * S, 0.012 * S, red), cap(cx + side * 0.09 * S, cy - 0.02 * S, cx + side * 0.16 * S, cy - 0.14 * S, 0.035 * S, 0.01 * S, red));
+    }
+    this.shape(parts, this.lighting, 0.6);
+    for (const side of [-1, 1])
+      this.disc(x + side * 0.1 * S, y - 0.58 * S, 0.03 * S, 0.02, 0.02, 0.02, 1);
+  }
+  drawSurfer() {
+    const H = this.H;
+    const s = this.surfer;
+    const S = 0.12 * H;
+    const x = s.x * H;
+    const y = (0.645 + Math.sin(s.phase * 1.5) * 0.004) * H;
+    const tilt = Math.sin(s.phase * 1.2) * 0.08;
+    const P = (u, v) => [x + (u * Math.cos(tilt) - v * Math.sin(tilt)) * S, y + (u * Math.sin(tilt) + v * Math.cos(tilt)) * S];
+    const suit = this.paint([0.08, 0.08, 0.1]);
+    this.shape([ell(...P(0, 0), 0.38 * S, 0.05 * S, tilt, this.paint([0.95, 0.75, 0.15]))], this.lighting, 0.6);
+    this.shape([
+      cap(...P(-0.12, -0.02), ...P(-0.05, -0.38), 0.045 * S, 0.04 * S, suit),
+      cap(...P(0.12, -0.02), ...P(0.05, -0.38), 0.045 * S, 0.04 * S, suit),
+      cap(...P(0, -0.38), ...P(0.02, -0.68), 0.07 * S, 0.06 * S, suit),
+      cap(...P(0.02, -0.62), ...P(-0.3, -0.55), 0.035 * S, 0.03 * S, suit),
+      cap(...P(0.02, -0.62), ...P(0.32, -0.6), 0.035 * S, 0.03 * S, suit),
+      ell(...P(0.03, -0.78), 0.065 * S, 0.07 * S, 0, this.paint([0.8, 0.6, 0.45]))
+    ], this.lighting, 0.6);
+  }
+}
+var beach = {
+  id: "beach",
+  name: "Beach",
+  description: "Waves washing up a sandy beach between swaying palms, with a sailboat on the horizon now and then",
+  activity: {
+    calm: "Sea, waves, sand and palm trees",
+    lively: "Adds leaping dolphins and seagulls",
+    teeming: "Adds a crab, a surfer, an umbrella and a sandcastle"
+  },
+  scrim: {
+    day: [
+      [20, 40, 70],
+      [20, 46, 58],
+      [44, 38, 26]
+    ],
+    sunset: [
+      [8, 22, 28],
+      [36, 20, 30],
+      [16, 12, 14]
+    ],
+    night: [
+      [3, 6, 16],
+      [2, 6, 14],
+      [2, 4, 10]
+    ]
+  },
+  create: (settings) => new Beach(settings)
+};
+
+// wallpapers/city.ts
+var TIME_SCALE2 = 0.35;
+var CREATURE_SPEED2 = 0.25;
+var BANK = 0.58;
+var RAIL = 0.625;
+var QUAY = 0.76;
+var ROAD = 0.8;
+var UNDER = ROAD + 0.04;
+var STREET = 0.9;
+var AMBER = [1.25, 0.58, 0.12];
+var GOLD = [1.15, 0.8, 0.22];
+var LOOKS2 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.85],
+    sky: [
+      [0, [0.12, 0.32, 0.7]],
+      [0.3, [0.28, 0.52, 0.82]],
+      [BANK, [0.62, 0.74, 0.86]]
+    ],
+    orb: { x: 0.14, y: 0.11, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.6, 0.66, 0.78], alpha: 0.85 },
+    haze: [0.48, 0.6, 0.8],
+    river: [
+      [0.12, 0.3, 0.48],
+      [0.05, 0.16, 0.3]
+    ],
+    reflect: 0.55,
+    tint: [1, 1, 1],
+    windows: [],
+    lit: 0,
+    glow: 0,
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.55, 0.16],
+    sky: [
+      [0, [0.06, 0.012, 0.06]],
+      [0.2, [0.2, 0.035, 0.16]],
+      [0.38, [0.55, 0.14, 0.22]],
+      [BANK, [1, 0.56, 0.14]]
+    ],
+    orb: { x: 0.62, y: 0.4, r: 0.065, core: [2.6, 1.3, 0.35], glow: [1, 0.5, 0.12], near: 0.45, wide: 0.35 },
+    stars: 0,
+    clouds: { top: [0.2, 0.04, 0.16], bottom: [0.95, 0.4, 0.3], alpha: 0.5 },
+    haze: [0.6, 0.27, 0.12],
+    river: [
+      [0.62, 0.28, 0.12],
+      [0.14, 0.03, 0.1]
+    ],
+    reflect: 0.6,
+    tint: [0.22, 0.1, 0.13],
+    windows: [AMBER, GOLD],
+    lit: 0.18,
+    glow: 0.55,
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [0.35, 0.42, 1.4],
+    sky: [
+      [0, [0.004, 0.006, 0.03]],
+      [0.32, [0.016, 0.018, 0.07]],
+      [0.45, [0.05, 0.025, 0.12]],
+      [BANK, [0.15, 0.05, 0.2]]
+    ],
+    orb: { x: 0.82, y: 0.12, r: 0.03, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 50,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.08, 0.05, 0.2], alpha: 0.4 },
+    haze: [0.035, 0.03, 0.08],
+    river: [
+      [0.03, 0.025, 0.08],
+      [0.008, 0.012, 0.04]
+    ],
+    reflect: 0.8,
+    tint: [0.03, 0.04, 0.09],
+    windows: [AMBER, GOLD, [0.15, 0.8, 0.9], [1.05, 0.2, 0.62], [0.3, 0.4, 1.25], [0.62, 0.28, 1.1]],
+    lit: 0.32,
+    glow: 1,
+    night: true
+  }
+};
+var DAYLIGHT2 = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [-0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var FACADES = [
+  [0.3, 0.42, 0.6],
+  [0.7, 0.55, 0.4],
+  [0.18, 0.33, 0.55],
+  [0.62, 0.36, 0.26],
+  [0.22, 0.43, 0.48],
+  [0.66, 0.6, 0.53]
+];
+var PAINT = [
+  [0.75, 0.12, 0.1],
+  [0.15, 0.3, 0.65],
+  [0.85, 0.85, 0.82],
+  [0.12, 0.12, 0.14],
+  [0.92, 0.72, 0.15],
+  [0.3, 0.55, 0.4],
+  [0.55, 0.56, 0.6]
+];
+var HAIR = [
+  [0.12, 0.08, 0.05],
+  [0.45, 0.28, 0.12],
+  [0.05, 0.05, 0.06],
+  [0.7, 0.55, 0.3]
+];
+var NEON = [
+  [1.5, 0.2, 0.95],
+  [0.2, 1.3, 1.25],
+  [0.7, 0.3, 1.6],
+  [1.6, 0.3, 0.15],
+  [1.4, 0.95, 0.2]
+];
+var CONCRETE = [0.58, 0.56, 0.53];
+var FLAGS = [
+  [0.8, 0.12, 0.1],
+  [0.12, 0.32, 0.75]
+];
+var STEEL = [0.62, 0.17, 0.11];
+var HEADLIGHT = [1.4, 0.95, 0.3];
+var TAILLIGHT = [1.4, 0.08, 0.06];
+var TRAIN_LIGHT = [0.18, 0.85, 0.95];
+var RAIN2 = [0.05, 0.1, 0.16];
+var LANES = [
+  { y: ROAD + 0.006, dir: -1, speed: 0.075, scale: 0.85 },
+  { y: ROAD + 0.018, dir: 1, speed: 0.09, scale: 1 }
+];
+var TRAFFIC = { calm: [7, 16], lively: [2.5, 6], teeming: [1.3, 3.2] };
+var TRAIN_CARS = 5;
+var COACH = 0.1;
+var HERO = 30;
+
+class City extends Canvas {
+  time = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT2 };
+  shade;
+  river = new Float32Array(0);
+  fineRiver;
+  water = new Uint8Array(0);
+  stars;
+  visibleStars = [];
+  clouds;
+  beacons = [];
+  flickers = [];
+  sign;
+  cars = [];
+  gaps = [0, 0];
+  warm = false;
+  train = { x: -9, dir: 1, next: 6 };
+  blimp = { x: -9, dir: 1, next: 6 };
+  boats = [
+    { x: 0.35, dir: 1, speed: 0.03, y: 0.705, tour: false },
+    { x: 1.4, dir: -1, speed: 0.02, y: 0.735, tour: true }
+  ];
+  walkers = [];
+  rain = [];
+  weather;
+  lights = new LightMap;
+  wet;
+  storm = makeStorm();
+  pigeons = [];
+  hero = { wait: eggWait() * TIME_SCALE2, t: -1, dir: 1 };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS2[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.stars = makeStars(this.look.stars, 0.45);
+    this.clouds = makeClouds(2, "stratus", 0.05, 0.12);
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, BANK);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    this.wet = settings.weather ? settings.weather === "rain" || settings.weather === "snow" : this.look.night && settings.activity === "teeming";
+    if (settings.activity !== "teeming")
+      return;
+    const umbrellas = [[0.1, 0.55, 0.6], [0.6, 0.1, 0.4], [0.65, 0.35, 0.05], [0.3, 0.15, 0.6], [0.6, 0.1, 0.08]];
+    this.walkers = Array.from({ length: 5 }, (_, i) => ({ x: 0.15 + i * 0.37, dir: i % 2 ? -1 : 1, phase: Math.random(), size: [1, 0.92, 1.06, 0.97, 1.03][i], coat: PAINT[i * 3 % PAINT.length], hair: HAIR[i % HAIR.length], umbrella: umbrellas[i] }));
+    if (this.look.night && !settings.weather)
+      this.rain = Array.from({ length: 30 }, () => ({ x: Math.random() * 2, y: Math.random(), speed: rand(0.9, 1.3) }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE2;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED2;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.pigeons = flyAway(this.pigeons, dt, this.A);
+    this.stepHero(dt);
+    this.stepTraffic(dt);
+    this.stepBlimp(dt);
+    if (this.activity !== "calm")
+      this.stepTrain(dt);
+    for (const b of this.boats) {
+      b.x += b.dir * b.speed * dt;
+      if (b.x > this.A + 0.15)
+        b.x = -0.15;
+      if (b.x < -0.15)
+        b.x = this.A + 0.15;
+    }
+    for (const w of this.walkers) {
+      w.phase += 0.06 * cdt / (0.07 * w.size);
+      w.x += w.dir * 0.06 * cdt;
+      if (w.x > this.A + 0.05)
+        w.x = -0.05;
+      if (w.x < -0.05)
+        w.x = this.A + 0.05;
+    }
+    for (const r of this.rain) {
+      r.y += r.speed * dt;
+      r.x -= r.speed * 0.15 * dt;
+      if (r.y < 1.03)
+        continue;
+      r.y -= 1.06;
+      r.x = Math.random() * (this.A + 0.2);
+    }
+  }
+  render() {
+    const { W, H, look } = this;
+    this.restore();
+    this.lights.clear(W, H);
+    if (!this.weather.covered)
+      paintStars(this.hdr, W, H, this.visibleStars, this.time, BANK, 0.4, this.points);
+    const [top, bottom] = this.weather.scud ?? [look.clouds.top, look.clouds.bottom];
+    paintClouds(this.hdr, W, H, this.clouds, top, bottom, look.clouds.alpha, this.weather.covered ? undefined : look.orb);
+    paintStorm(this.hdr, W, H, this.storm, look.clouds.top, look.clouds.bottom, this.gloom);
+    if (this.hero.t >= 0)
+      this.drawHero();
+    this.drawBlimp();
+    this.drawRiver();
+    this.drawLights();
+    if (this.activity !== "calm")
+      this.drawTrain();
+    if (this.activity === "teeming")
+      for (const b of this.boats)
+        this.drawBoat(b);
+    this.drawPromenade();
+    for (const c of this.cars)
+      this.ground(c.x, LANES[c.lane].y, (c.bus ? 0.08 : 0.04) * LANES[c.lane].scale, (c.bus ? 0.023 : 0.015) * LANES[c.lane].scale, 1);
+    for (const c of this.cars)
+      if (c.lane === 0)
+        this.drawCar(c);
+    for (const c of this.cars)
+      if (c.lane === 1)
+        this.drawCar(c);
+    const a = Math.floor((ROAD + 0.012) * H) * W * 3;
+    this.hdr.set(this.background.subarray(a, Math.ceil((ROAD + 0.026) * H) * W * 3), a);
+    for (const w of this.walkers)
+      this.ground(w.x, 0.996, 0.02, 0.1, 0.8);
+    for (const w of this.walkers)
+      this.drawWalker(w);
+    if (look.night)
+      for (let i = 0;this.pillarX(i) - 0.21 < this.A + 0.1; i++)
+        lightPool(this.hdr, W, H, (this.pillarX(i) - 0.21) * H, 0.96 * H, 0.14 * H, 0.08 * H, [1, 0.5, 0.12], 3, 0);
+    if (this.activity === "teeming" && look.glow > 0)
+      this.buzzNeon();
+    this.lights.apply(this.hdr);
+    for (const b of this.pigeons)
+      this.shape(bird(b, H, 0.022 * H, this.paint([0.42, 0.44, 0.5])), this.lighting, 0.4);
+    this.drawRain();
+    this.weather.draw(this.hdr, W, H);
+    this.finish();
+  }
+  visit() {
+    if (this.blimp.x < -5)
+      this.blimp.next = 0;
+  }
+  poke(x, y) {
+    startle(this.pigeons, x, Math.max(y, QUAY), 5);
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT2 } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px);
+    this.weather.cover(this.hdr, W, H);
+    const sky = this.hdr.slice();
+    this.beacons = [];
+    this.flickers = [];
+    this.sign = undefined;
+    for (let x = -0.03, i = 0;x < A + 0.03; i++) {
+      const w = 0.035 + hash(i * 1.7 + 0.3) * 0.05;
+      this.paintTower(this.tower(x, w, 0.06 + hash(i * 3.1 + 0.7) ** 1.5 * 0.17, i + 500, true));
+      x += w * (0.7 + hash(i * 5.3) * 0.4);
+    }
+    const horizon = look.sky[look.sky.length - 1][1];
+    paintHaze(this.hdr, W, H, BANK - 0.3, BANK, horizon, 0.7);
+    const near2 = [];
+    for (let x = -0.02, i = 0;x < A + 0.02; i++) {
+      const w = 0.05 + hash(i * 2.3 + 0.1) * 0.055;
+      const c = x + w / 2;
+      const downtown = 0.16 * Math.max(Math.exp(-(((c - 0.36) / 0.26) ** 2)), Math.exp(-(((c - A + 0.36) / 0.26) ** 2)));
+      near2.push(this.tower(x, w, 0.08 + hash(i * 4.7 + 0.2) ** 1.6 * (0.16 + downtown * 0.45) + downtown, i, false));
+      x += w + (hash(i * 6.1) - 0.35) * 0.03;
+    }
+    const tallest = [...near2].sort((a, b) => a.tiers[a.tiers.length - 1].top - b.tiers[b.tiers.length - 1].top);
+    tallest[0].crown = 3;
+    tallest[1].crown = 2;
+    for (const t of near2)
+      this.paintTower(t);
+    if (look === LOOKS2.day)
+      haze(this.hdr, sky, W, H, BANK, BANK + 0.01, 0.12);
+    paintHaze(this.hdr, W, H, BANK - 0.1, BANK, horizon, 0.25);
+    this.visibleStars = this.stars.filter((s) => {
+      const o = (Math.floor(s.y * H) * W + Math.floor(s.x * W)) * 3;
+      return this.hdr[o] === sky[o] && this.hdr[o + 1] === sky[o + 1] && this.hdr[o + 2] === sky[o + 2];
+    });
+    if (this.activity === "teeming")
+      this.placeSigns(near2);
+    this.paintRiver();
+    this.river = this.hdr.slice();
+    this.paintBridge();
+    this.paintHighway();
+    if (this.activity === "teeming")
+      for (const s of this.streetSigns())
+        this.neon(s, true, true);
+    this.water = new Uint8Array(W * H);
+    for (let i = Math.floor(BANK * H) * W;i < Math.min(H, Math.ceil(QUAY * H)) * W; i++)
+      this.water[i] = this.hdr[i * 3] === this.river[i * 3] && this.hdr[i * 3 + 2] === this.river[i * 3 + 2] ? 1 : 0;
+    this.paintLamps();
+    if (this.px > 1)
+      this.fineRiver = this.shrink(this.river);
+    else if (this.fineRiver) {
+      this.river = this.fineRiver;
+      this.fineRiver = undefined;
+    }
+    if (this.wet)
+      this.paintWetStreet();
+    if (this.warm)
+      return;
+    this.warm = true;
+    for (let i = 0;i < 400; i++)
+      this.stepTraffic(0.25);
+  }
+  ground(x, y, w, h, tip) {
+    const H = this.H;
+    groundShadow(this.hdr, this.W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  rect(x0, y0, x1, y1) {
+    const H = this.H;
+    return [[x0 * H, y0 * H], [x1 * H, y0 * H], [x1 * H, y1 * H], [x0 * H, y1 * H]];
+  }
+  glow(buf, cx, cy, rx, ry, c, k) {
+    const { W, H } = this;
+    for (let y = Math.max(0, Math.floor(cy - ry));y < Math.min(H, Math.ceil(cy + ry)); y++)
+      for (let x = Math.max(0, Math.floor(cx - rx));x < Math.min(W, Math.ceil(cx + rx)); x++) {
+        const d = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry);
+        if (d >= 1)
+          continue;
+        const a = (1 - d) ** 2 * k;
+        const o = (y * W + x) * 3;
+        buf[o] += c[0] * a;
+        buf[o + 1] += c[1] * a;
+        buf[o + 2] += c[2] * a;
+      }
+    if (buf === this.hdr)
+      this.touch(cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1);
+  }
+  tower(x, w, h, seed, far) {
+    const n = far ? 1 : 1 + Math.floor(hash(seed * 1.3 + 0.5) * 2.6);
+    const shares = [[1], [0.7, 0.3], [0.55, 0.28, 0.17]][n - 1];
+    let bottom = BANK;
+    const tiers = shares.map((share, k) => {
+      bottom -= share * h;
+      return { x0: x + w * 0.13 * k, x1: x + w - w * 0.13 * k, top: bottom };
+    });
+    return { tiers, facade: FACADES[Math.floor(hash(seed * 7.7) * FACADES.length)], windows: Math.floor(hash(seed * 9.1 + 0.2) * 3), palette: Math.floor(hash(seed * 2.9 + 0.4) * 6), crown: hash(seed * 4.3) < 0.35 ? 1 : 0, far, seed };
+  }
+  paintTower(t) {
+    const { W, H, A, look, px } = this;
+    const day = look.style === "front";
+    const top = t.tiers[t.tiers.length - 1];
+    const cx = (t.tiers[0].x0 + t.tiers[0].x1) / 2;
+    const sunLeft = look.orb.x * A < cx;
+    const rimGlow = day ? 0 : (0.35 + 0.65 * Math.exp(-Math.abs(cx - look.orb.x * A) / 0.45)) * (t.far ? 0.15 : 0.3);
+    const body2 = t.far ? day ? [lerp(t.facade[0], look.haze[0], 0.6), lerp(t.facade[1], look.haze[1], 0.6), lerp(t.facade[2], look.haze[2], 0.6)] : look.haze : this.paint(t.facade);
+    const cw = t.far ? 0.006 : 0.0085;
+    const ch = t.far ? 0.009 : 0.012;
+    const palette = look.windows;
+    for (let k = 0;k < t.tiers.length; k++) {
+      const tier2 = t.tiers[k];
+      const width = tier2.x1 - tier2.x0;
+      const px0 = tier2.x0 * H;
+      const px1 = tier2.x1 * H;
+      const py0 = tier2.top * H;
+      const py1 = (k ? t.tiers[k - 1].top : BANK) * H;
+      for (let y = Math.max(0, Math.floor(py0));y < Math.min(H, Math.ceil(py1)); y++) {
+        const cy = clamp(Math.min(y + 1 - py0, py1 - y), 0, 1);
+        const v = (y + 0.5) / H - tier2.top;
+        const up = 1 - ((y + 0.5) / H - top.top) / (BANK - top.top);
+        for (let x = Math.max(0, Math.floor(px0));x < Math.min(W, Math.ceil(px1)); x++) {
+          const cov = clamp(Math.min(x + 1 - px0, px1 - x), 0, 1) * cy;
+          if (cov <= 0)
+            continue;
+          const u = (x + 0.5) / H - tier2.x0;
+          const side = day && !t.far && u > width * 0.72 ? 0.62 : 1;
+          const shade = day ? side * (0.9 + 0.15 * up) : 1;
+          let r = body2[0] * shade;
+          let g = body2[1] * shade;
+          let b = body2[2] * shade * (side < 1 ? 1.25 : 1);
+          const wu = (Math.floor(x / px) + 0.5) * px / H - tier2.x0 - 0.004;
+          const wv = (Math.floor(y / px) + 0.5) * px / H - tier2.top - 0.006;
+          const fu = wu / cw - Math.floor(wu / cw);
+          const fv = wv / ch - Math.floor(wv / ch);
+          const inside = wu > 0 && wv > 0 && wu + 0.004 < width - 0.003 && (t.windows === 0 ? fu < 0.55 && fv < 0.6 : t.windows === 1 ? fv < 0.5 : fu < 0.45);
+          if (inside && (!t.far || !day)) {
+            const col = Math.floor(wu / (t.windows === 1 ? cw * 2.5 : cw));
+            const row = Math.floor(wv / (t.windows === 2 ? ch * 1.5 : ch));
+            const h = hash2(t.seed * 13.1 + col * 1.7, row * 3.3 + k * 17);
+            const glass = day ? 0.55 + 0.2 * up : 0.6;
+            r = lerp(r * glass, 0.26, day ? 0.35 : 0);
+            g = lerp(g * glass, 0.46, day ? 0.35 : 0);
+            b = lerp(b * glass, 0.78, day ? 0.35 : 0);
+            if (h < look.lit * (t.far ? 0.6 : 1)) {
+              const h2 = hash(h * 91.7);
+              const c = palette[h2 < 0.75 ? t.palette % palette.length : Math.floor(h2 * 997) % palette.length];
+              const k2 = (0.55 + 0.45 * hash(h * 37.1)) * look.glow * (t.far ? 0.55 : 1);
+              r = c[0] * k2;
+              g = c[1] * k2;
+              b = c[2] * k2;
+            }
+            if (day && h > 0.985) {
+              r = 1.3;
+              g = 1.2;
+              b = 1;
+            }
+          }
+          if (rimGlow > 0) {
+            const edge = (sunLeft ? u : width - u) * H;
+            const rim = (Math.exp(-edge / (1.5 * px)) + 0.6 * Math.exp(-v * H / px)) * rimGlow;
+            r += look.light[0] * rim;
+            g += look.light[1] * rim;
+            b += look.light[2] * rim;
+          }
+          this.blend((y * W + x) * 3, r, g, b, cov);
+        }
+      }
+    }
+    if (t.far)
+      return;
+    const mid = (top.x0 + top.x1) / 2 * H;
+    const roof = top.top * H;
+    const w = (top.x1 - top.x0) * H;
+    const dark = this.paint(t.facade.map((c) => c * 0.7));
+    if (t.crown === 1)
+      this.polygon(this.rect(top.x0 + (top.x1 - top.x0) * 0.25, top.top - 0.01, top.x1 - (top.x1 - top.x0) * 0.3, top.top + 0.001), dark);
+    if (t.crown === 2) {
+      this.polygon(this.rect(top.x0 + (top.x1 - top.x0) * 0.3, top.top - 0.012, top.x1 - (top.x1 - top.x0) * 0.3, top.top + 0.001), dark);
+      this.shape([cap(mid, roof - 0.012 * H, mid, roof - 0.07 * H, 0.0025 * H, 0.0012 * H, dark)], this.lighting, 0.5);
+      this.beacons.push([mid / H, top.top - 0.07]);
+    }
+    if (t.crown === 3) {
+      this.polygon([[mid - w / 2, roof + this.px], [mid, roof - 0.06 * H], [mid + w / 2, roof + this.px]], dark);
+      this.shape([cap(mid, roof - 0.05 * H, mid, roof - 0.1 * H, 0.002 * H, 0.001 * H, dark)], this.lighting, 0.5);
+      this.beacons.push([mid / H, top.top - 0.1]);
+    }
+    if (t.windows !== 0 || look.lit === 0)
+      return;
+    const tier = t.tiers[0];
+    for (let i = 0;i < 2; i++) {
+      const col = Math.floor(hash(t.seed * 3.7 + i) * ((tier.x1 - tier.x0 - 0.008) / 0.0085));
+      const row = Math.floor(hash(t.seed * 5.9 + i) * ((BANK - tier.top - 0.012) / 0.012));
+      const on = look.windows[Math.floor(hash(t.seed + i * 0.3) * look.windows.length)];
+      this.flickers.push({ x: tier.x0 + 0.004 + col * 0.0085, y: tier.top + 0.006 + row * 0.012, w: 0.0085 * 0.55, h: 0.012 * 0.6, on: [on[0] * look.glow, on[1] * look.glow, on[2] * look.glow], off: body2.map((c) => c * 0.6), phase: hash(t.seed * 1.1 + i) * 100 });
+    }
+  }
+  streetSigns() {
+    const a = this.pillarX(1);
+    const b = this.pillarX(3);
+    return [
+      { x0: a - 0.012, y0: UNDER + 0.006, x1: a + 0.012, y1: STREET - 0.012, color: NEON[0], seed: 7 },
+      { x0: b - 0.012, y0: UNDER + 0.01, x1: b + 0.012, y1: STREET - 0.015, color: NEON[2], seed: 11 }
+    ];
+  }
+  buzzNeon() {
+    const { H, look } = this;
+    for (const s of this.streetSigns()) {
+      const dip = smoothstep(0.78, 0.95, noise1(this.time * 1.5, s.seed));
+      const k = look.glow * (1 - 0.6 * dip);
+      this.lights.pool((s.x0 + s.x1) / 2 * H, (STREET + 0.035) * H, 0.08 * H, 0.055 * H, s.color, 2.2 * k, 0.012 * k);
+      if (dip > 0.01)
+        this.polygon(this.rect(s.x0, s.y0, s.x1, s.y1), this.paint([0.1, 0.08, 0.12]), 0.55 * dip);
+    }
+  }
+  placeSigns(near2) {
+    const tall = near2.filter((t, i) => i % 3 === 1 && BANK - t.tiers[0].top > 0.16);
+    tall.forEach((t, i) => {
+      const tier = t.tiers[0];
+      const x2 = tier.x0 + 0.006 + hash(t.seed) * Math.max(0, tier.x1 - tier.x0 - 0.03);
+      const y = tier.top + 0.03 + hash(t.seed * 2.1) * 0.04;
+      const s = { x0: x2, y0: y, x1: x2 + 0.016, y1: y + 0.075, color: NEON[(i + 1) % NEON.length], seed: t.seed };
+      if (i === 1)
+        this.sign = s;
+      this.neon(s, true, i !== 1);
+    });
+    const roof = near2.find((t, i) => i > 2 && t.tiers.length === 1 && t.crown === 0 && t.tiers[0].x1 - t.tiers[0].x0 > 0.07);
+    if (!roof)
+      return;
+    const r = roof.tiers[0];
+    const x = (r.x0 + r.x1) / 2;
+    this.shape([cap((x - 0.02) * this.H, r.top * this.H, (x - 0.02) * this.H, (r.top - 0.01) * this.H, 0.001 * this.H, 0.001 * this.H, this.paint(CONCRETE)), cap((x + 0.02) * this.H, r.top * this.H, (x + 0.02) * this.H, (r.top - 0.01) * this.H, 0.001 * this.H, 0.001 * this.H, this.paint(CONCRETE))], this.lighting, 0);
+    this.neon({ x0: x - 0.034, y0: r.top - 0.03, x1: x + 0.034, y1: r.top - 0.009, color: NEON[4], seed: roof.seed }, false, true);
+  }
+  neon(s, vertical, lit) {
+    const H = this.H;
+    this.polygon(this.rect(s.x0, s.y0, s.x1, s.y1), this.paint([0.1, 0.08, 0.12]));
+    const on = lit && this.look.glow > 0;
+    const k = on ? this.look.glow : 0.3;
+    const tube = [s.color[0] * k, s.color[1] * k, s.color[2] * k];
+    const r = Math.max(0.55 * this.px, 0.0013 * H);
+    const inset = 0.0025;
+    const [x0, y0, x1, y1] = [(s.x0 + inset) * H, (s.y0 + inset) * H, (s.x1 - inset) * H, (s.y1 - inset) * H];
+    const parts = [cap(x0, y0, x1, y0, r, r, tube), cap(x1, y0, x1, y1, r, r, tube), cap(x1, y1, x0, y1, r, r, tube), cap(x0, y1, x0, y0, r, r, tube)];
+    const size = vertical ? x1 - x0 : y1 - y0;
+    const count = Math.max(1, Math.floor((vertical ? y1 - y0 : x1 - x0) / size));
+    const strokes = [[0.15, 0.2, 0.85, 0.2], [0.15, 0.5, 0.85, 0.5], [0.15, 0.8, 0.85, 0.8], [0.2, 0.15, 0.2, 0.85], [0.5, 0.15, 0.5, 0.85], [0.8, 0.15, 0.8, 0.85], [0.2, 0.2, 0.8, 0.8], [0.8, 0.2, 0.2, 0.8]];
+    const step = (vertical ? y1 - y0 : x1 - x0) / count;
+    for (let g = 0;g < count; g++) {
+      const gx = vertical ? x0 + size * 0.2 : x0 + g * step + (step - size * 0.6) / 2;
+      const gy = vertical ? y0 + g * step + (step - size * 0.6) / 2 : y0 + size * 0.2;
+      for (let n = 0;n < 3; n++) {
+        const [a, b, c, d] = strokes[Math.floor(hash(s.seed * 3.1 + g * 7.3 + n * 1.9) * strokes.length)];
+        const z = size * 0.6;
+        parts.push(cap(gx + a * z, gy + b * z, gx + c * z, gy + d * z, r * 0.9, r * 0.9, tube));
+      }
+    }
+    this.shape(parts, this.lighting, 0);
+    if (!on)
+      return;
+    this.glow(this.hdr, (s.x0 + s.x1) / 2 * H, (s.y0 + s.y1) / 2 * H, (s.x1 - s.x0) * H * 1.2 + 4 * this.px, (s.y1 - s.y0) * H * 0.9 + 4 * this.px, s.color, 0.12 * k);
+  }
+  paintRiver() {
+    const { W, H, hdr, look, px } = this;
+    const r0 = Math.floor(BANK * H);
+    const r1 = Math.min(H, Math.ceil(QUAY * H));
+    const [far, near2] = look.river;
+    const smear = Math.max(2 * px, Math.round(0.006 * H));
+    for (let y = r0;y < r1; y++) {
+      const depth2 = (y - r0) / (r1 - r0);
+      const sy = r0 - px - Math.floor((y - r0) * 0.7);
+      const k = lerp(1, 0.6, depth2) * look.reflect;
+      for (let x = 0;x < W; x++) {
+        const ripple = 0.88 + 0.12 * Math.sin(x / px * 0.12 + y / px * 0.9 + fbm1(x / px * 0.04 + y / px * 0.17, 3) * 5);
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let j = 0;j < 4; j++) {
+          const o2 = (clamp(sy + (j - 1) * smear, 0, H - 1) * W + x) * 3;
+          r += hdr[o2];
+          g += hdr[o2 + 1];
+          b += hdr[o2 + 2];
+        }
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(lerp(far[0], near2[0], depth2), r / 4 * ripple, k);
+        hdr[o + 1] = lerp(lerp(far[1], near2[1], depth2), g / 4 * ripple, k);
+        hdr[o + 2] = lerp(lerp(far[2], near2[2], depth2), b / 4 * ripple, k);
+      }
+    }
+  }
+  paintBridge() {
+    const { A, H } = this;
+    const deck = RAIL + 0.01;
+    const foot = RAIL + 0.05;
+    const span = 0.3;
+    const steel = this.paint(STEEL);
+    for (let px = 0.08;px < A + span; px += span) {
+      this.polygon([[(px - 0.009) * H, deck * H], [(px + 0.009) * H, deck * H], [(px + 0.013) * H, (foot + 0.004) * H], [(px - 0.013) * H, (foot + 0.004) * H]], this.paint([0.5, 0.46, 0.42]));
+      const arch = (s) => [(px - span + s * span) * H, (foot - 0.002 - Math.sin(Math.PI * s) * (foot - deck - 0.006)) * H];
+      const parts = [];
+      for (let i = 0;i < 12; i++)
+        parts.push(cap(...arch(i / 12), ...arch((i + 1) / 12), 0.0035 * H, 0.0035 * H, steel));
+      for (let i = 1;i < 10; i++) {
+        const [x, y] = arch(i / 10);
+        parts.push(cap(x, y, x, deck * H, 0.0012 * H, 0.0012 * H, steel));
+      }
+      this.shape(parts, this.lighting, 0.4);
+    }
+    this.polygon(this.rect(-0.01, RAIL, A + 0.01, deck), steel);
+    this.polygon(this.rect(-0.01, RAIL - 0.001, A + 0.01, RAIL + 0.002), this.paint([0.3, 0.28, 0.27]));
+  }
+  pillarX(i) {
+    return 0.18 + i * 0.42;
+  }
+  paintHighway() {
+    const { A, H } = this;
+    const edge = this.paint([0.45, 0.42, 0.38]);
+    this.polygon(this.rect(-0.01, QUAY, A + 0.01, ROAD), this.paint([0.52, 0.43, 0.34]));
+    this.polygon(this.rect(-0.01, QUAY, A + 0.01, QUAY + 0.004), edge);
+    const rail = [cap(-1, (QUAY - 0.012) * H, A * H + 1, (QUAY - 0.012) * H, 0.0012 * H, 0.0012 * H, edge)];
+    for (let x = 0.01;x < A; x += 0.03)
+      rail.push(cap(x * H, QUAY * H, x * H, (QUAY - 0.012) * H, 0.001 * H, 0.001 * H, edge));
+    this.shape(rail, this.lighting, 0.3);
+    for (let x = 0.29;x < A + 0.05; x += 0.34)
+      this.ground(x, QUAY + 0.014, 0.03, 0.05, 1.3);
+    for (let y = UNDER;y < STREET; y += 0.005)
+      this.polygon(this.rect(-0.01, y, A + 0.01, y + 0.0052), this.paint([0.12 + (y - UNDER) * 2, 0.12 + (y - UNDER) * 2, 0.15 + (y - UNDER) * 2]));
+    this.polygon(this.rect(-0.01, STREET, A + 0.01, 0.965), this.paint([0.26, 0.26, 0.28]));
+    for (let x = 0.02;x < A; x += 0.07)
+      this.polygon(this.rect(x, 0.931, x + 0.032, 0.935), this.paint([0.8, 0.72, 0.35]));
+    this.polygon(this.rect(-0.01, 0.965, A + 0.01, 1.01), this.paint([0.44, 0.37, 0.31]));
+    this.polygon(this.rect(-0.01, 0.965, A + 0.01, 0.969), this.paint([0.62, 0.6, 0.56]));
+    for (let i = 0;this.pillarX(i) - 0.04 < A; i++) {
+      const x = this.pillarX(i);
+      this.ground(x, STREET, 0.045, STREET - UNDER, 1);
+      this.polygon([[(x - 0.028) * H, UNDER * H], [(x + 0.028) * H, UNDER * H], [(x + 0.02) * H, STREET * H], [(x - 0.02) * H, STREET * H]], this.paint(CONCRETE));
+      this.polygon([[(x + 0.012) * H, UNDER * H], [(x + 0.028) * H, UNDER * H], [(x + 0.02) * H, STREET * H], [(x + 0.008) * H, STREET * H]], this.paint([0.42, 0.41, 0.4]));
+    }
+    this.polygon(this.rect(-0.01, ROAD, A + 0.01, ROAD + 0.012), this.paint([0.3, 0.3, 0.32]));
+    this.polygon(this.rect(-0.01, ROAD + 0.012, A + 0.01, ROAD + 0.026), this.paint(CONCRETE));
+    this.polygon(this.rect(-0.01, ROAD + 0.017, A + 0.01, ROAD + 0.019), this.paint([0.45, 0.44, 0.42]));
+    this.polygon(this.rect(-0.01, ROAD + 0.026, A + 0.01, UNDER), this.paint([0.36, 0.36, 0.38]));
+    const pole = this.paint([0.32, 0.33, 0.36]);
+    for (let x = 0.12;x < A + 0.05; x += 0.34)
+      this.shape([cap(x * H, (ROAD + 0.013) * H, x * H, (ROAD - 0.05) * H, 0.0018 * H, 0.0014 * H, pole), cap(x * H, (ROAD - 0.05) * H, (x + 0.02) * H, (ROAD - 0.053) * H, 0.0012 * H, 0.0012 * H, pole), ell((x + 0.022) * H, (ROAD - 0.052) * H, 0.007 * H, 0.0025 * H, 0, pole)], this.lighting, 0.5);
+  }
+  paintLamps() {
+    const { A, H, hdr, river, look } = this;
+    if (look.glow <= 0)
+      return;
+    const k = look.glow;
+    for (let x = 0.12;x < A + 0.05; x += 0.34)
+      for (const buf of [hdr, river]) {
+        this.glow(buf, (x + 0.022) * H, (ROAD - 0.05) * H, 0.035 * H, 0.03 * H, AMBER, 0.5 * k);
+        this.glow(buf, (x + 0.022) * H, (ROAD - 0.051) * H, 0.006 * H, 0.003 * H, AMBER, 1.5 * k);
+        this.glow(buf, (x + 0.03) * H, (ROAD + 0.004) * H, 0.07 * H, 0.012 * H, AMBER, 0.35 * k);
+      }
+    for (let i = 0;this.pillarX(i) - 0.21 < A; i++) {
+      const x = this.pillarX(i) - 0.21;
+      this.polygon(this.rect(x - 0.008, UNDER, x + 0.008, UNDER + 0.003), this.paint([0.3, 0.3, 0.32]));
+      this.glow(hdr, x * H, (UNDER + 0.003) * H, 0.012 * H, 0.004 * H, GOLD, 1.4 * k);
+      this.glow(hdr, x * H, (UNDER + 0.01) * H, 0.08 * H, 0.035 * H, AMBER, 0.25 * k);
+      this.glow(hdr, x * H, (STREET + 0.02) * H, 0.13 * H, 0.03 * H, AMBER, 0.3 * k);
+    }
+    for (let x = 0.02;x < A; x += 0.05) {
+      this.glow(hdr, x * H, (RAIL + 0.005) * H, 0.004 * H, 0.004 * H, GOLD, 1.6 * k);
+      for (const buf of [hdr, river])
+        this.glow(buf, x * H, (RAIL + 0.005) * H, 0.015 * H, 0.012 * H, AMBER, 0.25 * k);
+      this.glow(river, x * H, (RAIL + 0.1) * H, 0.003 * H, 0.04 * H, AMBER, 0.5 * k);
+    }
+  }
+  paintWetStreet() {
+    const { W, H, hdr, px } = this;
+    const s0 = Math.floor(STREET * H);
+    for (let y = s0;y < H; y++) {
+      const sy = s0 - px - Math.floor((y - s0) * 0.8);
+      for (let x = 0;x < W; x++) {
+        const puddle = 0.35 + 0.65 * smoothstep(0.4, 0.62, fbm1(x / px * 0.03 + Math.floor(y / px * 0.4) * 5.3, 2));
+        const streak2 = 0.7 + 0.3 * Math.sin(x / px * 1.3 + y / px * 0.2);
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let j = 0;j < 3; j++) {
+          const o2 = (clamp(sy - j * 2 * px, 0, H - 1) * W + x) * 3;
+          r += hdr[o2];
+          g += hdr[o2 + 1];
+          b += hdr[o2 + 2];
+        }
+        const k = 0.65 * puddle * streak2 / 3;
+        const o = (y * W + x) * 3;
+        hdr[o] = hdr[o] * 0.6 + r * k;
+        hdr[o + 1] = hdr[o + 1] * 0.6 + g * k;
+        hdr[o + 2] = hdr[o + 2] * 0.6 + b * k;
+      }
+    }
+  }
+  drawRiver() {
+    const { W, H, hdr, river, water } = this;
+    const r0 = Math.floor(BANK * H);
+    const r1 = Math.min(H, Math.ceil(QUAY * H));
+    this.touch(0, r0, W - 1, r1 - 1);
+    for (let y = r0;y < r1; y++) {
+      const amp = (0.25 + (y - r0) / (r1 - r0) * 0.9) * (H / 200);
+      const s = Math.sin(y * 0.45 + this.time * 1.3) * amp + Math.sin(y * 0.17 - this.time * 0.7) * amp * 0.6;
+      const si = Math.floor(s);
+      const f = s - si;
+      for (let x = 0;x < W; x++) {
+        const i = y * W + x;
+        if (!water[i])
+          continue;
+        const a = (y * W + clamp(x + si, 0, W - 1)) * 3;
+        const b = (y * W + clamp(x + si + 1, 0, W - 1)) * 3;
+        hdr[i * 3] = river[a] + (river[b] - river[a]) * f;
+        hdr[i * 3 + 1] = river[a + 1] + (river[b + 1] - river[a + 1]) * f;
+        hdr[i * 3 + 2] = river[a + 2] + (river[b + 2] - river[a + 2]) * f;
+      }
+    }
+  }
+  drawLights() {
+    const { H, look } = this;
+    for (const [i, [x, y]] of this.beacons.entries()) {
+      const k = Math.max(0, Math.sin(this.time * 2.2 + i * 2)) ** 8;
+      if (k < 0.02)
+        continue;
+      this.disc(x * H, y * H, Math.max(0.8, 0.0025 * H), 1.4 * k, 0.08 * k, 0.05 * k, 1);
+      this.glow(this.hdr, x * H, y * H, 0.012 * H, 0.012 * H, TAILLIGHT, 0.4 * k);
+    }
+    for (const f of this.flickers) {
+      const on = hash(Math.floor(this.time / 12 + f.phase)) > 0.45;
+      this.polygon(this.rect(f.x, f.y, f.x + f.w, f.y + f.h), on ? f.on : f.off);
+    }
+    if (!this.sign || look.glow <= 0 || hash(Math.floor(this.time * 0.4) + 3.7) <= 0.15)
+      return;
+    const s = this.sign;
+    this.neon(s, true, true);
+    this.lights.pool((s.x0 + s.x1) / 2 * H, (s.y0 + s.y1) / 2 * H, 0.04 * H, 0.07 * H, s.color, 1.5 * look.glow, 0.02 * look.glow);
+  }
+  drawPromenade() {
+    const { A, H } = this;
+    const base = QUAY + 0.014;
+    const leaves = this.paint([0.22, 0.42, 0.18]);
+    for (let i = 0, x = 0.29;x < A + 0.05; i++, x += 0.34) {
+      const lean = sway(x, this.time, i * 1.7, 0.9) * 0.0015;
+      this.shape([cap(x * H, base * H, (x + lean * 0.5) * H, (base - 0.022) * H, 0.002 * H, 0.0015 * H, this.paint([0.35, 0.25, 0.16]))], this.lighting, 0.4);
+      this.shape([ell((x + lean) * H, (base - 0.036) * H, 0.014 * H, 0.013 * H, 0, leaves), ell((x - 0.011 + lean * 0.7) * H, (base - 0.026) * H, 0.011 * H, 0.009 * H, 0, leaves), ell((x + 0.011 + lean * 0.7) * H, (base - 0.027) * H, 0.011 * H, 0.009 * H, 0, leaves)], this.lighting, 0.7);
+    }
+    const pole = this.paint([0.62, 0.62, 0.64]);
+    for (const [i, x] of [0.205, 0.205 + 0.34 * Math.floor((A - 0.4) / 0.34)].entries()) {
+      const top = base - 0.075;
+      this.shape([cap(x * H, base * H, x * H, (top - 0.004) * H, 0.0013 * H, 0.001 * H, pole)], this.lighting, 0.4);
+      const g = gust(x, this.time);
+      const droop = 1.25 * (1 - (0.3 + 0.7 * g));
+      const L = 0.03;
+      const upper = [];
+      const lower = [];
+      for (let k = 0;k <= 6; k++) {
+        const s = k / 6 * L;
+        const wave2 = Math.sin(k * 1.1 - this.time * (3 + 5 * g) + i) * 0.0025 * (k / 6);
+        const px = x + s * Math.cos(droop) + wave2 * Math.sin(droop);
+        const py = top + s * Math.sin(droop) + wave2 * Math.cos(droop);
+        upper.push([px * H, py * H]);
+        lower.push([px * H, (py + 0.016) * H]);
+      }
+      this.polygon([...upper, ...lower.reverse()], this.paint(FLAGS[i]));
+    }
+  }
+  stepTraffic(dt) {
+    for (const c of this.cars)
+      c.x += LANES[c.lane].dir * LANES[c.lane].speed * dt;
+    this.cars = this.cars.filter((c) => c.x > -0.15 && c.x < this.A + 0.15);
+    for (const lane of [0, 1]) {
+      this.gaps[lane] -= dt;
+      if (this.gaps[lane] > 0)
+        continue;
+      this.gaps[lane] = rand(...TRAFFIC[this.activity]);
+      this.cars.push({ x: LANES[lane].dir > 0 ? -0.12 : this.A + 0.12, lane, bus: Math.random() < 0.15, color: PAINT[Math.floor(Math.random() * PAINT.length)] });
+    }
+  }
+  drawCar(c) {
+    const { H, look } = this;
+    const lane = LANES[c.lane];
+    const s = lane.scale;
+    const P = (u, v) => [(c.x + u * lane.dir * s) * H, (lane.y - v * s) * H];
+    const body2 = this.paint(c.bus ? [0.85, 0.55, 0.12] : c.color);
+    const glass = this.paint([0.2, 0.26, 0.34]);
+    const half = c.bus ? 0.04 : 0.02;
+    if (c.bus) {
+      this.polygon([P(-0.04, 0.003), P(0.04, 0.003), P(0.04, 0.02), P(0.037, 0.023), P(-0.04, 0.023)], body2);
+      const windows = look.glow > 0 ? [GOLD[0] * look.glow * 0.8, GOLD[1] * look.glow * 0.8, GOLD[2] * look.glow * 0.8] : glass;
+      this.polygon([P(-0.036, 0.013), P(0.037, 0.013), P(0.037, 0.02), P(-0.036, 0.02)], windows);
+    }
+    if (!c.bus) {
+      this.polygon([P(-0.02, 0.003), P(0.02, 0.003), P(0.02, 0.008), P(0.013, 0.0095), P(0.006, 0.015), P(-0.012, 0.015), P(-0.018, 0.0095), P(-0.02, 0.008)], body2);
+      this.polygon([P(-0.0105, 0.0098), P(0.004, 0.0098), P(0.0055, 0.0135), P(-0.0095, 0.0135)], glass);
+    }
+    const wheel = this.paint([0.06, 0.06, 0.07]);
+    for (const u of c.bus ? [-0.027, 0.027] : [-0.012, 0.012])
+      this.disc(...P(u, 0.003), 0.003 * s * H, wheel[0], wheel[1], wheel[2], 1);
+    if (look.glow <= 0)
+      return;
+    const k = look.glow;
+    const [hx, hy] = P(half, 0.006);
+    this.glow(this.hdr, hx, hy, 0.003 * H, 0.003 * H, HEADLIGHT, 2 * k);
+    this.glow(this.hdr, hx + lane.dir * 0.012 * H, hy, 0.02 * H, 0.006 * H, HEADLIGHT, 0.3 * k);
+    const [tx, ty] = P(-half, 0.007);
+    this.glow(this.hdr, tx, ty, 0.004 * H, 0.003 * H, TAILLIGHT, 1.2 * k);
+  }
+  stepTrain(dt) {
+    const t = this.train;
+    const length = TRAIN_CARS * (COACH + 0.004);
+    if (t.x < -5) {
+      t.next -= dt;
+      if (t.next > 0)
+        return;
+      t.x = t.dir > 0 ? 0 : this.A;
+      return;
+    }
+    t.x += t.dir * 0.08 * dt;
+    if (t.x < -length - 0.05 || t.x > this.A + length + 0.05) {
+      t.x = -9;
+      t.next = rand(25, 50);
+      t.dir = Math.random() < 0.5 ? 1 : -1;
+    }
+  }
+  drawTrain() {
+    const t = this.train;
+    if (t.x < -5)
+      return;
+    const { H, look } = this;
+    const body2 = this.paint([0.72, 0.75, 0.8]);
+    const stripe = this.paint([0.15, 0.35, 0.7]);
+    const lit = look.glow > 0;
+    const windows = lit ? [TRAIN_LIGHT[0] * look.glow, TRAIN_LIGHT[1] * look.glow, TRAIN_LIGHT[2] * look.glow] : this.paint([0.2, 0.27, 0.36]);
+    const top = RAIL - 0.026;
+    for (let i = 0;i < TRAIN_CARS; i++) {
+      const front = t.x - t.dir * i * (COACH + 0.004);
+      const back = front - t.dir * COACH;
+      if (Math.max(front, back) < -0.01 || Math.min(front, back) > this.A + 0.01)
+        continue;
+      const X = (u) => (front - t.dir * u) * H;
+      const nose = i === 0 ? 0.016 : 0.002;
+      this.polygon([[X(COACH), top * H], [X(nose), top * H], [X(0), (top + (i === 0 ? 0.012 : 0.002)) * H], [X(0), (RAIL - 0.002) * H], [X(COACH), (RAIL - 0.002) * H]], body2);
+      this.polygon([[X(COACH), (RAIL - 0.008) * H], [X(0.002), (RAIL - 0.008) * H], [X(0.002), (RAIL - 0.005) * H], [X(COACH), (RAIL - 0.005) * H]], stripe);
+      for (let w = i === 0 ? 1 : 0;w < 6; w++) {
+        const u = 0.008 + w * 0.0155;
+        this.polygon([[X(u), (top + 0.005) * H], [X(u + 0.011), (top + 0.005) * H], [X(u + 0.011), (top + 0.013) * H], [X(u), (top + 0.013) * H]], windows);
+        if (lit)
+          this.glow(this.hdr, X(u + 0.0055), (RAIL + 0.105) * H, 0.006 * H, 0.025 * H, TRAIN_LIGHT, 0.12 * look.glow);
+      }
+    }
+    if (!lit)
+      return;
+    this.glow(this.hdr, t.x * H, (RAIL - 0.008) * H, 0.004 * H, 0.004 * H, HEADLIGHT, 2 * look.glow);
+    this.glow(this.hdr, (t.x + t.dir * 0.03) * H, (RAIL - 0.008) * H, 0.04 * H, 0.01 * H, HEADLIGHT, 0.25 * look.glow);
+  }
+  stepBlimp(dt) {
+    const b = this.blimp;
+    if (b.x < -5) {
+      b.next -= dt;
+      if (b.next > 0)
+        return;
+      b.x = b.dir > 0 ? -0.12 : this.A + 0.12;
+      return;
+    }
+    b.x += b.dir * 0.03 * dt;
+    if (b.x < -0.15 || b.x > this.A + 0.15) {
+      b.x = -9;
+      b.next = rand(60, 110);
+      b.dir = Math.random() < 0.5 ? 1 : -1;
+    }
+  }
+  drawBlimp() {
+    const b = this.blimp;
+    if (b.x < -5)
+      return;
+    const { H, look } = this;
+    const x = b.x * H;
+    const y = (0.22 + Math.sin(this.time * 0.5) * 0.004) * H;
+    const d = b.dir;
+    const skin = this.paint([0.78, 0.78, 0.82]);
+    const fin = this.paint([0.2, 0.32, 0.7]);
+    this.polygon([[x - d * 0.05 * H, y], [x - d * 0.085 * H, y - 0.026 * H], [x - d * 0.078 * H, y]], fin);
+    this.polygon([[x - d * 0.05 * H, y], [x - d * 0.085 * H, y + 0.026 * H], [x - d * 0.078 * H, y]], fin);
+    this.shape([ell(x, y, 0.075 * H, 0.022 * H, 0, skin), ell(x + d * 0.01 * H, y + 0.023 * H, 0.012 * H, 0.004 * H, 0, this.paint([0.3, 0.3, 0.34]))], this.lighting, 0.7);
+    const band = look.glow > 0 ? [NEON[1][0] * look.glow * 0.7, NEON[1][1] * look.glow * 0.7, NEON[1][2] * look.glow * 0.7] : fin;
+    this.ellipse(x + d * 0.005 * H, y, 0.045 * H, 0.0065 * H, band[0], band[1], band[2], 1);
+    if (look.glow <= 0)
+      return;
+    this.glow(this.hdr, x, y, 0.06 * H, 0.02 * H, NEON[1], 0.08 * look.glow);
+    const k = Math.max(0, Math.sin(this.time * 2.5)) ** 6;
+    this.glow(this.hdr, x - d * 0.083 * H, y - 0.024 * H, 0.006 * H, 0.006 * H, TAILLIGHT, k);
+  }
+  stepHero(dt) {
+    const h = this.hero;
+    if (h.t < 0) {
+      h.wait -= dt;
+      if (h.wait > 0)
+        return;
+      h.t = 0;
+      h.dir = Math.random() < 0.5 ? 1 : -1;
+      return;
+    }
+    h.t += dt;
+    if (h.t < HERO)
+      return;
+    h.t = -1;
+    h.wait = eggWait(true) * TIME_SCALE2;
+  }
+  drawHero() {
+    const { A, H } = this;
+    const h = this.hero;
+    const p = h.t / HERO;
+    const x = (h.dir > 0 ? lerp(-0.15, A + 0.15, p) : lerp(A + 0.15, -0.15, p)) * H;
+    const y = (0.27 - 0.07 * Math.sin(p * Math.PI) + Math.sin(this.time * 1.5) * 0.004) * H;
+    const S = 0.13 * H;
+    const P = (u, v) => [x + u * h.dir * S, y + v * S];
+    const tone = (c) => this.look.night ? [c[0] * 0.3, c[1] * 0.3, c[2] * 0.3] : this.paint(c);
+    const suit = tone([0.15, 0.3, 0.85]);
+    const red = tone([0.85, 0.12, 0.1]);
+    const skin = tone([0.85, 0.62, 0.48]);
+    const edge = (i, v) => P(0.1 - i * 0.16, v + Math.sin(this.time * 5 - i * 1.1) * 0.025 * i);
+    this.polygon([...[0, 1, 2, 3, 4, 5].map((i) => edge(i, -0.07 - i * 0.008)), ...[5, 4, 3, 2, 1, 0].map((i) => edge(i, 0.05 + i * 0.012))], red);
+    this.shape([
+      cap(...P(0.15, 0), ...P(-0.25, 0.02), 0.075 * S, 0.06 * S, suit),
+      cap(...P(-0.25, 0), ...P(-0.58, -0.01), 0.05 * S, 0.04 * S, suit),
+      cap(...P(-0.25, 0.04), ...P(-0.56, 0.06), 0.05 * S, 0.04 * S, suit),
+      cap(...P(-0.56, -0.01), ...P(-0.68, -0.015), 0.045 * S, 0.04 * S, red),
+      cap(...P(-0.54, 0.06), ...P(-0.66, 0.065), 0.045 * S, 0.04 * S, red),
+      cap(...P(0.14, -0.03), ...P(0.46, -0.07), 0.035 * S, 0.03 * S, suit),
+      ell(...P(0.49, -0.072), 0.04 * S, 0.036 * S, 0, skin),
+      ell(...P(0.26, -0.05), 0.085 * S, 0.075 * S, 0, skin),
+      ell(...P(0.23, -0.1), 0.08 * S, 0.04 * S, 0.3 * h.dir, tone([0.08, 0.06, 0.06]))
+    ], this.lighting, 0.6);
+    this.shape([cap(...P(-0.2, -0.015), ...P(-0.2, 0.055), 0.016 * S, 0.016 * S, tone([0.95, 0.75, 0.15]))], this.lighting, 0.3);
+  }
+  drawBoat(b) {
+    const { H, look } = this;
+    const L = b.tour ? 0.12 : 0.06;
+    const y = (b.y + Math.sin(this.time * 1.4 + b.speed * 100) * 0.0012) * H;
+    const X = (u) => (b.x + u * b.dir) * H;
+    const foam = look.night ? [0.04, 0.12, 0.2] : look.glow > 0 ? [0.3, 0.14, 0.1] : [0.25, 0.3, 0.35];
+    for (let i = 1;i < 14; i++) {
+      const k = (1 - i / 14) * 0.6;
+      this.splat(X(-L / 2 - i * 0.006), y + (i % 2 ? 0.5 : 1.5), foam[0] * k, foam[1] * k, foam[2] * k);
+      this.splat(X(-L / 2 - i * 0.006), y - (i % 2 ? 0.5 : 0), foam[0] * k, foam[1] * k, foam[2] * k);
+    }
+    this.polygon([[X(-L / 2), y - 0.008 * H], [X(L / 2 + 0.006), y - 0.009 * H], [X(L / 2 - 0.006), y], [X(-L / 2 + 0.004), y]], this.paint(b.tour ? [0.85, 0.82, 0.75] : [0.75, 0.6, 0.15]));
+    const cabin = this.paint(b.tour ? [0.75, 0.74, 0.72] : [0.85, 0.85, 0.82]);
+    const decks = b.tour ? 2 : 1;
+    const lit = look.glow > 0;
+    const glass = lit ? [AMBER[0] * look.glow * 0.8, AMBER[1] * look.glow * 0.8, AMBER[2] * look.glow * 0.8] : this.paint([0.2, 0.27, 0.36]);
+    for (let k = 0;k < decks; k++) {
+      const top = y - (0.008 + (k + 1) * 0.009) * H;
+      const [u0, u1] = [-L / 2 + 0.008 + k * 0.012, L / 2 - 0.012 - k * 0.01];
+      this.polygon([[X(u0), top], [X(u1), top], [X(u1 + 0.004), top + 0.009 * H], [X(u0), top + 0.009 * H]], cabin);
+      this.polygon([[X(u0 + 0.003), top + 0.002 * H], [X(u1 - 0.002), top + 0.002 * H], [X(u1 - 0.002), top + 0.006 * H], [X(u0 + 0.003), top + 0.006 * H]], glass);
+      if (lit)
+        this.glow(this.hdr, (X(u0) + X(u1)) / 2, y + 0.02 * H, Math.abs(X(u1) - X(u0)) / 2 * 0.8, 0.018 * H, AMBER, 0.12 * look.glow);
+    }
+    if (lit)
+      this.glow(this.hdr, X(L / 2), y - 0.006 * H, 0.004 * H, 0.004 * H, HEADLIGHT, 1.5 * look.glow);
+  }
+  drawWalker(w) {
+    const { H, look } = this;
+    const S = 0.1 * H * w.size;
+    const rise = bob(w.phase) * 0.015;
+    const P = (u2, v) => [w.x * H + u2 * w.dir * S, 0.996 * H + (v - rise) * S];
+    const coat = this.paint(w.coat);
+    const legs = this.paint([0.15, 0.15, 0.2]);
+    const skin = this.paint([0.8, 0.6, 0.48]);
+    const shoe = this.paint([0.08, 0.07, 0.07]);
+    const side = (s, far) => {
+      const [reach, lift2] = stride(w.phase, s > 0 ? 0 : 0.5);
+      const fu = reach * 0.21;
+      const fv = -lift2 * 0.07 - 0.025 + rise;
+      const umbrella = this.wet && !far;
+      const hand = umbrella ? [0.12, -0.85] : [-reach * 0.13 + 0.02, -0.44];
+      const shade = (c) => far ? [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7] : c;
+      return [
+        ...limb(P, 0, -0.47, fu, fv, 0.24, 0.24, -1, 0.045 * S, 0.037 * S, 0.032 * S, shade(legs)),
+        cap(...P(fu - 0.02, fv), ...P(fu + 0.06, fv + 0.006), 0.028 * S, 0.024 * S, shoe),
+        ...limb(P, 0.01, -0.77, ...hand, 0.18, 0.18, umbrella ? -1 : 1, 0.033 * S, 0.028 * S, 0.025 * S, shade(coat))
+      ];
+    };
+    this.shape(side(-1, true), this.lighting, 0.6);
+    this.shape([
+      ...side(1, false),
+      cap(...P(0, -0.42), ...P(0.01, -0.8), 0.085 * S, 0.075 * S, coat),
+      ell(...P(0.02, -0.89 + Math.cos(TAU * 2 * w.phase - 1) * 0.008), 0.06 * S, 0.068 * S, 0, skin),
+      ell(...P(0.005, -0.925 + Math.cos(TAU * 2 * w.phase - 1) * 0.008), 0.062 * S, 0.04 * S, -0.3 * w.dir, this.paint(w.hair))
+    ], this.lighting, 0.6);
+    if (!this.wet)
+      return;
+    const [cx, cy] = P(0.08, -1.08);
+    const u = look.glow > 0 ? [w.umbrella[0] * look.glow * 0.9, w.umbrella[1] * look.glow * 0.9, w.umbrella[2] * look.glow * 0.9] : this.paint(w.umbrella.map((c) => c * 1.4));
+    this.polygon(Array.from({ length: 11 }, (_, i) => [cx + Math.cos(Math.PI + i / 10 * Math.PI) * 0.26 * S, cy + Math.sin(Math.PI + i / 10 * Math.PI) * 0.13 * S + (i % 2 ? 0 : 0.02 * S)]), u);
+    this.shape([cap(cx, cy, ...P(0.12, -0.85), 0.012 * S, 0.012 * S, this.paint([0.3, 0.3, 0.32]))], this.lighting, 0);
+  }
+  drawRain() {
+    const H = this.H;
+    const n = Math.max(3, Math.round(0.022 * H));
+    for (const r of this.rain) {
+      const x = r.x * H;
+      const y = r.y * H;
+      for (let k = 0;k < n; k++) {
+        const a = (1 - k / n) * 0.9;
+        this.splat(x + k * 0.15, y - k, RAIN2[0] * a, RAIN2[1] * a, RAIN2[2] * a);
+      }
+    }
+  }
+}
+var city = {
+  id: "city",
+  name: "City",
+  description: "A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then",
+  activity: {
+    calm: "Skyline, river and light traffic on the highway",
+    lively: "Adds a train crossing the bridge and more traffic",
+    teeming: "Adds neon signs, boats on the river, people on the street, and rain at night"
+  },
+  scrim: {
+    day: [
+      [20, 40, 70],
+      [24, 38, 52],
+      [26, 26, 32]
+    ],
+    sunset: [
+      [28, 8, 26],
+      [38, 16, 12],
+      [16, 8, 12]
+    ],
+    night: [
+      [3, 4, 16],
+      [8, 4, 18],
+      [4, 3, 12]
+    ]
+  },
+  create: (settings) => new City(settings)
+};
+
+// wallpapers/desert.ts
+var TIME_SCALE3 = 0.35;
+var CREATURE_SPEED3 = 0.25;
+var HORIZON2 = 0.6;
+var LOOKS3 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.85],
+    sky: [
+      [0, [0.05, 0.17, 0.45]],
+      [0.3, [0.13, 0.33, 0.65]],
+      [0.5, [0.32, 0.5, 0.7]],
+      [HORIZON2, [0.55, 0.62, 0.68]]
+    ],
+    orb: { x: 0.78, y: 0.13, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.15, moon: false },
+    stars: 0,
+    milkyWay: false,
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.55, 0.62, 0.75], alpha: 0.9 },
+    farMesa: [0.62, 0.36, 0.26],
+    nearMesa: [0.62, 0.27, 0.13],
+    floor: [
+      [0.66, 0.5, 0.34],
+      [0.6, 0.4, 0.23]
+    ],
+    backDune: [0.72, 0.48, 0.26],
+    frontDune: [0.78, 0.52, 0.27],
+    cactus: [0.16, 0.32, 0.12],
+    bone: [0.86, 0.8, 0.68],
+    horn: [0.72, 0.62, 0.45],
+    hornTip: [0.25, 0.18, 0.1],
+    socket: [0.1, 0.07, 0.05],
+    pear: [0.2, 0.38, 0.14],
+    fruit: [0.65, 0.1, 0.3],
+    barrel: [0.18, 0.34, 0.13],
+    flower: [0.95, 0.75, 0.15],
+    coyote: [0.5, 0.4, 0.28],
+    snake: [
+      [0.6, 0.46, 0.28],
+      [0.3, 0.2, 0.1],
+      [0.75, 0.68, 0.55]
+    ],
+    twig: [0.6, 0.45, 0.28],
+    night: false,
+    plumage: [0.22, 0.13, 0.07],
+    plumageLight: [0.9, 0.88, 0.82],
+    flock: [0.08, 0.06, 0.06],
+    dust: [0.12, 0.1, 0.07]
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.5, 0.16],
+    sky: [
+      [0, [0.03, 0.014, 0.012]],
+      [0.22, [0.09, 0.035, 0.022]],
+      [0.4, [0.3, 0.1, 0.04]],
+      [0.52, [0.66, 0.27, 0.08]],
+      [HORIZON2, [0.95, 0.55, 0.2]]
+    ],
+    orb: { x: 0.6, y: 0.565, r: 0.09, core: [2.6, 1.25, 0.42], glow: [1, 0.48, 0.14], near: 0.42, wide: 0.42, moon: false },
+    stars: 15,
+    milkyWay: false,
+    clouds: { top: [0.14, 0.05, 0.025], bottom: [0.8, 0.38, 0.12], alpha: 0.5 },
+    farMesa: [0.32, 0.1, 0.05],
+    nearMesa: [0.13, 0.04, 0.02],
+    floor: [
+      [0.62, 0.28, 0.1],
+      [0.14, 0.06, 0.025]
+    ],
+    backDune: [0.2, 0.08, 0.035],
+    frontDune: [0.12, 0.048, 0.022],
+    cactus: [0.02, 0.05, 0.025],
+    bone: [0.62, 0.5, 0.4],
+    horn: [0.48, 0.38, 0.26],
+    hornTip: [0.12, 0.08, 0.05],
+    socket: [0.03, 0.015, 0.01],
+    pear: [0.03, 0.055, 0.025],
+    fruit: [0.5, 0.06, 0.08],
+    barrel: [0.03, 0.06, 0.03],
+    flower: [0.8, 0.6, 0.1],
+    coyote: [0.02, 0.01, 0.012],
+    snake: [
+      [0.3, 0.19, 0.1],
+      [0.12, 0.07, 0.04],
+      [0.55, 0.45, 0.32]
+    ],
+    twig: [0.3, 0.17, 0.08],
+    night: false,
+    plumage: [0.06, 0.035, 0.022],
+    plumageLight: [0.62, 0.57, 0.5],
+    flock: [0.03, 0.02, 0.02],
+    dust: [0.12, 0.07, 0.035]
+  },
+  night: {
+    style: "rim",
+    light: [0.28, 0.6, 1.45],
+    sky: [
+      [0, [0.004, 0.006, 0.02]],
+      [0.3, [0.012, 0.02, 0.06]],
+      [0.5, [0.035, 0.055, 0.13]],
+      [HORIZON2, [0.08, 0.11, 0.24]]
+    ],
+    orb: { x: 0.3, y: 0.16, r: 0.035, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 160,
+    milkyWay: true,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.5 },
+    farMesa: [0.03, 0.04, 0.08],
+    nearMesa: [0.012, 0.016, 0.035],
+    floor: [
+      [0.07, 0.09, 0.17],
+      [0.025, 0.03, 0.06]
+    ],
+    backDune: [0.035, 0.045, 0.095],
+    frontDune: [0.02, 0.025, 0.055],
+    cactus: [0.01, 0.02, 0.02],
+    bone: [0.1, 0.2, 0.42],
+    horn: [0.08, 0.13, 0.28],
+    hornTip: [0.02, 0.03, 0.06],
+    socket: [0.01, 0.01, 0.015],
+    pear: [0.012, 0.022, 0.02],
+    fruit: [0.15, 0.03, 0.06],
+    barrel: [0.012, 0.024, 0.02],
+    flower: [0.3, 0.28, 0.12],
+    coyote: [0.012, 0.012, 0.02],
+    snake: [
+      [0.05, 0.08, 0.16],
+      [0.02, 0.03, 0.07],
+      [0.1, 0.14, 0.3]
+    ],
+    twig: [0.06, 0.09, 0.2],
+    night: true,
+    plumage: [0.05, 0.06, 0.12],
+    plumageLight: [0.08, 0.1, 0.22],
+    flock: [0.02, 0.02, 0.03],
+    dust: [0, 0, 0]
+  }
+};
+var FLOWERS = [
+  [1, 0.5, 0.08],
+  [0.5, 0.3, 0.95],
+  [1, 0.85, 0.15],
+  [0.92, 0.35, 0.68]
+];
+var FLOWER_LIGHT = { day: [1, 1, 1], sunset: [0.3, 0.15, 0.13], night: [0.08, 0.1, 0.2] };
+var DUSTING = { day: [0.92, 0.93, 0.97], sunset: [0.55, 0.28, 0.3], night: [0.06, 0.12, 0.3] };
+var STAR_TINTS2 = [
+  [0.55, 0.75, 1.2],
+  [1.15, 0.85, 0.45],
+  [1.1, 0.6, 0.85],
+  [0.7, 0.6, 1.2]
+];
+var DAYLIGHT3 = (() => {
+  const l = Math.hypot(0.45, 0.6, 0.65);
+  return [0.45 / l, -0.6 / l, 0.65 / l];
+})();
+
+class Desert extends Canvas {
+  time = 0;
+  activity;
+  look;
+  frontTop = new Float32Array(0);
+  nearTop = new Float32Array(0);
+  orbX = 0;
+  orbY = 0;
+  coyoteX = 0;
+  stars;
+  dust = Array.from({ length: 60 }, () => ({ x: Math.random() * 4, y: 0.3 + Math.random() * 0.7, s: Math.random() }));
+  clouds;
+  storm = makeStorm();
+  tumbleweed = { x: -9, next: 14, spin: 0, hop: 0 };
+  twigs = buildTwigs();
+  bigBird;
+  flock = [];
+  snake;
+  coyote;
+  startled = [];
+  roadrunner = { wait: eggWait() * TIME_SCALE3, t: -1, x: 0, halt: -1, stride: 0 };
+  puffs = [];
+  season;
+  flowerLight;
+  dusting;
+  weather;
+  shade;
+  lights = new LightMap;
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS3[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.season = settings.season ?? "summer";
+    this.flowerLight = FLOWER_LIGHT[settings.time];
+    this.dusting = DUSTING[settings.time];
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON2);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    const look = this.look;
+    const top = look.milkyWay ? 0.5 : 0.3;
+    this.stars = Array.from({ length: look.stars }, () => ({ x: Math.random(), y: Math.random() * top, b: 0.4 + Math.random() * 0.6, phase: Math.random() * TAU, tint: STAR_TINTS2[Math.floor(Math.random() * STAR_TINTS2.length)] }));
+    this.clouds = makeClouds(5, "cirrus", 0.08, 0.32);
+    if (settings.activity !== "calm") {
+      this.bigBird = { angle: 0, speed: 0.5, cx: 0.55, cy: 0.2, rx: 0.3, ry: 0.05, phase: 0 };
+      this.snake = { x: 0.5, y: 0.9, vx: 0, vy: 0, wx: 0.5, wy: 0.9, wanderT: 0, phase: 0, trail: [] };
+    }
+    if (settings.activity === "teeming") {
+      this.flock = look.night ? [0, 1.6, 3.1, 4.7].map((angle, i) => ({ angle, speed: 0.9 + i * 0.12, cx: 0.72, cy: 0.3, rx: 0.06 + i * 0.03, ry: 0.04, phase: i * 1.7 })) : [0, 2.1, 4.2].map((angle, i) => ({ angle, speed: 0.4 + i * 0.05, cx: 0.25, cy: 0.16, rx: 0.08 + i * 0.035, ry: 0.025, phase: i }));
+      this.coyote = { howl: 0, head: 0, headV: 0, t: -1, next: 8 };
+    }
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE3;
+    this.time += dt;
+    for (const d of this.dust) {
+      d.x += (0.01 + d.s * 0.012 + gust(d.x, this.time) * 0.06) * dt;
+      d.y += Math.sin(this.time * 0.5 + d.s * 30) * 0.002 * dt;
+      if (d.x > this.A)
+        d.x -= this.A;
+    }
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.stepTumbleweed(dt);
+    this.weather.step(dt);
+    this.stepCreatures(dt * CREATURE_SPEED3);
+    this.startled = flyAway(this.startled, dt, this.A);
+    this.stepRoadrunner(dt, dt * CREATURE_SPEED3);
+  }
+  poke(x, y) {
+    const ground = this.frontTop[clamp(Math.round(x * this.H), 0, this.W - 1)] / this.H;
+    startle(this.startled, x, y > HORIZON2 ? y : ground, 5);
+  }
+  render() {
+    this.restore();
+    if (this.look.style === "front" && this.season !== "winter" && !this.weather.covered) {
+      shimmer(this.hdr, this.background, this.W, this.H, this.time);
+      this.touch(0, Math.floor((HORIZON2 - 0.05) * this.H), this.W - 1, Math.ceil((HORIZON2 + 0.02) * this.H));
+    }
+    if (!this.weather.covered)
+      this.drawStars();
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.weather.covered ? undefined : this.look.orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    for (const b of this.flock)
+      this.look.night ? this.drawBat(b) : this.drawBird(b, 0.3, "vulture");
+    if (this.bigBird)
+      this.drawBird(this.bigBird, 0.8, this.look.night ? "owl" : "eagle");
+    if (this.coyote)
+      this.drawCoyote(this.coyote);
+    if (this.snake)
+      this.drawSnake(this.snake);
+    if (this.roadrunner.t >= 0)
+      this.drawRoadrunner();
+    for (const b of this.startled)
+      this.silhouette(bird(b, this.H, 0.022 * this.H, this.look.flock), 0.4);
+    this.drawTumbleweed();
+    if (this.look.night)
+      this.drawCampfire();
+    this.drawDust();
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.tumbleweed.x < -5)
+      this.tumbleweed.next = 0;
+  }
+  layout() {
+    const { W, H, A, look, px } = this;
+    this.orbX = look.orb.x * W;
+    this.orbY = look.orb.y * H;
+    this.drawSky();
+    this.weather.cover(this.hdr, W, H);
+    const sky = this.hdr.slice();
+    const day = look === LOOKS3.day;
+    const far = mesas(A, 3, 7, [0.06, 0.16], [0.04, 0.09]);
+    const near2 = mesas(A, 2, 19, [0.05, 0.12], [0.06, 0.13]);
+    this.nearTop = new Float32Array(W);
+    const farTop = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      farTop[x] = (HORIZON2 - profile(far, u)) * H;
+      this.nearTop[x] = (HORIZON2 + 0.01 - profile(near2, u)) * H;
+    }
+    const horizon = look.sky[look.sky.length - 1][1];
+    this.fillBelow(farTop, (x, y, d) => {
+      if (y > HORIZON2 * H + px)
+        return;
+      const haze2 = (0.35 + 0.4 * (1 - d / (40 * px))) * (look.style === "front" ? 0.45 : 0.4);
+      return this.surface(mix2(look.farMesa, horizon, haze2), farTop, x, d, 1.5, 0.6, true);
+    });
+    this.drawFloor();
+    this.fillBelow(this.nearTop, (x, y, d) => y > (HORIZON2 + 0.02) * H ? undefined : this.surface(look.nearMesa, this.nearTop, x, d, 1.6, 0.8, true));
+    if (day)
+      haze(this.hdr, sky, W, H, HORIZON2, 0.72, 0.12);
+    const backTop = new Float32Array(W);
+    this.frontTop = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      backTop[x] = (0.7 + 0.035 * Math.sin(u * 3.1 + 1) + 0.02 * Math.sin(u * 7.3)) * H;
+      this.frontTop[x] = (0.83 + 0.045 * Math.sin(u * 2.2 + 2.5) + 0.015 * Math.sin(u * 5.7 + 1)) * H;
+    }
+    this.fillBelow(backTop, (x, _y, d) => this.surface(scale(look.backDune, 1 - d / px * 0.005), backTop, x, d, 2.2, 0.55, false));
+    this.fillBelow(this.frontTop, (x, _y, d) => {
+      const ripple = 0.9 + 0.1 * Math.sin(x / px * 0.5 + d / px * 0.9 + fbm1(x / px * 0.05, 3) * 4);
+      return this.surface(scale(look.frontDune, ripple), this.frontTop, x, d, 2.5, 0.5, false);
+    });
+    if (day)
+      mottle(this.hdr, W, H, HORIZON2, 1, 0.6, [1.1, 0.98, 0.8], [0.72, 0.7, 0.86]);
+    if (this.season === "spring")
+      this.drawBloom();
+    if (this.activity === "teeming") {
+      for (const [x, h] of [[0.45, 0.14], [A - 0.14, 0.11]]) {
+        const gy = backTop[clamp(Math.round(x * H), 0, W - 1)] + 2 * px;
+        this.shadow(x * H, gy, 0.25 * h * H, h * H);
+        this.drawSaguaro(x * H, gy, h * H, 0.5);
+      }
+    }
+    this.shadow(0.22 * H, this.ground(0.22 / A), 0.085 * H, 0.34 * H);
+    this.drawSaguaro(0.22 * H, this.ground(0.22 / A) + 3 * px, 0.34 * H, 0);
+    this.shadow((A - 0.32) * H, this.ground(1 - 0.32 / A), 0.07 * H, 0.1 * H, 2.5);
+    this.drawSkull((A - 0.32) * H, this.ground(1 - 0.32 / A), 0.07 * H);
+    if (this.activity === "teeming") {
+      this.shadow(0.33 * A * H, this.ground(0.33), 0.09 * H, 0.16 * H, 1.1);
+      this.drawPricklyPear(0.33 * A * H, this.ground(0.33) + 2 * px, H);
+      this.shadow(0.62 * A * H, this.ground(0.62), 0.06 * H, 0.07 * H, 0.8);
+      this.drawBarrel(0.62 * A * H, this.ground(0.62) + px, H);
+    }
+    let best = W - 1 - Math.round(W * 0.05);
+    for (let x = 0;x < W; x++)
+      if (Math.abs(x / W - 0.5) > 0.3 && Math.abs(x / W - 0.5) < 0.47 && Math.abs(x / H - 0.22) > 0.1 && this.nearTop[x] < this.nearTop[best])
+        best = x;
+    this.coyoteX = best;
+  }
+  ground(fx) {
+    return this.frontTop[clamp(Math.round(fx * this.W), 0, this.W - 1)];
+  }
+  glowAt(x) {
+    return 0.35 + 0.65 * Math.exp(-Math.abs(x - this.orbX) / (0.45 * this.H));
+  }
+  surface(base, top, x, depth2, rimWidth, rimStrength, strata) {
+    if (strata && this.season === "winter") {
+      const snow = smoothstep(this.px, 0, depth2 - (0.006 + 0.03 * fbm1(x / this.px * 0.06, 4) ** 2) * this.H);
+      if (snow > 0)
+        return mix2(this.lit(base, top, x, depth2, rimWidth, rimStrength, strata), this.dusting, snow * 0.85);
+    }
+    return this.lit(base, top, x, depth2, rimWidth, rimStrength, strata);
+  }
+  lit(base, top, x, depth2, rimWidth, rimStrength, strata) {
+    const { light } = this.look;
+    const px = this.px;
+    if (this.look.style === "rim") {
+      const k2 = Math.exp(-depth2 / (rimWidth * px)) * rimStrength * this.glowAt(x) * 0.6;
+      return [base[0] + light[0] * k2, base[1] + light[1] * k2, base[2] + light[2] * k2];
+    }
+    const slope = (top[Math.min(this.W - 1, x + 1)] - top[Math.max(0, x - 1)]) / 2;
+    const face = strata ? slope < -0.6 ? 0.6 : slope > 0.6 ? 1.1 : 0.85 : 0.85 + clamp(slope * 1.5, -0.3, 0.3);
+    const layers = strata ? 0.9 + 0.1 * Math.sin(depth2 / px * 0.7 + fbm1(x / px * 0.08, 2) * 3) : 1;
+    const edge = 1 + 0.35 * Math.exp(-depth2 / (1.2 * px));
+    const k = face * layers * edge;
+    return [base[0] * k, base[1] * k, base[2] * k];
+  }
+  drawSky() {
+    const { W, H, hdr, look } = this;
+    const { orb } = look;
+    const R = orb.r * H;
+    addOrb(hdr, this.orbX, this.orbY, R);
+    for (let y = 0;y < H; y++) {
+      const v = y / H;
+      const i = look.sky.findIndex(([at]) => at >= v);
+      const [a, from] = look.sky[Math.max(0, i - 1)];
+      const [b, to] = look.sky[i < 0 ? look.sky.length - 1 : i];
+      const k = b > a ? smoothstep(a, b, v) : 1;
+      for (let x = 0;x < W; x++) {
+        const d = Math.hypot(x - this.orbX, y - this.orbY) / H;
+        const glow = orb.near * Math.exp(-d / (orb.r * 1.8)) + orb.wide * Math.exp(-d / 0.35);
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(from[0], to[0], k) + glow * orb.glow[0];
+        hdr[o + 1] = lerp(from[1], to[1], k) + glow * orb.glow[1];
+        hdr[o + 2] = lerp(from[2], to[2], k) + glow * orb.glow[2];
+        const band = Math.abs(v - (0.45 - x / W * 0.35)) / 0.07;
+        if (look.milkyWay && band < 4) {
+          const m = Math.exp(-band * band) * (0.5 + 0.5 * fbm1(x / this.px * 0.05 + v * 9, 4)) * 0.05;
+          hdr[o] += m * 0.55;
+          hdr[o + 1] += m * 0.4;
+          hdr[o + 2] += m;
+        }
+        const r = d * H;
+        const cov = clamp(R - r + 0.5, 0, 1);
+        if (cov <= 0)
+          continue;
+        const limb2 = 0.85 + 0.15 * Math.sqrt(Math.max(0, 1 - (r / R) ** 2));
+        const maria = orb.moon ? 1 - 0.18 * smoothstep(0.55, 0.75, fbm1((x - this.orbX) / this.px * 0.25 + 3, 7) + fbm1((y - this.orbY) / this.px * 0.25 + 1, 9) * 0.6) : 1;
+        this.blend(o, orb.core[0] * limb2 * maria, orb.core[1] * limb2 * maria, orb.core[2] * limb2 * maria, cov);
+      }
+    }
+  }
+  drawBloom() {
+    const { W, H, A, hdr } = this;
+    const patch = (u, v) => fbm2(u * 5, v * 11, 3);
+    const green = this.flowerLight;
+    for (let y = Math.ceil((HORIZON2 + 0.01) * H);y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const k = smoothstep(0.44, 0.6, patch(x / H, y / H)) * 0.35;
+        if (k <= 0)
+          continue;
+        this.blend((y * W + x) * 3, hdr[(y * W + x) * 3] * 0.6 + 0.2 * green[0], hdr[(y * W + x) * 3 + 1] * 0.6 + 0.3 * green[1], hdr[(y * W + x) * 3 + 2] * 0.5 + 0.06 * green[2], k);
+      }
+    for (let i = 0;i < Math.round(A * 3200); i++) {
+      const u = hash(i * 1.31) * A;
+      const v = HORIZON2 + 0.015 + hash(i * 2.77) * (0.99 - HORIZON2);
+      if (patch(u, v) < 0.5)
+        continue;
+      const kind = FLOWERS[Math.floor(fbm2(u * 1.6 + 7, v * 3 + 2, 2) * 9 + hash(i * 4.1) * 1.4) % FLOWERS.length];
+      const near2 = (v - HORIZON2) / (1 - HORIZON2);
+      const light = this.flowerLight;
+      this.disc(u * H, v * H, lerp(0.0016, 0.0055, near2) * H, kind[0] * light[0], kind[1] * light[1], kind[2] * light[2], 0.9);
+    }
+  }
+  drawFloor() {
+    const { W, H, hdr, look } = this;
+    const [near2, far] = look.floor;
+    for (let y = Math.floor(HORIZON2 * H);y < H; y++) {
+      const k = smoothstep(HORIZON2, 0.72, y / H);
+      const shine = look.style === "rim" ? Math.exp(-(y / H - HORIZON2) / 0.05) * 0.3 : 0;
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        const sun = Math.exp(-Math.abs(x - this.orbX) / (0.3 * H)) * shine;
+        hdr[o] = lerp(near2[0], far[0], k) + sun * look.light[0];
+        hdr[o + 1] = lerp(near2[1], far[1], k) + sun * look.light[1];
+        hdr[o + 2] = lerp(near2[2], far[2], k) + sun * look.light[2];
+      }
+    }
+  }
+  fillBelow(top, color) {
+    const { W, H } = this;
+    for (let x = 0;x < W; x++) {
+      const t = top[x];
+      for (let y = Math.max(0, Math.floor(t));y < H; y++) {
+        const c = color(x, y, y + 0.5 - t);
+        if (!c)
+          break;
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - t, 0, 1));
+      }
+    }
+  }
+  shadow(x, gy, w, h, tip, lift2) {
+    groundShadow(this.hdr, this.W, this.H, this.shade, x, gy, w, h, tip, lift2);
+  }
+  stepTumbleweed(dt) {
+    const t = this.tumbleweed;
+    if (t.x < -5) {
+      t.next -= dt;
+      if (t.next > 0)
+        return;
+      t.x = -0.1;
+      return;
+    }
+    const move = (0.045 + 0.1 * gust(t.x, this.time)) * dt;
+    t.x += move;
+    t.spin += move / 0.035;
+    t.hop += move / 0.05;
+    if (t.x < -0.2 || t.x > this.A + 0.2) {
+      t.x = -9;
+      t.next = rand(40, 75);
+    }
+  }
+  stepRoadrunner(dt, cdt) {
+    for (const p of this.puffs)
+      p.age += dt;
+    this.puffs = this.puffs.filter((p) => p.age < 4);
+    const r = this.roadrunner;
+    if (r.t < 0) {
+      r.wait -= dt;
+      if (r.wait > 0)
+        return;
+      Object.assign(r, { t: 0, x: -0.1, halt: -1, stride: 0 });
+      return;
+    }
+    r.t += cdt;
+    if (r.halt < 0 && r.x >= 0.55 * this.A)
+      r.halt = r.t;
+    if (r.halt >= 0 && r.t < r.halt + 2)
+      return;
+    const speed = r.halt < 0 ? 0.25 : 0.5;
+    r.x += speed * cdt;
+    r.stride += cdt * 40;
+    if (Math.floor(r.stride / Math.PI) !== Math.floor((r.stride - cdt * 40) / Math.PI))
+      this.puffs.push({ x: r.x - 0.01, y: this.ground(r.x / this.A) / this.H, age: 0 });
+    if (r.x < this.A + 0.15)
+      return;
+    r.t = -1;
+    r.wait = eggWait(true) * TIME_SCALE3;
+  }
+  stepCreatures(dt) {
+    for (const b of [this.bigBird, ...this.flock]) {
+      if (!b)
+        continue;
+      b.angle += b.speed * dt;
+      b.phase += dt;
+    }
+    const s = this.snake;
+    if (s)
+      this.stepSnake(s, dt);
+    const c = this.coyote;
+    if (c) {
+      if (c.t < 0) {
+        c.next -= dt;
+        if (c.next <= 0)
+          c.t = 0;
+      } else {
+        c.t += dt;
+        if (c.t > 6) {
+          c.t = -1;
+          c.next = rand(20, 45);
+        }
+      }
+      c.howl = c.t < 0 ? 0 : smoothstep(0, 1.5, c.t) * (1 - smoothstep(4.5, 6, c.t));
+      c.headV += ((c.howl - c.head) * 30 - c.headV * 3.5) * dt;
+      c.head += c.headV * dt;
+    }
+  }
+  stepSnake(s, dt) {
+    const { A, H } = this;
+    const crest = (x) => this.frontTop[clamp(Math.round(x * H), 0, this.W - 1)] / H;
+    s.wanderT -= dt;
+    if (s.wanderT <= 0 || Math.hypot(s.wx - s.x, s.wy - s.y) < 0.02) {
+      s.wanderT = rand(6, 14);
+      s.wx = this.openSpot(0.3 * A, 0.7 * A, 0.9, 0.9)[0];
+      s.wy = crest(s.wx) + rand(0.015, 0.06);
+    }
+    const dx = s.wx - s.x;
+    const dy = s.wy - s.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const speed = 0.05 * Math.min(1, d / 0.05);
+    s.vx += (dx / d * speed - s.vx) * Math.min(1, dt * 1.2);
+    s.vy += (dy / d * speed - s.vy) * Math.min(1, dt * 1.2);
+    s.x += s.vx * dt;
+    s.y = clamp(s.y + s.vy * dt, crest(s.x) + 0.01, 0.99);
+    s.phase += dt * (1.5 + Math.hypot(s.vx, s.vy) * 60);
+    const last = s.trail.at(-1);
+    if (!last)
+      for (let i = 30;i >= 0; i--)
+        s.trail.push({ x: s.x - i * 0.008, y: s.y });
+    if (last && Math.hypot(s.x - last.x, s.y - last.y) > 0.002)
+      s.trail.push({ x: s.x, y: s.y });
+    if (s.trail.length > 200)
+      s.trail.splice(0, s.trail.length - 200);
+  }
+  silhouette(parts, light = 1) {
+    const lighting = this.look.style === "rim" ? { style: "rim", color: this.look.light, x: this.orbX, y: this.orbY } : { style: "front", dir: DAYLIGHT3 };
+    this.shape(parts, lighting, light);
+  }
+  drawCampfire() {
+    const H = this.H;
+    const x = 0.21 * this.A * H;
+    const gy = this.ground(0.21) + 0.01 * H;
+    const fire = campfire(x, gy, H, this.time);
+    this.lights.clear(this.W, H);
+    this.lights.pool(x + (noise1(this.time * 0.9, 5) - 0.5) * 0.05 * H, gy - 0.03 * H, 0.32 * H, 0.14 * H, [1, 0.4, 0.07], 2.6 * fire.flicker, 0.04 * fire.flicker);
+    this.lights.apply(this.hdr);
+    this.shape(fire.logs, { style: "rim", color: [1.4, 0.5, 0.1], x, y: gy - 0.03 * H });
+    for (const flame of fire.flames)
+      this.shape(flame, { style: "front", dir: [0, 0, 1] }, 0);
+  }
+  drawSaguaro(x, gy, h, haze2) {
+    const c = mix2(this.look.cactus, this.look.backDune, haze2 * 0.6);
+    const r = h * 0.085;
+    this.silhouette([
+      cap(x, gy, x, gy - h, r, r * 0.85, c, 2),
+      cap(x, gy - h * 0.36, x - h * 0.24, gy - h * 0.42, r * 0.7, r * 0.7, c, 1.5),
+      cap(x - h * 0.24, gy - h * 0.42, x - h * 0.24, gy - h * 0.72, r * 0.7, r * 0.62, c, 1.5),
+      cap(x, gy - h * 0.5, x + h * 0.21, gy - h * 0.55, r * 0.65, r * 0.65, c, 1.5),
+      cap(x + h * 0.21, gy - h * 0.55, x + h * 0.21, gy - h * 0.82, r * 0.65, r * 0.58, c, 1.5)
+    ], 1 - haze2 * 0.5);
+    if (this.season !== "spring")
+      return;
+    const light = this.flowerLight;
+    for (const [tx, ty, tr] of [[x, gy - h, r * 0.85], [x - h * 0.24, gy - h * 0.72, r * 0.62], [x + h * 0.21, gy - h * 0.82, r * 0.58]])
+      for (const a of [-0.9, -0.3, 0.3, 0.9])
+        this.disc(tx + Math.sin(a) * tr * 0.8, ty - Math.cos(a) * tr * 0.5, tr * 0.38, 0.98 * light[0], 0.94 * light[1], 0.82 * light[2], 0.95);
+  }
+  drawSkull(x, gy, s) {
+    const { bone, horn, hornTip, socket } = this.look;
+    const cy = gy - s * 0.85;
+    for (const side of [-1, 1]) {
+      const p0 = [x + side * s * 0.38, cy - s * 0.3];
+      const p1 = [x + side * s * 0.95, cy - s * 0.32];
+      const p2 = [x + side * s * 1.15, cy - s * 0.75];
+      const at = (t) => [(1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0], (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1]];
+      this.silhouette(Array.from({ length: 12 }, (_, i) => {
+        const [ax, ay] = at(i / 12);
+        const [bx, by] = at((i + 1) / 12);
+        return cap(ax, ay, bx, by, s * lerp(0.09, 0.015, i / 12), s * lerp(0.09, 0.015, (i + 1) / 12), i > 9 ? hornTip : horn);
+      }), 0.6);
+    }
+    this.silhouette([ell(x, cy - s * 0.15, s * 0.42, s * 0.3, 0, bone), cap(x, cy, x, cy + s * 0.75, s * 0.3, s * 0.16, bone), ell(x, cy + s * 0.8, s * 0.18, s * 0.1, 0, bone)], 0.6);
+    for (const side of [-1, 1]) {
+      this.silhouette([ell(x + side * s * 0.2, cy - s * 0.05, s * 0.11, s * 0.13, side * 0.3, socket)], 0);
+      this.silhouette([ell(x + side * s * 0.06, cy + s * 0.62, s * 0.045, s * 0.09, 0, socket)], 0);
+    }
+    this.silhouette([cap(x, cy - s * 0.42, x, cy - s * 0.22, s * 0.015, s * 0.01, socket)], 0);
+  }
+  drawPricklyPear(x, gy, H) {
+    const pads = [
+      [0, -0.035, 0.025, 0.04, 0],
+      [-0.032, -0.08, 0.02, 0.032, -0.5],
+      [0.03, -0.085, 0.022, 0.034, 0.4],
+      [0.002, -0.125, 0.018, 0.028, 0.1]
+    ];
+    for (const [dx, dy, rx, ry, a] of pads)
+      this.silhouette([ell(x + dx * H, gy + dy * H, rx * H, ry * H, a, this.look.pear)]);
+    for (const [dx, dy] of [[-0.04, -0.11], [0.042, -0.118], [0.005, -0.153]])
+      this.silhouette([ell(x + dx * H, gy + dy * H, 0.006 * H, 0.008 * H, 0, this.look.fruit)], 0.5);
+  }
+  drawBarrel(x, gy, H) {
+    this.silhouette([ell(x, gy - 0.032 * H, 0.03 * H, 0.035 * H, 0, this.look.barrel, 3)]);
+    for (const dx of [-0.012, 0, 0.012])
+      this.silhouette([ell(x + dx * H, gy - 0.066 * H, 0.005 * H, 0.004 * H, 0, this.look.flower)], 0.3);
+  }
+  drawStars() {
+    const top = this.look.milkyWay ? 0.55 : 0.32;
+    const bright = this.look.milkyWay ? 0.6 : 0.35;
+    for (const s of this.stars) {
+      if (onOrb(this.hdr, s.x * this.W, s.y * this.H, 1.5))
+        continue;
+      const k = s.b * (1 - s.y / top) * (0.7 + 0.3 * Math.sin(this.time * 0.8 + s.phase)) * bright;
+      this.point(s.x * this.W, s.y * this.H, k * s.tint[0], k * s.tint[1], k * s.tint[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1);
+    }
+  }
+  drawBird(b, scale, kind) {
+    const { A, H, look } = this;
+    const ex = (b.cx * A + b.rx * Math.cos(b.angle)) * H;
+    const ey = (b.cy + b.ry * Math.sin(b.angle)) * H;
+    const roll = 0.18 * Math.sin(b.angle);
+    const cr = Math.cos(roll);
+    const sr = Math.sin(roll);
+    const S = H * scale;
+    const T = (u, v) => [ex + (u * cr - v * sr) * S, ey + (u * sr + v * cr) * S];
+    const main = kind === "vulture" ? look.flock : look.plumage;
+    const pale = kind === "vulture" ? look.flock : look.plumageLight;
+    const dihedral = kind === "vulture" ? 0.06 : 0.018;
+    const chord = kind === "owl" ? 0.024 : 0.02;
+    const flex = 0.006 * Math.sin(b.phase * 1.3);
+    const parts = [];
+    for (const side of [-1, 1]) {
+      const spine = (t) => [side * (0.028 + 0.125 * t), -dihedral * t * t + flex * t * t + side * 0.025 * Math.cos(b.angle) * t * t * t];
+      for (let i = 0;i < 6; i++)
+        parts.push(cap(...T(...spine(i / 6)), ...T(...spine((i + 1) / 6)), chord * (1 - 0.3 * (i / 6)) * S, chord * (1 - 0.3 * ((i + 1) / 6)) * S, main));
+      const [tu, tv] = spine(0.92);
+      if (kind === "owl") {
+        parts.push(ell(...T(tu, tv), 0.022 * S, 0.016 * S, roll, main));
+        continue;
+      }
+      const [pu, pv] = spine(0.8);
+      const base = Math.atan2(tv - pv, tu - pu);
+      for (const spread of [-0.5, -0.25, 0, 0.22, 0.42]) {
+        const a = base + spread * side;
+        parts.push(cap(...T(tu, tv), ...T(tu + Math.cos(a) * 0.03, tv + Math.sin(a) * 0.03), 0.005 * S, 0.0015 * S, main));
+      }
+    }
+    parts.push(cap(...T(0, -0.006), ...T(0, 0.04), 0.014 * S, 0.01 * S, main));
+    if (kind === "owl") {
+      parts.push(cap(...T(0, 0.035), ...T(0, 0.05), 0.01 * S, 0.012 * S, main));
+      parts.push(ell(...T(0, -0.02), 0.018 * S, 0.016 * S, roll, pale));
+      for (const side of [-1, 1])
+        parts.push(cap(...T(side * 0.009, -0.031), ...T(side * 0.014, -0.045), 0.004 * S, 0.001 * S, main));
+      this.silhouette(parts, 0.7);
+      for (const side of [-1, 1])
+        this.add(...T(side * 0.006, -0.022), 1.2, 0.8, 0.15);
+      return;
+    }
+    parts.push(cap(...T(0, 0.035), ...T(0, 0.058), 0.008 * S, 0.014 * S, pale));
+    parts.push(cap(...T(0, -0.016), ...T(0, -0.006), 0.011 * S, 0.011 * S, pale));
+    if (kind === "eagle")
+      parts.push(cap(...T(0, -0.009), ...T(0, -0.004), 0.004 * S, 0.002 * S, [0.85, 0.55, 0.08]));
+    this.silhouette(parts, 0.7);
+  }
+  drawBat(b) {
+    const { A, H, look } = this;
+    const bx = (b.cx * A + b.rx * Math.cos(b.angle)) * H;
+    const by = (b.cy + b.ry * Math.sin(b.angle) + Math.sin(b.phase * 7) * 0.008) * H;
+    const S = H * 0.1;
+    const flap = Math.sin(this.time * 9 + b.phase * 3);
+    const c = look.flock;
+    const parts = [ell(bx, by, 0.07 * S, 0.12 * S, 0, c), ell(bx, by - 0.12 * S, 0.055 * S, 0.05 * S, 0, c)];
+    for (const side of [-1, 1]) {
+      const sh = [bx + side * 0.04 * S, by - 0.05 * S];
+      const tip = [bx + side * 0.55 * S, by + (-0.02 + flap * 0.3) * S];
+      const el = [lerp(sh[0], tip[0], 0.42), lerp(sh[1], tip[1], 0.42) - (0.1 - flap * 0.04) * S];
+      for (const [p, q, depth2] of [[sh, el, 0.11], [el, tip, 0.085]]) {
+        const angle = Math.atan2(q[1] - p[1], q[0] - p[0]);
+        const half = Math.hypot(q[0] - p[0], q[1] - p[1]) / 2;
+        parts.push(ell((p[0] + q[0]) / 2 - Math.sin(angle) * depth2 * S * 0.6, (p[1] + q[1]) / 2 + Math.abs(Math.cos(angle)) * depth2 * S * 0.6, half, depth2 * S, angle, c));
+      }
+      parts.push(cap(...sh, ...el, 0.025 * S, 0.018 * S, c));
+      parts.push(cap(...el, ...tip, 0.018 * S, 0.004 * S, c));
+      parts.push(cap(bx + side * 0.03 * S, by - 0.14 * S, bx + side * 0.05 * S, by - 0.22 * S, 0.025 * S, 0.004 * S, c));
+    }
+    this.silhouette(parts, 0.35);
+  }
+  drawCoyote(c) {
+    const x = this.coyoteX + 0.5;
+    const gy = this.nearTop[this.coyoteX] + 0.5;
+    const S = 0.1 * this.H;
+    const face = this.orbX > x ? 1 : -1;
+    const P = (u, v) => [x + u * face * S, gy + v * S];
+    const k = this.look.coyote;
+    const a = lerp(-0.15, -1.2, c.head);
+    const head = [0.2, -0.66];
+    const R = (u, v) => P(head[0] + u * Math.cos(a) - v * Math.sin(a), head[1] + u * Math.sin(a) + v * Math.cos(a));
+    const ears = 0.4 * c.head + (c.howl - c.head) * 2;
+    const sweep = Math.sin(this.time * CREATURE_SPEED3 * 1.7) ** 3 * 0.04;
+    const tail = (t) => P(-0.18 - t * 0.3, -0.07 + t * 0.04 - Math.sin(Math.PI * t) * 0.04 + sweep * t);
+    this.silhouette([
+      ...chain(tail, 3, 0.05 * S, 0.065 * S, k),
+      ell(...tail(1), 0.06 * S, 0.04 * S, 0, k),
+      ell(...P(-0.08, -0.15), 0.16 * S, 0.15 * S, 0, k),
+      ell(...P(0.02, -0.03), 0.12 * S, 0.03 * S, 0, k),
+      cap(...P(-0.04, -0.2), ...P(0.1, -0.48), 0.14 * S, 0.105 * S, k),
+      cap(...P(0.12, -0.42), ...P(0.16, -0.03), 0.055 * S, 0.03 * S, k),
+      cap(...P(0.08, -0.42), ...P(0.11, -0.03), 0.05 * S, 0.028 * S, k),
+      ell(...P(0.18, -0.02), 0.045 * S, 0.022 * S, 0, k),
+      cap(...P(0.1, -0.48), ...P(head[0], head[1]), 0.085 * S, 0.06 * S, k),
+      ell(...R(0, 0), 0.075 * S, 0.058 * S, a * face, k),
+      cap(...R(0.02, 0.005), ...R(0.17, 0.02), 0.042 * S, 0.014 * S, k),
+      cap(...R(-0.025, -0.04), ...R(-0.05 - ears * 0.05, -0.15 + ears * 0.03), 0.03 * S, 0.004 * S, k),
+      cap(...R(0.01, -0.045), ...R(-0.005 - ears * 0.05, -0.15 + ears * 0.03), 0.027 * S, 0.004 * S, k)
+    ], 1.3);
+  }
+  drawSnake(s) {
+    const H = this.H;
+    const length = 0.2;
+    const step = 0.006;
+    const points = [];
+    let walked = 0;
+    let next = 0;
+    for (let i = s.trail.length - 1;i > 0 && next <= length; i--) {
+      const a = s.trail[i];
+      const b = s.trail[i - 1];
+      const seg = Math.hypot(a.x - b.x, a.y - b.y);
+      while (next <= walked + seg && next <= length) {
+        const t = seg ? (next - walked) / seg : 0;
+        points.push([lerp(a.x, b.x, t), lerp(a.y, b.y, t)]);
+        next += step;
+      }
+      walked += seg;
+    }
+    if (points.length < 2)
+      return;
+    const [body2, band, rattle] = this.look.snake;
+    const at = (i) => {
+      const [x, y] = points[i];
+      const [px, py] = points[Math.min(points.length - 1, i + 1)];
+      const [qx, qy] = points[Math.max(0, i - 1)];
+      const tl = Math.hypot(px - qx, py - qy) || 1;
+      const s0 = i * step;
+      const wave2 = 0.006 * smoothstep(0, 0.03, s0) * Math.sin(s0 * 60 - s.phase);
+      return [(x + -(py - qy) / tl * wave2) * H, (y + (px - qx) / tl * wave2) * H];
+    };
+    const r = (j) => 0.0075 * (1 - (j * step / length) ** 1.5 * 0.7) * H;
+    const parts = points.slice(1).map((_, i) => cap(...at(i + 1), ...at(i), r(i + 1), r(i), i > points.length - 5 ? rattle : Math.floor(i * step / 0.02) % 2 ? band : body2));
+    const [hx, hy] = at(0);
+    const [nx, ny] = at(1);
+    const heading = Math.atan2(hy - ny, hx - nx);
+    parts.push(ell(hx, hy, 0.013 * H, 0.009 * H, heading, body2));
+    this.silhouette(parts, 0.7);
+    this.add(hx + Math.cos(heading) * 0.005 * H, hy - 0.002 * H, 0.02, 0.02, 0.02);
+  }
+  drawRoadrunner() {
+    const { H, look } = this;
+    const r = this.roadrunner;
+    for (const p of this.puffs) {
+      const c = scale(look.frontDune, 1.35);
+      this.disc(p.x * H, p.y * H - p.age * 0.006 * H, (0.006 + p.age * 0.005) * H, c[0], c[1], c[2], (1 - p.age / 4) * 0.4);
+    }
+    const running = r.halt < 0 || r.t > r.halt + 2;
+    const x = r.x * H;
+    const gy = this.ground(r.x / this.A) + 1;
+    const S = 0.14 * H;
+    this.shadow(x - 0.05 * S, gy, 0.5 * S, 0.6 * S, 0.6);
+    const P = (u, v) => [x + u * S, gy + v * S];
+    const bob2 = running ? 0 : Math.max(0, Math.sin((r.t - r.halt) * 12)) * 0.05;
+    const tail = running ? -0.47 : -0.78;
+    const body2 = scale(look.coyote, 0.7);
+    const dark = look.hornTip;
+    const legs = running ? [Math.sin(r.stride) * 0.16, -Math.sin(r.stride) * 0.16] : [0.03, -0.03];
+    this.silhouette([
+      ...legs.map((dx, i) => cap(...P(0, -0.32), ...P(dx, i === 0 && running ? -0.04 * Math.max(0, Math.cos(r.stride)) : 0), 0.02 * S, 0.012 * S, dark)),
+      ell(...P(0, -0.4), 0.2 * S, 0.075 * S, -0.15, body2),
+      cap(...P(-0.14, -0.42), ...P(-0.5, tail), 0.05 * S, 0.03 * S, body2),
+      cap(...P(0.12, -0.43), ...P(0.22, -0.58 + bob2), 0.045 * S, 0.035 * S, body2),
+      ell(...P(0.25, -0.62 + bob2), 0.07 * S, 0.055 * S, 0, body2),
+      cap(...P(0.22, -0.67 + bob2), ...P(0.15, running ? -0.71 : -0.79 + bob2), 0.035 * S, 0.01 * S, dark),
+      cap(...P(0.3, -0.62 + bob2), ...P(0.45, -0.6 + bob2), 0.02 * S, 0.006 * S, dark)
+    ], 0.7);
+    this.add(...P(0.27, -0.635 + bob2), 0.02, 0.02, 0.02);
+  }
+  drawTumbleweed() {
+    const t = this.tumbleweed;
+    if (t.x < -5)
+      return;
+    const H = this.H;
+    const R = 0.035 * H;
+    const cx = t.x * H;
+    const hop = Math.abs(Math.sin(t.hop)) * 0.012 * H;
+    const gy = this.ground(t.x / this.A);
+    this.shadow(cx, gy, R * 2, R * 2, 1, hop);
+    const cy = gy - R + 1 - hop;
+    const cs = Math.cos(t.spin);
+    const sn = Math.sin(t.spin);
+    const sl = Math.hypot(this.orbX - cx, this.orbY - cy) || 1;
+    const c = this.look.twig;
+    for (const [u, v] of this.twigs) {
+      const ru = u * cs - v * sn;
+      const rv = u * sn + v * cs;
+      const lit = Math.max(0, (ru * (this.orbX - cx) + rv * (this.orbY - cy)) / sl);
+      const k = 0.75 + lit * 0.7;
+      this.disc(cx + ru * R, cy + rv * R, 0.6, c[0] * k, c[1] * k, c[2] * k, 0.9);
+    }
+  }
+  drawDust() {
+    const { H, look } = this;
+    const glint = look.style === "rim" ? 3 : 0;
+    for (const d of this.dust) {
+      const x = d.x * H;
+      const y = d.y * H;
+      const k = (0.4 + d.s * 0.6) * (1 + glint * Math.exp(-Math.hypot(x - this.orbX, y - this.orbY) / (0.15 * H)));
+      this.splat(x, y, look.dust[0] * k, look.dust[1] * k, look.dust[2] * k);
+    }
+  }
+}
+function shimmer(hdr, background, W, H, t) {
+  for (let y = Math.floor((HORIZON2 - 0.05) * H);y < Math.ceil((HORIZON2 + 0.02) * H); y++) {
+    const v = y / H;
+    const d = 0.0025 * H * Math.exp(-(((v - HORIZON2 + 0.008) / 0.02) ** 2)) * Math.sin(v * 520 + t * 5) * (0.6 + 0.4 * Math.sin(v * 90 - t * 1.7));
+    if (d < 0.02 && d > -0.02)
+      continue;
+    const shift = Math.floor(d);
+    const f = d - shift;
+    const row = y * W;
+    for (let x = 0;x < W; x++) {
+      const a = (row + clamp(x - shift, 0, W - 1)) * 3;
+      const b = (row + clamp(x - shift - 1, 0, W - 1)) * 3;
+      const o = (row + x) * 3;
+      hdr[o] = background[a] * (1 - f) + background[b] * f;
+      hdr[o + 1] = background[a + 1] * (1 - f) + background[b + 1] * f;
+      hdr[o + 2] = background[a + 2] * (1 - f) + background[b + 2] * f;
+    }
+  }
+}
+function mix2(a, b, t) {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+function scale(c, k) {
+  return [c[0] * k, c[1] * k, c[2] * k];
+}
+function mesas(A, perWidth, seed, width, height) {
+  const count = Math.max(2, Math.round(A * perWidth));
+  return Array.from({ length: count }, (_, i) => ({
+    c: (i + 0.5 + (hash(seed + i * 3.7) - 0.5) * 0.6) * (A / count),
+    w: lerp(width[0], width[1], hash(seed + i * 5.3)),
+    h: lerp(height[0], height[1], hash(seed + i * 7.1)),
+    slope: lerp(0.02, 0.04, hash(seed + i * 9.9))
+  }));
+}
+function profile(list, u) {
+  const top = list.reduce((max, m) => Math.max(max, m.h * (1 - smoothstep(m.w, m.w + m.slope, Math.abs(u - m.c)))), 0);
+  return top + (fbm1(u * 40, 5) - 0.5) * 0.004 * (top > 0 ? 1 : 0.5);
+}
+function buildTwigs() {
+  const points = [];
+  for (let j = 0;j < 22; j++) {
+    const a0 = hash(j * 1.7) * TAU;
+    const span = 1.2 + hash(j * 2.3) * 2;
+    const k = 1 + hash(j * 3.1) * 3;
+    const p = hash(j * 4.7) * TAU;
+    for (let i = 0;i < 12; i++) {
+      const t = i / 11;
+      const a = a0 + t * span;
+      const r = 0.55 + 0.45 * Math.sin(t * Math.PI * k + p);
+      points.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+  }
+  return points;
+}
+var desert = {
+  id: "desert",
+  name: "Desert",
+  description: "Mesas and dunes with a saguaro, a cow skull, and a tumbleweed now and then",
+  activity: {
+    calm: "Mesas, a saguaro and a skull",
+    lively: "Adds a soaring eagle (an owl at night) and a rattlesnake",
+    teeming: "Adds vultures (bats at night), a howling coyote and more cacti"
+  },
+  scrim: {
+    day: [
+      [20, 38, 64],
+      [52, 40, 32],
+      [44, 28, 16]
+    ],
+    sunset: [
+      [24, 12, 8],
+      [40, 18, 10],
+      [16, 8, 6]
+    ],
+    night: [
+      [4, 6, 16],
+      [6, 8, 20],
+      [4, 4, 10]
+    ]
+  },
+  create: (settings) => new Desert(settings)
+};
+
+// wallpapers/dome.ts
+var TIME_SCALE4 = 0.35;
+var CREATURE_SPEED4 = 0.25;
+var HORIZON3 = 0.47;
+var BASE = 0.64;
+var RADIUS = 0.27;
+var FOOT = 0.26;
+var LATERAL = 0.8;
+var RIPPLE_Y = 0.21;
+var RIPPLE_FLAT = 0.2;
+var RINGS = 26;
+var RAY_N = 2048;
+var SWELL = 55;
+var BIKE = 5.5;
+var LOOKS4 = {
+  day: {
+    sky: [
+      [0, [0.28, 0.31, 0.33]],
+      [0.3, [0.45, 0.47, 0.46]],
+      [0.47, [0.66, 0.65, 0.58]]
+    ],
+    ripple: [0.14, 0.14, 0.12],
+    clouds: [
+      [0.86, 0.86, 0.82],
+      [0.42, 0.45, 0.45]
+    ],
+    bank: [
+      [0.84, 0.84, 0.79],
+      [0.36, 0.39, 0.39]
+    ],
+    street: [0.08, 0.1, 0.08],
+    roof: [0.25, 0.31, 0.23],
+    haze: [0.48, 0.5, 0.45],
+    glow: [0.12, 0.6, 0.25],
+    reach: 0.6,
+    dome: [0.012, 0.014, 0.016],
+    rim: [0.1, 0.11, 0.12],
+    bolt: [0.7, 0.75, 0.9],
+    tint: [1, 1, 1]
+  },
+  sunset: {
+    sky: [
+      [0, [0.06, 0.02, 0.04]],
+      [0.22, [0.3, 0.07, 0.05]],
+      [0.47, [0.95, 0.36, 0.1]]
+    ],
+    ripple: [0.42, 0.14, 0.06],
+    clouds: [
+      [0.95, 0.42, 0.15],
+      [0.16, 0.05, 0.06]
+    ],
+    bank: [
+      [0.7, 0.28, 0.1],
+      [0.14, 0.05, 0.05]
+    ],
+    street: [0.03, 0.015, 0.015],
+    roof: [0.16, 0.08, 0.06],
+    haze: [0.42, 0.16, 0.07],
+    glow: [0.7, 0.95, 0.1],
+    reach: 0.9,
+    dome: [0.006, 0.003, 0.004],
+    rim: [0.3, 0.1, 0.04],
+    bolt: [1, 0.45, 0.6],
+    tint: [0.4, 0.22, 0.18]
+  },
+  night: {
+    sky: [
+      [0, [0.002, 0.003, 0.01]],
+      [0.28, [0.006, 0.011, 0.034]],
+      [0.47, [0.018, 0.036, 0.1]]
+    ],
+    ripple: [0.04, 0.09, 0.3],
+    clouds: [
+      [0.07, 0.16, 0.46],
+      [0.008, 0.016, 0.05]
+    ],
+    bank: [
+      [0.05, 0.11, 0.32],
+      [0.006, 0.012, 0.035]
+    ],
+    street: [0.003, 0.009, 0.008],
+    roof: [0.02, 0.06, 0.045],
+    haze: [0.02, 0.045, 0.1],
+    glow: [0.03, 1, 0.4],
+    reach: 1,
+    dome: [0.002, 0.003, 0.006],
+    rim: [0.025, 0.06, 0.2],
+    bolt: [0.3, 0.45, 1.3],
+    tint: [0.12, 0.16, 0.2]
+  }
+};
+
+class Dome extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  weather;
+  lighting = { style: "rim", color: [0, 1, 0], x: 0, y: 0 };
+  cx = 1;
+  R = RADIUS;
+  clouds = [];
+  cloudsA = 0;
+  storm = makeStorm();
+  rays = new Float32Array(RAY_N);
+  rayPhases = new Float32Array(RAY_N);
+  glowAdd = new Float32Array(0);
+  rayAdd = new Float32Array(0);
+  rho = new Float32Array(0);
+  phases = new Float32Array(0);
+  lit = new Int32Array(0);
+  litBox = [0, 0, -1, -1];
+  tex = new Float32Array(0);
+  dist = new Float32Array(0);
+  skyRows = 0;
+  rings = [];
+  ringData = new Float32Array(0);
+  chunks = [];
+  thrown = [];
+  puffs = [];
+  swells = 0;
+  flash = { t: -1, wait: 0, x: 0 };
+  visitor;
+  bike = { wait: eggWait() * TIME_SCALE4, t: -1, trail: [] };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS4[settings.time];
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON3);
+    this.flash.wait = rand(6, 14);
+    const rays = [
+      [0, 0.03, 1.2],
+      [-0.12, 0.012, 0.7],
+      [0.17, 0.015, 0.8]
+    ];
+    for (let i = 0;i < 46; i++) {
+      const at = (Math.random() < 0.5 ? -1 : 1) * Math.random() ** 1.3 * Math.PI;
+      rays.push([at, rand(0.005, 0.018), rand(0.25, 0.9) * (1 - 0.65 * Math.abs(at / Math.PI))]);
+    }
+    for (const [i, [at, width, strength]] of rays.entries()) {
+      const phase = hash(i * 7.31) * TAU;
+      for (let k = Math.floor(((at - 4 * width) / TAU + 0.5) * RAY_N);k <= Math.ceil(((at + 4 * width) / TAU + 0.5) * RAY_N); k++) {
+        const n = (k % RAY_N + RAY_N) % RAY_N;
+        const d = ((k + 0.5) / RAY_N - 0.5) * TAU - at;
+        const v = strength * Math.exp(-((d / width) ** 2));
+        if (v <= this.rays[n])
+          continue;
+        this.rays[n] = v;
+        this.rayPhases[n] = phase;
+      }
+    }
+    if (settings.activity === "calm")
+      return;
+    const count = settings.activity === "teeming" ? 16 : 7;
+    const top = settings.activity === "teeming" ? 0.42 : 0.34;
+    this.chunks = Array.from({ length: count }, () => ({ a: rand(0, TAU), r: rand(1.02, 1.35), lift: rand(0, top), speed: rand(0.6, 1.2), size: rand(0.008, 0.016), spin: rand(0, TAU) }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE4;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED4;
+    this.creatureTime += cdt;
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    driftClouds(this.clouds, this.A, dt * 0.5);
+    if (this.gloom > 0)
+      driftClouds(this.storm, this.A, dt);
+    for (const r of this.rings)
+      r.r += 0.055 * dt;
+    this.rings = this.rings.filter((r) => r.r < 1.4);
+    const teeming = this.activity === "teeming";
+    const top = teeming ? 0.42 : 0.34;
+    for (const c of this.chunks) {
+      c.lift += (teeming ? 0.008 : 0.005) * c.speed * dt;
+      c.spin += 0.15 * c.speed * dt;
+      if (teeming)
+        c.a += 0.05 / c.r * dt;
+      if (c.lift < top)
+        continue;
+      c.lift = 0;
+      c.a = rand(0, TAU);
+    }
+    for (const t of this.thrown) {
+      t.age += dt;
+      t.vy += 0.07 * dt;
+      t.x += t.vx * dt;
+      t.y += t.vy * dt;
+      t.spin += 0.8 * dt;
+    }
+    this.thrown = this.thrown.filter((t) => t.age < 5);
+    for (const p of this.puffs)
+      p.age += dt;
+    this.puffs = this.puffs.filter((p) => p.age < 3);
+    if (teeming) {
+      const n = Math.floor(this.time / SWELL + 0.5);
+      if (n > this.swells)
+        this.rings.push({ x: this.cx, y: RIPPLE_Y, r: 0, strength: 1.3 });
+      this.swells = n;
+      this.stepFlash(dt);
+    }
+    this.stepVisitor(cdt);
+    this.stepBike(dt, cdt);
+  }
+  render() {
+    this.restore();
+    const { W, H, look, hdr } = this;
+    const swell = this.activity === "teeming" ? 0.5 - 0.5 * Math.cos(this.time / SWELL * TAU) : 0;
+    const breath = Math.sin(this.time / 14 * TAU) * (this.activity === "calm" ? 0.1 : 0.14);
+    const level2 = (1 + breath + 0.3 * swell) * (1 - 0.5 * this.gloom);
+    const pulse = this.activity === "calm" ? 0 : look.reach;
+    shine(hdr, this.lit, this.glowAdd, this.rayAdd, this.rho, this.phases, look.glow, level2 - 1, pulse, this.time);
+    const [bx0, by0, bx1, by1] = this.litBox;
+    if (bx1 >= bx0)
+      touch(hdr, bx0, by0, bx1, by1);
+    this.drawRipples();
+    const dark = look.bank[1];
+    if (this.gloom > 0)
+      paintStorm(hdr, W, H, this.storm, [dark[0] * 1.6, dark[1] * 1.6, dark[2] * 1.6], dark, this.gloom);
+    const [top, bottom] = this.weather.scud ?? look.clouds;
+    paintClouds(hdr, W, H, this.clouds, top, bottom, 0.55);
+    if (this.flash.t >= 0)
+      this.drawFlash();
+    if (this.visitor)
+      this.drawVisitor();
+    for (const c of this.chunks)
+      if (Math.sin(c.a) < 0)
+        this.drawChunk(c);
+    for (const p of this.puffs)
+      this.drawPuff(p);
+    const g = look.glow;
+    for (const t of this.thrown)
+      this.drawRubble(t.x, t.y, t.size * clamp((5 - t.age) / 1.5, 0, 1), t.spin, { style: "rim", color: g, x: t.x * H, y: (t.y + 0.05) * H });
+    if (this.bike.t >= 0)
+      this.drawBike();
+    this.weather.draw(hdr, W, H);
+    fillDome(hdr, W, H, this.cx * H, BASE * H, this.R * (1 + 0.05 * swell) * H, FOOT, look.dome, look.rim, look.glow, level2, this.px);
+    for (const c of this.chunks)
+      if (Math.sin(c.a) >= 0)
+        this.drawChunk(c);
+    this.finish();
+  }
+  visit() {
+    if (this.visitor)
+      return;
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    this.visitor = { x: dir > 0 ? -0.15 : this.A + 0.15, y: this.openRow(0.08, 0.28), dir };
+  }
+  poke(x, y) {
+    const dome = insideDome(x * this.H, y * this.H, this.cx * this.H, BASE * this.H, this.R * this.H, FOOT) > 0;
+    if (y < HORIZON3 || dome) {
+      if (this.rings.length < 6)
+        this.rings.push(dome ? { x: this.cx, y: RIPPLE_Y, r: 0, strength: 1.3 } : { x, y, r: 0, strength: 1.6 });
+      return;
+    }
+    if (this.puffs.length > 3)
+      return;
+    this.puffs.push({ x, y, age: 0 });
+    for (let i = 0;i < 6; i++)
+      this.thrown.push({ x: x + rand(-0.01, 0.01), y, vx: rand(-0.04, 0.04), vy: -rand(0.07, 0.13), age: 0, size: rand(0.005, 0.01), spin: rand(0, TAU) });
+  }
+  layout() {
+    const { W, H, A, look, hdr, px } = this;
+    this.cx = A / 2;
+    this.R = Math.min(RADIUS, 0.36 * A);
+    this.lighting = { style: "rim", color: [look.glow[0] * 0.35, look.glow[1] * 0.35, look.glow[2] * 0.35], x: this.cx * H, y: BASE * H };
+    if (this.cloudsA !== A) {
+      const n = Math.ceil(A * 3.5) + 1;
+      this.clouds = makeClouds(n, "cumulus", HORIZON3 - 0.06, HORIZON3 - 0.035);
+      for (const [i, c] of this.clouds.entries())
+        c.x = (i + Math.random() * 0.7) / n * (A + 0.3) - 0.15;
+      this.cloudsA = A;
+    }
+    this.glowAdd = new Float32Array(W * H * 3);
+    this.rayAdd = new Float32Array(W * H);
+    this.rho = new Float32Array(W * H);
+    this.phases = new Float32Array(W * H);
+    this.paintSky();
+    this.weather.cover(hdr, W, H);
+    this.skyRows = Math.ceil(HORIZON3 * H);
+    this.tex = new Float32Array(W * this.skyRows);
+    this.dist = new Float32Array(W * this.skyRows);
+    for (let y = 0;y < this.skyRows; y++)
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const v = (y + 0.5) / H;
+        const p = y * W + x;
+        this.tex[p] = (0.3 + 0.7 * smoothstep(0.35, 0.75, fbm2(u * 3.5 + fbm1(v * 14, 4) * 0.5, v * 24, 4))) * smoothstep(0.02, 0.2, v);
+        this.dist[p] = Math.hypot(u - this.cx, (v - RIPPLE_Y) / RIPPLE_FLAT);
+      }
+    if (this.activity === "calm")
+      ripples(hdr, W, H, this.skyRows, this.tex, this.dist, look.ripple, 1, 0, this.ringData, 0, this.cx * H);
+    this.paintBank();
+    this.paintCity();
+    fillDome(hdr, W, H, this.cx * H, BASE * H, this.R * H, FOOT, look.dome, look.rim, look.glow, 1, px);
+    const list = [];
+    const box = [W, H, -1, -1];
+    for (let y = 0;y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const p = y * W + x;
+        const o = p * 3;
+        if (Math.max(this.glowAdd[o], this.glowAdd[o + 1], this.glowAdd[o + 2]) < 0.004 && this.rayAdd[p] < 0.004)
+          continue;
+        if (insideDome(x + 0.5, y + 0.5, this.cx * H, BASE * H, this.R * H, FOOT) > 1)
+          continue;
+        list.push(p);
+        box[0] = Math.min(box[0], x);
+        box[1] = Math.min(box[1], y);
+        box[2] = Math.max(box[2], x);
+        box[3] = Math.max(box[3], y);
+      }
+    this.lit = Int32Array.from(list);
+    this.litBox = box;
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  paintSky() {
+    const { W, H, look, hdr } = this;
+    const stops = look.sky;
+    const cx = this.cx;
+    const R = this.R;
+    const g = look.glow;
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      const i = stops.findIndex(([at]) => at >= v);
+      const [a, from] = stops[Math.max(0, i - 1)];
+      const [b, to] = stops[i < 0 ? stops.length - 1 : i];
+      const k = b > a ? smoothstep(a, b, v) : 1;
+      const streak2 = smoothstep(0.08, 0.44, v) * 0.35;
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const tex = smoothstep(0.35, 0.75, fbm2(u * 3.5 + fbm1(v * 14, 4) * 0.5, v * 24, 4));
+        const d = Math.max(0, Math.hypot(u - cx, (v - BASE) * 1.3) - R);
+        const halo = 0.09 * look.reach * Math.exp(-d / 0.09) * smoothstep(BASE - R * 1.3, BASE, v);
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(from[0], to[0], k) + look.ripple[0] * tex * streak2;
+        hdr[o + 1] = lerp(from[1], to[1], k) + look.ripple[1] * tex * streak2;
+        hdr[o + 2] = lerp(from[2], to[2], k) + look.ripple[2] * tex * streak2;
+        if (halo < 0.002)
+          continue;
+        hdr[o] += g[0] * halo;
+        hdr[o + 1] += g[1] * halo;
+        hdr[o + 2] += g[2] * halo;
+        this.glowAdd[o] = g[0] * halo;
+        this.glowAdd[o + 1] = g[1] * halo;
+        this.glowAdd[o + 2] = g[2] * halo;
+      }
+    }
+  }
+  paintBank() {
+    const { W, H, A, look, hdr, px } = this;
+    const [lit, shade] = this.weather.scud ?? look.bank;
+    const balls = [];
+    for (let x = -0.15, k = 0;x < A + 0.15; k++) {
+      const big = 0.6 + 0.8 * smoothstep(this.R * 0.6, Math.max(this.R + 0.2, A / 2), Math.abs(x - this.cx));
+      const r = (0.036 + 0.036 * hash(k * 3.7)) * big;
+      const near2 = hash(k * 5.3);
+      const y = HORIZON3 + 0.004 - r * 0.2 - (1 - near2) * 0.02;
+      balls.push([x, y, r]);
+      for (let n = 0;n < 3; n++) {
+        const a = -Math.PI / 2 + (hash(k * 7.1 + n) - 0.5) * 2.2;
+        const br = r * (0.4 + 0.3 * hash(k * 2.9 + n * 4.1));
+        balls.push([x + Math.cos(a) * r * 0.75, y + Math.sin(a) * r * 0.75, br]);
+      }
+      x += r * (1 + 0.8 * hash(k * 9.1));
+    }
+    balls.sort((a, b) => a[1] - b[1]);
+    const bottom = (HORIZON3 + 0.008) * H;
+    for (let x = 0;x < W; x++) {
+      const u = (x + 0.5) / H;
+      const column = balls.filter(([bx, , r]) => Math.abs(u - bx) < r + 2 * px / H);
+      if (!column.length)
+        continue;
+      const top = Math.max(0, Math.floor(Math.min(...column.map(([, by, r]) => (by - r) * H)) - 1));
+      for (let y = top;y < Math.min(H, Math.ceil(bottom)); y++) {
+        const v = (y + 0.5) / H;
+        let cov = clamp((bottom - y - 0.5) / px, 0, 1) * (v > HORIZON3 - 0.01 ? 1 : 0);
+        let front;
+        for (const ball of column) {
+          const e = (ball[2] - Math.hypot(u - ball[0], v - ball[1])) * H;
+          if (e <= -px)
+            continue;
+          cov = Math.max(cov, clamp(e / px + 0.5, 0, 1));
+          front = ball;
+        }
+        if (cov <= 0)
+          continue;
+        const [bx, by, r] = front ?? [u, v - 0.02, 0.02];
+        const ny = clamp((v - by) / r, -1, 1);
+        const nz = Math.sqrt(Math.max(0, 1 - ny * ny - ((u - bx) / r) ** 2));
+        const k = clamp(0.5 - 0.55 * ny + 0.15 * nz, 0, 1) * (0.55 + 0.45 * smoothstep(HORIZON3 + 0.008, HORIZON3 - 0.05, v));
+        const lump = 0.85 + 0.3 * fbm2(u * 14, v * 30, 3);
+        const o = (y * W + x) * 3;
+        for (let c = 0;c < 3; c++)
+          hdr[o + c] += (lerp(shade[c], lit[c], k * k) * lump - hdr[o + c]) * cov;
+      }
+    }
+  }
+  paintCity() {
+    const { W, H, look, hdr, px } = this;
+    const p0 = BASE - HORIZON3;
+    const Zb = 1 / p0;
+    const Rg = this.R / (p0 * LATERAL);
+    const NA = this.cells ? 150 : 210;
+    const NQ = 6;
+    const g = look.glow;
+    for (let y = Math.floor(HORIZON3 * H);y < H; y++) {
+      const t = Math.max(0.002, (y + 0.5) / H - HORIZON3);
+      const dZ = 1 / t - Zb;
+      const haze2 = smoothstep(0.004, 0.1, t);
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const X = (u - this.cx) / (t * LATERAL);
+        const rho = Math.hypot(X, dZ);
+        const psi = Math.atan2(X, -dZ);
+        const a = (psi / TAU + 0.5) * NA;
+        const i = Math.floor(a);
+        const fa = a - i;
+        const q = Math.log(Math.max(rho, 0.05)) * NQ + hash(i * 1.37) * 5;
+        const j = Math.floor(q);
+        const fq = q - j;
+        const hb = hash2(i, j);
+        const margin = 0.08 + 0.3 * hash(i * 5.1 + j * 2.3);
+        const sub = hash(i * 31.7 + j * 7.3 + Math.floor(fa * 3));
+        const start = 0.04 + 0.16 * sub;
+        const len = 0.45 + 0.5 * hash(i * 3.1 + j * 5.7);
+        const solid = hb > 0.12 && fa > margin * 0.5 && fa < 1 - margin * 0.5 && fq > start && fq < start + len;
+        const along2 = solid ? (fq - start) / len : 0;
+        const across = rho * TAU / NA * Math.hypot(Math.cos(psi) * t * LATERAL, Math.sin(psi) * t * t);
+        const length = rho * 0.18 * Math.hypot(Math.sin(psi) * t * LATERAL, Math.cos(psi) * t * t);
+        const span = Math.min(across, length * 0.6) * H / px;
+        const detail = smoothstep(1.2, 3.5, span);
+        const out = Math.max(0, rho - Rg) / Rg;
+        const forward = 0.4 + 0.6 * Math.max(0, Math.cos(psi));
+        const district = 0.4 + 1.2 * fbm2(u * 3, y / H * 6, 3);
+        const tone = solid ? (0.55 + 0.45 * hb) * (1 - 0.5 * along2) : 0.25;
+        const light = solid ? Math.exp(-along2 / 0.18) * 1.2 + 0.08 : 0.3;
+        const ray = solid ? 0.35 * Math.exp(-along2 / 0.3) : 1;
+        const kTone = lerp(0.45, tone, detail) * district;
+        const kLight = lerp(0.35, light, detail);
+        const kRay = lerp(0.5, ray, detail);
+        const blaze = 1.6 * Math.exp(-out / 0.06) * lerp(0.6, solid ? 0.35 + 0.65 * Math.exp(-along2 / 0.25) : 1, detail);
+        const L = blaze + look.reach * forward * (0.55 * Math.exp(-out / 0.3) + 0.2 * Math.exp(-out / 1.6)) * kLight * district;
+        const r = clamp(Math.floor((psi / TAU + 0.5) * RAY_N), 0, RAY_N - 1);
+        const rayLight = this.rays[r] * Math.exp(-out / 2.5) * kRay * look.reach;
+        const p = y * W + x;
+        const o = p * 3;
+        for (let c = 0;c < 3; c++) {
+          const amb = lerp(look.street[c], look.roof[c], kTone);
+          const add = g[c] * (L + rayLight * 0.5) * haze2;
+          hdr[o + c] = lerp(look.haze[c], amb, haze2) + add;
+          this.glowAdd[o + c] = add;
+        }
+        this.rayAdd[p] = rayLight * haze2;
+        this.rho[p] = rho;
+        this.phases[p] = this.rayPhases[r];
+      }
+    }
+  }
+  drawRipples() {
+    const rings = this.rings;
+    if (this.activity === "calm" && !rings.length)
+      return;
+    const H = this.H;
+    if (this.ringData.length < rings.length * 4)
+      this.ringData = new Float32Array(rings.length * 4 + 8);
+    for (const [i, r] of rings.entries())
+      this.ringData.set([r.x * H, r.y * H, r.r, r.strength * (1 - r.r / 1.4)], i * 4);
+    const amp = this.activity === "calm" ? 0 : 1;
+    ripples(this.hdr, this.W, H, this.skyRows, this.tex, this.dist, this.look.ripple, amp, this.time * 0.3, this.ringData, rings.length, this.cx * H);
+  }
+  stepFlash(dt) {
+    const f = this.flash;
+    if (f.t >= 0) {
+      f.t += dt;
+      if (f.t > 0.9)
+        f.t = -1;
+      return;
+    }
+    f.wait -= dt;
+    if (f.wait > 0)
+      return;
+    f.wait = rand(8, 20);
+    f.t = 0;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    f.x = this.cx + side * rand(this.R + 0.12, Math.max(this.R + 0.16, this.A / 2 - 0.06));
+  }
+  drawFlash() {
+    const f = this.flash;
+    const H = this.H;
+    const k = Math.exp(-(((f.t - 0.1) / 0.06) ** 2)) + 0.6 * Math.exp(-(((f.t - 0.4) / 0.1) ** 2));
+    if (k < 0.02)
+      return;
+    lightPool(this.hdr, this.W, H, f.x * H, (HORIZON3 - 0.04) * H, 0.2 * H, 0.06 * H, this.look.bolt, 2.4 * k, 0.025 * k);
+  }
+  drawChunk(c) {
+    const top = this.activity === "teeming" ? 0.42 : 0.34;
+    const s = c.size * smoothstep(0, 0.025, c.lift) * smoothstep(top, top * 0.6, c.lift);
+    const x = this.cx + Math.cos(c.a) * c.r * this.R;
+    const y = BASE + Math.sin(c.a) * c.r * this.R * FOOT - c.lift;
+    this.drawRubble(x, y, s, c.spin);
+  }
+  drawPuff(p) {
+    const k = 1 - p.age / 3;
+    const H = this.H;
+    lightPool(this.hdr, this.W, H, p.x * H, (p.y - 0.02 * p.age) * H, (0.03 + 0.012 * p.age) * H, (0.02 + 0.008 * p.age) * H, this.look.glow, 3 * k, 0.35 * k * k * this.look.reach);
+  }
+  drawRubble(x, y, size, spin, lighting = this.lighting) {
+    if (size <= 0.001)
+      return;
+    const H = this.H;
+    const s = Math.max(size * H, this.cells ? 1.4 : 0.7);
+    const color = this.paint([0.1, 0.12, 0.11]);
+    this.shape([ell(x * H, y * H, s, s * 0.65, spin, color), ell(x * H + Math.cos(spin + 1.2) * s * 0.6, y * H + Math.sin(spin + 1.2) * s * 0.4, s * 0.55, s * 0.4, spin + 0.8, color)], lighting, 0.6);
+  }
+  stepVisitor(cdt) {
+    const v = this.visitor;
+    if (!v)
+      return;
+    v.x += v.dir * 0.3 * cdt;
+    if (v.x < -0.3 || v.x > this.A + 0.3)
+      this.visitor = undefined;
+  }
+  drawVisitor() {
+    const v = this.visitor;
+    if (!v)
+      return;
+    const H = this.H;
+    const x = v.x * H;
+    const y = v.y * H;
+    const s = 0.036 * H;
+    const d = v.dir;
+    const beam = this.look.bolt;
+    for (let i = 1;i <= 3; i++)
+      this.polygon([[x - s * 0.15, y + s * 0.3], [x + s * 0.15, y + s * 0.3], [x + s * (0.15 + 0.3 * i), y + s * (0.3 + 1.2 * i)], [x - s * (0.15 + 0.3 * i), y + s * (0.3 + 1.2 * i)]], [beam[0] * 0.4, beam[1] * 0.4, beam[2] * 0.4], 0.07);
+    const body2 = this.paint([0.32, 0.34, 0.33]);
+    this.shape([ell(x, y, s, s * 0.34, 0, body2), cap(x - d * s * 0.7, y - s * 0.06, x - d * s * 2, y - s * 0.16, s * 0.15, s * 0.06, body2), ell(x - d * s * 2, y - s * 0.3, s * 0.06, s * 0.2, 0, body2), cap(x - s * 0.5, y + s * 0.3, x + s * 0.5, y + s * 0.3, s * 0.05, s * 0.05, body2)], this.lighting, 0.8);
+    const r = this.paint([0.4, 0.4, 0.42]);
+    this.ellipse(x, y - s * 0.44, s * 1.5, Math.max(s * 0.05, this.cells ? 1 : 0.5), r[0], r[1], r[2], 0.5);
+    const t = this.creatureTime * 8;
+    if (Math.sin(t) > 0.4)
+      this.disc(x - d * s * 2, y - s * 0.45, Math.max(s * 0.09, 1), 1.8, 0.08, 0.05, 1);
+    if (Math.sin(t + 2.1) > 0.6)
+      this.disc(x + d * s * 0.6, y + s * 0.25, Math.max(s * 0.08, 1), 1.6, 0.8, 0.1, 1);
+  }
+  stepBike(dt, cdt) {
+    const b = this.bike;
+    for (const p of b.trail)
+      p.age += dt;
+    b.trail = b.trail.filter((p) => p.age < 5);
+    if (b.t < 0) {
+      b.wait -= dt;
+      if (b.wait > 0)
+        return;
+      b.t = 0;
+      return;
+    }
+    b.t += cdt;
+    const [x, y] = this.bikeAt(b.t);
+    const last = b.trail.at(-1);
+    if (b.t < BIKE && (!last || Math.hypot(x - last.x, y - last.y) > 0.006))
+      b.trail.push({ x, y, age: 0 });
+    if (b.t < BIKE || b.trail.length)
+      return;
+    b.t = -1;
+    b.wait = eggWait(true) * TIME_SCALE4;
+  }
+  bikeAt(t) {
+    const s = t / BIKE;
+    return [-0.1 + (this.A + 0.2) * s, 0.92 - 0.06 * Math.sin(s * Math.PI)];
+  }
+  drawBike() {
+    const b = this.bike;
+    const H = this.H;
+    const r = Math.max(0.004 * H, this.cells ? 1.2 : 0.6);
+    for (const p of b.trail)
+      this.ellipse(p.x * H, p.y * H, r * 1.6, r, 1.8, 0.06, 0.04, 0.6 * (1 - p.age / 5));
+    if (b.t >= BIKE)
+      return;
+    const [x, y] = this.bikeAt(b.t);
+    lightPool(this.hdr, this.W, H, x * H, y * H, 0.05 * H, 0.03 * H, [1, 0.08, 0.05], 3, 0.15);
+    this.disc(x * H, y * H, r * 1.2, 2.4, 0.15, 0.08, 1);
+  }
+}
+function insideDome(x, y, cx, by, R, foot) {
+  const dx = x - cx;
+  const dy = y - by;
+  if (dy <= 0)
+    return R - Math.hypot(dx, dy);
+  const ry = R * foot;
+  const r = Math.hypot(dx / R, dy / ry);
+  const grad = Math.hypot(dx / (R * R), dy / (ry * ry));
+  return r > 0 ? (1 - r) * r / Math.max(grad, 0.000001) : ry;
+}
+function fillDome(hdr, W, H, cx, by, R, foot, body2, rim, light, glow, unit) {
+  const x0 = Math.max(0, Math.floor(cx - R - 1));
+  const x1 = Math.min(W - 1, Math.ceil(cx + R + 1));
+  const y0 = Math.max(0, Math.floor(by - R - 1));
+  const y1 = Math.min(H - 1, Math.ceil(by + R * foot + 1));
+  touch(hdr, x0, y0, x1, y1);
+  const rimW = Math.max(0.03 * R, 1.2 * unit);
+  const footW = 0.035 * R;
+  for (let y = y0;y <= y1; y++)
+    for (let x = x0;x <= x1; x++) {
+      const sd = insideDome(x + 0.5, y + 0.5, cx, by, R, foot);
+      const cov = clamp(sd + 0.5, 0, 1);
+      if (cov <= 0)
+        continue;
+      const dy = y + 0.5 - by;
+      const inner = Math.max(0, sd);
+      const sky = Math.exp(-inner / rimW) * Math.sqrt(Math.max(0, -dy / R));
+      const low2 = smoothstep(-0.45 * R, R * foot, dy);
+      const g = glow * low2 * (Math.exp(-inner / footW) * 1.2 + 0.05 * low2 * low2);
+      const o = (y * W + x) * 3;
+      for (let c = 0;c < 3; c++)
+        hdr[o + c] += (body2[c] + rim[c] * sky + light[c] * g - hdr[o + c]) * cov;
+    }
+}
+function shine(hdr, list, glowAdd, rayAdd, rho, phases, glow, k, pulse, time) {
+  for (let n = 0;n < list.length; n++) {
+    const p = list[n];
+    const o = p * 3;
+    const ray = rayAdd[p];
+    let extra = 0;
+    if (pulse > 0 && ray > 0.01) {
+      const w = 0.5 + 0.5 * Math.sin(rho[p] * 1.3 - time * 0.9 + phases[p]);
+      extra = pulse * ray * w * w * w * w;
+    }
+    hdr[o] += glowAdd[o] * k + glow[0] * extra;
+    hdr[o + 1] += glowAdd[o + 1] * k + glow[1] * extra;
+    hdr[o + 2] += glowAdd[o + 2] * k + glow[2] * extra;
+  }
+}
+function ripples(hdr, W, H, rows, tex, dist, color, amp, phase, rings, count, cx) {
+  const x0 = count === 0 ? Math.max(0, Math.floor(cx - 1.2 * H)) : 0;
+  const x1 = count === 0 ? Math.min(W - 1, Math.ceil(cx + 1.2 * H)) : W - 1;
+  touch(hdr, x0, 0, x1, rows - 1);
+  for (let y = 0;y < rows; y++)
+    for (let x = x0;x <= x1; x++) {
+      const p = y * W + x;
+      const t = tex[p];
+      if (t <= 0.01)
+        continue;
+      let k = 0;
+      const d = dist[p];
+      if (amp > 0 && d < 1.2) {
+        const w = 0.5 + 0.5 * Math.cos(d * RINGS - phase);
+        k += amp * w * w * w * smoothstep(1.2, 0.1, d) * (0.6 + 0.6 * smoothstep(0.5, 0, d));
+      }
+      for (let i = 0;i < count; i++) {
+        const dx = (x + 0.5 - rings[i * 4]) / H;
+        const dy = (y + 0.5 - rings[i * 4 + 1]) / H / RIPPLE_FLAT;
+        const e = (Math.hypot(dx, dy) - rings[i * 4 + 2]) / 0.035;
+        if (e > -3 && e < 3)
+          k += rings[i * 4 + 3] * Math.exp(-e * e);
+      }
+      if (k <= 0)
+        continue;
+      const o = p * 3;
+      hdr[o] += color[0] * t * k;
+      hdr[o + 1] += color[1] * t * k;
+      hdr[o + 2] += color[2] * t * k;
+    }
+}
+var dome = {
+  id: "dome",
+  name: "Dome",
+  description: "A vast black energy dome over a ruined city, its foot blazing with light under a ring of clouds, with a gunship crossing now and then",
+  activity: {
+    calm: "The dome, its slowly breathing light and the creeping cloud ring",
+    lively: "Light pulses out along the streets, rubble floats up and the sky's ripples spread",
+    teeming: "The dome swells and recedes, shockwaves roll through the clouds, rubble swirls up and lightning flickers"
+  },
+  scrim: {
+    day: [
+      [52, 56, 58],
+      [44, 48, 46],
+      [34, 40, 34]
+    ],
+    sunset: [
+      [26, 8, 10],
+      [44, 16, 10],
+      [14, 8, 6]
+    ],
+    night: [
+      [2, 4, 12],
+      [2, 6, 10],
+      [1, 7, 5]
+    ]
+  },
+  create: (settings) => new Dome(settings)
+};
+
+// wallpapers/farm.ts
+var TIME_SCALE5 = 0.35;
+var CREATURE_SPEED5 = 0.25;
+var HORIZON4 = 0.55;
+var LOOKS5 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.8],
+    sky: [
+      [0, [0.12, 0.32, 0.7]],
+      [0.3, [0.25, 0.5, 0.82]],
+      [HORIZON4, [0.6, 0.75, 0.88]]
+    ],
+    orb: { x: 0.82, y: 0.13, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.6, 0.66, 0.78], alpha: 0.9 },
+    hills: [
+      [0.42, 0.6, 0.38],
+      [0.25, 0.5, 0.12]
+    ],
+    tint: [1, 1, 1],
+    windows: 0,
+    fireflies: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.66, 0.25],
+    sky: [
+      [0, [0.1, 0.08, 0.18]],
+      [0.18, [0.4, 0.2, 0.18]],
+      [0.36, [1, 0.52, 0.16]],
+      [HORIZON4, [1, 0.74, 0.3]]
+    ],
+    orb: { x: 0.2, y: 0.37, r: 0.042, core: [3.2, 2, 0.7], glow: [1, 0.6, 0.2], near: 0.55, wide: 0.35 },
+    stars: 0,
+    clouds: { top: [1.3, 0.8, 0.35], bottom: [0.6, 0.3, 0.22], alpha: 0.8 },
+    hills: [
+      [0.68, 0.42, 0.1],
+      [0.34, 0.24, 0.04]
+    ],
+    tint: [0.46, 0.29, 0.13],
+    windows: 0.25,
+    fireflies: false
+  },
+  night: {
+    style: "rim",
+    light: [0.3, 0.62, 1.5],
+    sky: [
+      [0, [0.004, 0.008, 0.03]],
+      [0.3, [0.014, 0.024, 0.07]],
+      [0.45, [0.035, 0.055, 0.14]],
+      [HORIZON4, [0.07, 0.1, 0.24]]
+    ],
+    orb: { x: 0.74, y: 0.15, r: 0.032, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 140,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.7 },
+    hills: [
+      [0.035, 0.06, 0.13],
+      [0.016, 0.03, 0.065]
+    ],
+    tint: [0.02, 0.032, 0.065],
+    windows: 1,
+    fireflies: true
+  }
+};
+var DAYLIGHT4 = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var GROUND = {
+  spring: {
+    day: [
+      [0.46, 0.68, 0.36],
+      [0.34, 0.64, 0.18]
+    ]
+  },
+  autumn: {
+    day: [
+      [0.6, 0.52, 0.28],
+      [0.56, 0.44, 0.17]
+    ],
+    sunset: [
+      [0.62, 0.34, 0.1],
+      [0.42, 0.22, 0.05]
+    ]
+  },
+  winter: {
+    day: [
+      [0.74, 0.79, 0.88],
+      [0.82, 0.86, 0.93]
+    ],
+    sunset: [
+      [0.6, 0.4, 0.26],
+      [0.5, 0.34, 0.24]
+    ],
+    night: [
+      [0.035, 0.07, 0.18],
+      [0.045, 0.1, 0.24]
+    ]
+  }
+};
+var CORN = {
+  spring: { height: 0.4, stalk: [0.3, 0.62, 0.14] },
+  summer: { height: 1, stalk: [0.25, 0.5, 0.12], ear: [0.95, 0.8, 0.25], tassel: [0.75, 0.6, 0.3] },
+  autumn: { height: 1, stalk: [0.62, 0.48, 0.2], ear: [0.72, 0.55, 0.26], tassel: [0.5, 0.36, 0.18] },
+  winter: { height: 0.18, stalk: [0.48, 0.38, 0.24] }
+};
+var CROWN = {
+  spring: [[0.92, 0.6, 0.72], [[1, 0.88, 0.92], [0.85, 0.42, 0.6], [0.4, 0.62, 0.2]]],
+  summer: [[0.18, 0.4, 0.12], [[0.12, 0.3, 0.08], [0.28, 0.52, 0.16]]],
+  autumn: [[0.85, 0.42, 0.1], [[0.95, 0.68, 0.15], [0.7, 0.16, 0.06], [0.55, 0.3, 0.08]]],
+  winter: [[0, 0, 0], []]
+};
+var CROPS = [
+  [1, 1, 1],
+  [0.66, 0.82, 0.62],
+  [1.1, 1.08, 0.8],
+  [1.45, 1.12, 0.45],
+  [1.2, 0.86, 0.55]
+];
+var WOOD = [0.45, 0.3, 0.16];
+var BLACK = [0.05, 0.05, 0.05];
+
+class Farm extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT4 };
+  shade;
+  stars;
+  clouds;
+  shadows = makeShadows(3, HORIZON4 + 0.08, 0.95);
+  storm = makeStorm();
+  nearTop = new Float32Array(0);
+  cows = [];
+  chickens = [];
+  pigs = [];
+  farmer = { x: 0.5, dir: 1, wave: -1, next: 20, g: gait() };
+  tractor = { x: -9, dir: 1, next: 14, wheel: 0 };
+  smoke = [];
+  fireflies = [];
+  egg = { wait: eggWait() * TIME_SCALE5, t: -1, cow: undefined };
+  season;
+  weather;
+  lights = new LightMap;
+  hills;
+  treeTops = [];
+  barnX = 0;
+  millX = 0.25;
+  leaves = [];
+  corn = new SwayLayer;
+  pasture = new Int32Array(0);
+  pastureTop = 0;
+  gusts = new Float32Array(0);
+  fan = 0;
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS5[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.season = settings.season ?? "summer";
+    this.hills = GROUND[this.season]?.[settings.time] ?? this.look.hills;
+    this.weather = new WeatherLayer(settings.weather ?? (this.season === "winter" ? "snow" : "clear"), settings.time, HORIZON4, !settings.weather);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    const drifting = { spring: 10, autumn: 22, summer: 0, winter: 0 }[this.season] * { calm: 1, lively: 1.3, teeming: 1.6 }[settings.activity];
+    const colors = this.season === "spring" ? [[1, 0.78, 0.86], [0.95, 0.6, 0.72]] : [[0.9, 0.45, 0.1], [0.75, 0.2, 0.07], [0.95, 0.7, 0.18]];
+    this.leaves = Array.from({ length: Math.round(drifting) }, (_, i) => ({ x: Math.random() * 2, y: 0.4 + Math.random() * 0.55, phase: Math.random() * TAU, color: colors[i % colors.length] }));
+    this.stars = makeStars(this.look.stars, 0.45);
+    this.clouds = settings.time === "sunset" ? makeClouds(5, "cirrus", 0.06, 0.3) : makeClouds(5, "cumulus", 0.08, 0.3);
+    const walker = (x, y) => ({ x, y, wx: x, wy: y, wanderT: 0, face: 1, phase: Math.random() * TAU, graze: 0, rest: 0, look: 0, moving: false, g: gait(1, hash(x * 7 + y)) });
+    if (settings.activity !== "calm") {
+      this.cows = [walker(0.9, 0.8), walker(1.3, 0.84), ...settings.activity === "teeming" ? [walker(1.1, 0.78)] : []];
+      this.chickens = [walker(1.2, 0.69), walker(1.3, 0.7), walker(1.4, 0.685)];
+    }
+    if (settings.activity === "teeming")
+      this.pigs = [walker(0.9, 0.9), walker(1, 0.92)];
+    const flies = this.look.fireflies && this.season === "summer" ? { calm: 12, lively: 20, teeming: 30 }[settings.activity] : 0;
+    this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.6 + Math.random() * 0.35, vx: 0, vy: 0, phase: Math.random() * TAU }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE5;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED5;
+    this.creatureTime += cdt;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.shadows, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.fan += dt * (0.8 + 1.6 * gust(this.millX, this.time));
+    for (const l of this.leaves) {
+      l.y += (0.02 + Math.sin(this.time * 1.3 + l.phase) * 0.012) * dt;
+      l.x += (0.025 + Math.sin(this.time * 0.7 + l.phase * 3) * 0.02 + gust(l.x, this.time) * 0.09) * dt;
+      if (l.y < 0.99 && l.x < this.A + 0.05)
+        continue;
+      const tree = this.treeTops[Math.floor(Math.random() * this.treeTops.length)];
+      const fromTree = tree && Math.random() < 0.6;
+      l.x = fromTree ? tree[0] + rand(-0.04, 0.04) : -0.03;
+      l.y = fromTree ? tree[1] + rand(-0.02, 0.03) : rand(0.35, 0.75);
+    }
+    for (const f of this.fireflies) {
+      f.vx += (Math.random() - 0.5) * 0.02 * dt;
+      f.vy += (Math.random() - 0.5) * 0.02 * dt;
+      f.vx *= Math.exp(-dt * 0.5);
+      f.vy *= Math.exp(-dt * 0.5);
+      f.x = (f.x + f.vx * dt + this.A) % this.A;
+      f.y = clamp(f.y + f.vy * dt, 0.58, 0.97);
+    }
+    this.stepTractor(dt);
+    const A = this.A;
+    for (const c of this.cows)
+      this.wander(c, cdt, [0.4 * A, 0.95 * A, 0.76, 0.87], 0.03, [6, 14], 0.055);
+    for (const c of this.chickens)
+      this.wander(c, cdt, [this.barnX - 0.21, this.barnX + 0.18, 0.672, 0.712], 0.025, [2, 5], 0.025);
+    for (const p of this.pigs)
+      this.wander(p, cdt, [0.44 * A, 0.6 * A, 0.88, 0.94], 0.02, [5, 10], 0.035);
+    if (this.activity === "teeming")
+      this.stepFarmer(cdt);
+    this.stepEgg(dt, cdt);
+  }
+  poke(x, y) {
+    const cow = this.cows.reduce((best, c) => !best || Math.hypot(c.x - x, c.y - y) < Math.hypot(best.x - x, best.y - y) ? c : best, undefined);
+    if (!cow)
+      return;
+    cow.face = x < cow.x ? -1 : 1;
+    cow.look = 2;
+    cow.rest = 0;
+  }
+  render() {
+    this.restore();
+    let x0 = this.W;
+    let x1 = -1;
+    for (let x = 0;x < this.W; x++) {
+      this.gusts[x] = gust(x / this.H, this.time);
+      if (this.gusts[x] < 0.01)
+        continue;
+      x0 = Math.min(x0, x);
+      x1 = x;
+    }
+    lightenGrass(this.hdr, this.W, this.H, this.pasture, this.gusts);
+    if (x1 >= 0)
+      this.touch(x0, this.pastureTop, x1, this.H - 1);
+    this.corn.draw(this.hdr, this.W, this.H, this.time);
+    if (!this.weather.covered)
+      paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points);
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    const orb = this.weather.covered ? undefined : this.look.orb;
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb);
+    paintShadows(this.hdr, this.W, this.H, this.shadows, HORIZON4 + 0.01, orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    this.drawShadows();
+    this.drawFan();
+    this.drawTractor();
+    for (const c of this.chickens)
+      this.drawChicken(c);
+    if (this.activity === "teeming")
+      this.drawCrows();
+    const herd = [...this.cows.map((w) => ({ w, kind: "cow" })), ...this.pigs.map((w) => ({ w, kind: "pig" }))].sort((a, b) => a.w.y - b.w.y);
+    for (const { w, kind } of herd)
+      kind === "cow" ? this.drawCow(w) : this.drawPig(w);
+    this.drawEgg();
+    if (this.activity === "teeming")
+      this.drawFarmer();
+    this.lights.clear(this.W, this.H);
+    if (this.look.windows === 1) {
+      const k = firelight(this.time * 0.8, 9);
+      this.lights.pool(this.barnX * this.H, 0.67 * this.H, 0.24 * this.H, 0.07 * this.H, [1, 0.55, 0.15], 3.3 * k, 0.022 * k);
+    }
+    this.lights.apply(this.hdr);
+    this.drawCornRow(3);
+    this.drawFireflies();
+    this.drawLeaves();
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.tractor.x < -5)
+      this.tractor.next = 0;
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT4 } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px);
+    this.weather.cover(this.hdr, W, H);
+    const [far, near2] = this.hills;
+    const season = this.season;
+    const golden = season === "autumn" ? 0.45 : 0.85;
+    const patchwork = season === "winter" ? 0.3 : 1;
+    const grass = this.cells ? 0 : season === "winter" ? 0.03 : 0.1;
+    const farTop = new Float32Array(W);
+    this.nearTop = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      farTop[x] = (0.52 - 0.03 * fbm1(u * 1.5, 3) - 0.015 * Math.sin(u * 3)) * H;
+      this.nearTop[x] = (0.6 - 0.025 * Math.sin(u * 2.2 + 1) - 0.02 * fbm1(u * 2, 5)) * H;
+    }
+    const day = look === LOOKS5.day;
+    const sky = this.hdr.slice();
+    this.fillBelow(farTop, (x, y, d) => {
+      const fu = x / H * 5 + y / H * 9;
+      const fv = y / H * 22;
+      const field2 = hash2(Math.floor(fu), Math.floor(fv));
+      const k = 1 + (field2 < 0.33 ? -0.15 : field2 < 0.66 ? 0 : 0.12) * patchwork;
+      const gold = field2 > golden && season !== "winter" ? 0.3 : 0;
+      const c = [far[0] * k + gold * far[0], far[1] * k + gold * 0.2 * far[1], far[2] * k * (1 - gold)];
+      if (!day || season === "winter")
+        return this.rim(c, x, d, 1.5);
+      const crop = CROPS[Math.floor(hash2(Math.floor(fu) + 7.1, Math.floor(fv) + 3.3) * CROPS.length)];
+      const hedge = Math.min(fu - Math.floor(fu), (fv - Math.floor(fv)) * 0.4) < 0.05 ? 0.5 : 1;
+      return [c[0] * crop[0] * hedge, c[1] * crop[1] * hedge, c[2] * crop[2] * hedge];
+    });
+    if (day)
+      haze(this.hdr, sky, W, H, 0.5, 0.62, 0.24, 0.08);
+    this.fillBelow(this.nearTop, (x, y, d) => {
+      const blades = 1 - grass + grass * Math.sin(x / this.px * 1.7 + y / this.px * 0.6 + fbm1(x / this.px * 0.1, 2) * 6);
+      const depth2 = 1 - clamp((y / H - 0.6) * 0.6, 0, 0.25);
+      return this.rim([near2[0] * blades * depth2, near2[1] * blades * depth2, near2[2] * blades * depth2], x, d, 2);
+    });
+    if (day)
+      mottle(this.hdr, W, H, 0.58, 1, 0.55, season === "winter" ? [1.03, 1, 0.92] : [1.14, 1.06, 0.7], season === "winter" ? [0.62, 0.74, 1] : [0.66, 0.84, 0.66]);
+    const field = this.hdr.slice();
+    for (let x = 0;x < W; x++) {
+      const cy = this.roadY(x / H) * H;
+      for (let y = Math.floor(cy - 0.009 * H);y <= Math.ceil(cy + 0.009 * H); y++) {
+        if (y < 0 || y >= H)
+          continue;
+        const edge = clamp(0.009 * H - Math.abs(y + 0.5 - cy) + 0.5, 0, 1);
+        const c = season === "winter" ? lerpRGB(this.paint([0.5, 0.4, 0.26]), near2, 0.6) : this.paint([0.5, 0.4, 0.26]);
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], edge);
+      }
+    }
+    if (season === "spring")
+      this.drawWildflowers();
+    this.barnX = A - 0.24;
+    const trees = [0.5, A - 0.04];
+    const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+    for (const x of trees)
+      ground(x, this.nearTop[clamp(Math.round(x * H), 0, W - 1)] / H + 0.012, 0.09, 0.17, 1.4);
+    ground(0.08, this.nearTop[clamp(Math.round(0.08 * H), 0, W - 1)] / H + 0.006, 0.08, 0.066, 0.6);
+    ground(this.millX, 0.65, 0.07, 0.27, 0.4);
+    ground(this.barnX, 0.655, 0.24, 0.19, 0.6);
+    for (const [dx, by] of [[-0.28, 0.705], [-0.2, 0.712]])
+      ground(this.barnX + dx, by + 0.02, 0.045, 0.04);
+    for (let x = 0.38 * A;x < A + 0.05; x += 0.07)
+      ground(x, 0.725, 0.012, 0.045, 0.6);
+    this.treeTops = trees.map((x) => {
+      const base = this.nearTop[clamp(Math.round(x * H), 0, W - 1)] / H + 0.012;
+      this.drawTree(x, base);
+      return [x, base - 0.12];
+    });
+    this.drawFarmhouse(0.08, this.nearTop[clamp(Math.round(0.08 * H), 0, W - 1)] / H + 0.006);
+    this.drawWindmillTower(this.millX, 0.65);
+    this.drawBarn(this.barnX, 0.655);
+    for (const [dx, by] of [[-0.28, 0.705], [-0.2, 0.712]])
+      this.shape([ell((this.barnX + dx) * H, by * H, 0.022 * H, 0.02 * H, 0, this.paint([0.78, 0.62, 0.3]), 3)], this.lighting, 0.8);
+    if (season === "autumn")
+      for (const [dx, r] of [[-0.062, 0.011], [-0.046, 0.008], [0.056, 0.01]]) {
+        const [px, py] = [(this.barnX + dx) * H, 0.664 * H];
+        this.shape([ell(px, py - r * H, r * 1.25 * H, r * H, 0, this.paint([0.92, 0.45, 0.06]), 3), cap(px, py - r * 1.9 * H, px + 0.003 * H, py - r * 2.4 * H, 0.0018 * H, 0.0012 * H, this.paint([0.3, 0.35, 0.1]))], this.lighting, 0.7);
+      }
+    const fy = 0.725 * H;
+    const posts = [];
+    for (let x = 0.38 * A;x < A + 0.05; x += 0.07)
+      posts.push(cap(x * H, fy, x * H, fy - 0.045 * H, 0.004 * H, 0.0035 * H, this.paint(WOOD)));
+    posts.push(cap(0.38 * A * H, fy - 0.03 * H, W + 5, fy - 0.03 * H, 0.0025 * H, 0.0025 * H, this.paint(WOOD)));
+    posts.push(cap(0.38 * A * H, fy - 0.014 * H, W + 5, fy - 0.014 * H, 0.0025 * H, 0.0025 * H, this.paint(WOOD)));
+    this.shape(posts, this.lighting, 0.6);
+    if (this.activity === "teeming")
+      this.shape([ell(0.52 * A * H, 0.91 * H, 0.08 * H, 0.025 * H, 0, this.paint([0.32, 0.22, 0.12]))], this.lighting, 0.3);
+    this.corn.begin(this.hdr);
+    for (let row = 0;row < 3; row++)
+      this.drawCornRow(row);
+    this.corn.end(this.hdr, W, H, 0.012 * H, (_x, y) => clamp((0.96 * H - y) / (0.26 * H), 0, 1));
+    const pasture = [];
+    for (let x = 0;x < W; x++)
+      for (let y = Math.ceil(this.nearTop[x]) + 1;y < H; y++) {
+        const o = (y * W + x) * 3;
+        if (this.hdr[o] === field[o] && this.hdr[o + 1] === field[o + 1] && this.hdr[o + 2] === field[o + 2])
+          pasture.push(y * W + x);
+      }
+    this.pasture = Int32Array.from(pasture);
+    this.pastureTop = pasture.reduce((top, p) => Math.min(top, Math.floor(p / W)), H);
+    this.gusts = new Float32Array(W);
+  }
+  drawShadows() {
+    const H = this.H;
+    const ground = (x, y, w, h, tip, lift2) => groundShadow(this.hdr, this.W, H, this.shade, x * H, y * H, w * H, h * H, tip, lift2);
+    const t = this.tractor;
+    if (t.x > -5)
+      ground(t.x + t.dir * 0.04, this.roadY(t.x) + 0.004, 0.11, 0.094);
+    for (const c of this.chickens) {
+      const S = 0.05 * this.depthScale(c.y);
+      ground(c.x, c.y, 0.7 * S, 0.9 * S);
+    }
+    for (const p of this.pigs) {
+      const S = 0.08 * this.depthScale(p.y);
+      ground(p.x, p.y, 0.9 * S, 0.6 * S);
+    }
+    for (const c of this.cows) {
+      const S = 0.11 * this.depthScale(c.y);
+      ground(c.x + c.face * 0.1 * S, c.y, 1.1 * S, 0.7 * S, 0.8);
+    }
+    const e = this.egg;
+    if (e.cow && e.t < 24) {
+      const rise = e.t < 0 ? 0 : smoothstep(13, 24, e.t);
+      const size = lerp(1, 0.35, rise);
+      const uy = lerp(0.1, e.cow.y - 0.4, smoothstep(0, 10, e.t));
+      const S = 0.11 * this.depthScale(e.cow.y) * size;
+      ground(e.cow.x + e.cow.face * 0.1 * S, e.cow.y, 1.1 * S, 0.7 * S, 0.8, rise * (e.cow.y - uy - 0.025) * H);
+    }
+    if (this.activity === "teeming")
+      ground(this.farmer.x, 0.738, 0.03, 0.105, 0.6);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  roadY(u) {
+    return 0.665 + 0.008 * Math.sin(u * 1.7);
+  }
+  rim(base, x, depth2, width) {
+    if (this.look.style === "front")
+      return base;
+    const glow = 0.35 + 0.65 * Math.exp(-Math.abs(x - this.look.orb.x * this.W) / (0.45 * this.H));
+    const k = Math.exp(-depth2 / (width * this.px)) * glow * 0.35;
+    return [base[0] + this.look.light[0] * k, base[1] + this.look.light[1] * k, base[2] + this.look.light[2] * k];
+  }
+  fillBelow(top, color) {
+    const { W, H } = this;
+    for (let x = 0;x < W; x++)
+      for (let y = Math.max(0, Math.floor(top[x]));y < H; y++) {
+        const c = color(x, y, y + 0.5 - top[x]);
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top[x], 0, 1));
+      }
+  }
+  window(x0, y0, x1, y1) {
+    const H = this.H;
+    const k = this.look.windows;
+    const glass = this.paint([0.15, 0.2, 0.3]);
+    const c = [lerp(glass[0], 1.3, k), lerp(glass[1], 0.75, k), lerp(glass[2], 0.25, k)];
+    this.polygon([[x0 * H, y0 * H], [x1 * H, y0 * H], [x1 * H, y1 * H], [x0 * H, y1 * H]], c);
+    if (k <= 0)
+      return;
+    const cx = (x0 + x1) / 2 * H;
+    const cy = (y0 + y1) / 2 * H;
+    const R = 0.05 * H;
+    for (let y = Math.max(0, Math.floor(cy - R));y < Math.min(H, cy + R); y++)
+      for (let x = Math.max(0, Math.floor(cx - R));x < Math.min(this.W, cx + R); x++) {
+        const d = Math.hypot(x - cx, y - cy) / R;
+        if (d >= 1)
+          continue;
+        const a = (1 - d) ** 2 * 0.25 * k;
+        this.add(x, y, 1 * a, 0.55 * a, 0.18 * a);
+      }
+  }
+  drawBarn(c, b) {
+    const H = this.H;
+    const P = (points) => points.map(([x, y]) => [x * H, y * H]);
+    this.shape([cap((c - 0.13) * H, b * H, (c - 0.13) * H, (b - 0.17) * H, 0.022 * H, 0.022 * H, this.paint([0.6, 0.6, 0.62]), 3), ell((c - 0.13) * H, (b - 0.17) * H, 0.022 * H, 0.016 * H, 0, this.paint([0.45, 0.47, 0.5]))], this.lighting);
+    this.polygon(P([[c + 0.08, b - 0.1], [c + 0.14, b - 0.115], [c + 0.14, b - 0.012], [c + 0.08, b]]), this.paint([0.45, 0.08, 0.05]));
+    this.polygon(P([[c, b - 0.185], [c + 0.06, b - 0.198], [c + 0.135, b - 0.168], [c + 0.15, b - 0.115], [c + 0.09, b - 0.1], [c + 0.075, b - 0.155]]), this.paint([0.22, 0.07, 0.06]));
+    this.polygon(P([[c - 0.08, b - 0.1], [c + 0.08, b - 0.1], [c + 0.08, b], [c - 0.08, b]]), this.paint([0.62, 0.12, 0.08]));
+    this.polygon(P([[c - 0.09, b - 0.1], [c - 0.075, b - 0.155], [c, b - 0.185], [c + 0.075, b - 0.155], [c + 0.09, b - 0.1]]), this.paint([0.32, 0.1, 0.08]));
+    if (this.season === "winter") {
+      const snow = this.hills[1];
+      this.polygon(P([[c, b - 0.187], [c + 0.06, b - 0.2], [c + 0.135, b - 0.17], [c + 0.148, b - 0.12], [c + 0.09, b - 0.104], [c + 0.075, b - 0.157]]), snow);
+      this.polygon(P([[c - 0.077, b - 0.157], [c, b - 0.188], [c + 0.077, b - 0.157], [c + 0.072, b - 0.148], [c, b - 0.176], [c - 0.072, b - 0.148]]), snow);
+      this.shape([ell((c - 0.13) * H, (b - 0.175) * H, 0.023 * H, 0.013 * H, 0, snow)], this.lighting, 0.4);
+    }
+    this.polygon(P([[c - 0.035, b - 0.065], [c + 0.035, b - 0.065], [c + 0.035, b], [c - 0.035, b]]), this.look.windows === 1 ? [1.1, 0.6, 0.18] : this.paint([0.42, 0.07, 0.05]));
+    const trim = this.paint([0.88, 0.86, 0.8]);
+    const t = 0.0025 * H;
+    this.shape([
+      cap((c - 0.035) * H, (b - 0.065) * H, (c + 0.035) * H, b * H, t, t, trim),
+      cap((c + 0.035) * H, (b - 0.065) * H, (c - 0.035) * H, b * H, t, t, trim),
+      cap((c - 0.035) * H, (b - 0.065) * H, (c + 0.035) * H, (b - 0.065) * H, t, t, trim),
+      cap((c - 0.035) * H, (b - 0.065) * H, (c - 0.035) * H, b * H, t, t, trim),
+      cap((c + 0.035) * H, (b - 0.065) * H, (c + 0.035) * H, b * H, t, t, trim),
+      cap((c - 0.08) * H, (b - 0.1) * H, (c + 0.08) * H, (b - 0.1) * H, t, t, trim)
+    ], this.lighting, 0);
+    this.window(c - 0.018, b - 0.148, c + 0.018, b - 0.118);
+  }
+  drawFarmhouse(h, hb) {
+    const H = this.H;
+    const P = (points) => points.map(([x, y]) => [x * H, y * H]);
+    this.polygon(P([[h + 0.028, hb - 0.062], [h + 0.036, hb - 0.062], [h + 0.036, hb - 0.045], [h + 0.028, hb - 0.045]]), this.paint([0.4, 0.2, 0.15]));
+    this.polygon(P([[h - 0.035, hb - 0.035], [h + 0.035, hb - 0.035], [h + 0.035, hb], [h - 0.035, hb]]), this.paint([0.85, 0.82, 0.72]));
+    this.polygon(P([[h - 0.043, hb - 0.034], [h, hb - 0.066], [h + 0.043, hb - 0.034]]), this.paint([0.35, 0.15, 0.12]));
+    if (this.season === "winter")
+      this.polygon(P([[h - 0.04, hb - 0.037], [h, hb - 0.067], [h + 0.04, hb - 0.037], [h + 0.03, hb - 0.04], [h, hb - 0.058], [h - 0.03, hb - 0.04]]), this.hills[1]);
+    this.window(h - 0.024, hb - 0.026, h - 0.012, hb - 0.014);
+    this.window(h + 0.012, hb - 0.026, h + 0.024, hb - 0.014);
+  }
+  drawWindmillTower(x, base) {
+    const H = this.H;
+    const c = this.paint([0.5, 0.48, 0.45]);
+    const parts = [];
+    for (const s of [-1, 1])
+      parts.push(cap((x + s * 0.035) * H, base * H, (x + s * 0.007) * H, (base - 0.2) * H, this.thick(0.0028, 1.1), this.thick(0.0022, 1), c));
+    const levels = this.cells ? 2 : 4;
+    for (let i = 0;i < levels; i++) {
+      const y0 = base - i * 0.2 / levels;
+      const y1 = base - (i + 1) * 0.2 / levels;
+      const w0 = 0.035 - i * 0.028 / levels;
+      const w1 = 0.035 - (i + 1) * 0.028 / levels;
+      parts.push(cap((x - w0) * H, y0 * H, (x + w1) * H, y1 * H, this.thick(0.0015, 0.7), this.thick(0.0015, 0.7), c), cap((x + w0) * H, y0 * H, (x - w1) * H, y1 * H, this.thick(0.0015, 0.7), this.thick(0.0015, 0.7), c));
+    }
+    this.shape(parts, this.lighting, 0.5);
+  }
+  drawFan() {
+    const H = this.H;
+    const x = this.millX * H;
+    const y = (0.65 - 0.21) * H;
+    const metal = this.paint([0.75, 0.75, 0.72]);
+    const turn = this.fan;
+    this.polygon([[x - 0.01 * H, y], [x - 0.075 * H, y - 0.018 * H], [x - 0.075 * H, y + 0.012 * H]], this.paint([0.6, 0.15, 0.1]));
+    const parts = [ell(x, y, 0.009 * H, 0.009 * H, 0, this.paint([0.35, 0.33, 0.3]))];
+    const blades = this.cells ? 8 : 14;
+    for (let i = 0;i < blades; i++) {
+      const a = turn + i / blades * TAU;
+      parts.push(cap(x + Math.cos(a) * 0.012 * H, y + Math.sin(a) * 0.012 * H, x + Math.cos(a) * 0.06 * H, y + Math.sin(a) * 0.06 * H, this.thick(0.004, 1), this.thick(0.008, 2), metal));
+    }
+    this.shape(parts, this.lighting, 0.6);
+  }
+  drawCornRow(row) {
+    const { A, H } = this;
+    const corn = CORN[this.season];
+    const base = [0.79, 0.87, 0.96, 1.05][row] * H;
+    const height = (0.12 + row * 0.045) * H * corn.height;
+    const spacing = this.cells ? Math.max(0.026 + row * 0.006, 9 * this.px / H) : 0.026 + row * 0.006;
+    const stalk = this.paint(corn.stalk);
+    const end = (0.36 * A + 0.03) * H;
+    const px = this.px;
+    const mass = [[-2 * px, base + 2 * px]];
+    for (let x = -2 * px;x < end; x += 6 * px)
+      mass.push([x, base - height * (0.42 + 0.08 * Math.sin(x / H * 37 + row * 2))]);
+    mass.push([end + 0.02 * H, base + 2 * px]);
+    this.polygon(mass, [stalk[0] * 0.6, stalk[1] * 0.6, stalk[2] * 0.6]);
+    for (let i = 0;i * spacing < 0.36 * A; i++) {
+      const x = (i * spacing + row % 2 * spacing * 0.5 + hash(i * 3.1 + row) * 0.008) * H;
+      const h = height * (0.85 + hash(i * 7.3 + row) * 0.3);
+      const bend = row === 3 ? sway(x / H, this.time, i * 0.9) * 0.05 : (hash(i + row * 5) - 0.5) * 0.06;
+      const top = [x + Math.sin(bend) * h, base - Math.cos(bend) * h];
+      const at = (t) => [lerp(x, top[0], t), lerp(base, top[1], t)];
+      const parts = [cap(x, base, ...top, this.thick(0.006 * (1 + row * 0.3), 1.2), this.thick(0.003, 0.8), stalk)];
+      for (let l = 0;l < 4; l++) {
+        const [lx, ly] = at(0.3 + l * 0.15);
+        const side = l % 2 ? 1 : -1;
+        const reach = h * 0.28;
+        const mid = [lx + side * reach * 0.6, ly - reach * 0.25];
+        parts.push(cap(lx, ly, ...mid, this.thick(0.006, 1.3), this.thick(0.004, 1.1), stalk), cap(...mid, lx + side * reach + bend * reach * 1.5, ly + reach * 0.15 + bend * reach, this.thick(0.004, 1.1), this.thick(0.0015, 0.6), stalk));
+      }
+      const [ex, ey] = at(0.55);
+      if (corn.ear)
+        parts.push(ell(ex + 0.008 * H, ey, this.thick(0.007, 1.6), this.thick(0.016, 3), 0.25 + bend, this.paint(corn.ear)));
+      if (corn.tassel && !this.cells)
+        parts.push(cap(...top, top[0] + 0.012 * H, top[1] - 0.012 * H, 0.002 * H, 0.001 * H, this.paint(corn.tassel)), cap(...top, top[0] - 0.01 * H, top[1] - 0.014 * H, 0.002 * H, 0.001 * H, this.paint(corn.tassel)));
+      this.shape(parts, this.lighting, this.look.style === "rim" ? this.cells ? 0.08 : 0.2 : 0.6);
+    }
+  }
+  drawTree(x, base) {
+    const H = this.H;
+    const bark = this.paint([0.3, 0.2, 0.12]);
+    const fork = base - 0.06;
+    const limbs = [[-0.04, -0.13], [0.035, -0.135], [-0.005, -0.155], [0.05, -0.1], [-0.055, -0.095]];
+    this.shape([cap(x * H, base * H, x * H, fork * H, 0.006 * H, 0.0045 * H, bark), ...limbs.map(([dx, dy]) => cap(x * H, fork * H, (x + dx) * H, (base + dy) * H, 0.0035 * H, 0.0012 * H, bark))], this.lighting, 0.6);
+    if (this.season === "winter") {
+      const snow = this.hills[1];
+      this.shape(limbs.map(([dx, dy]) => cap((x + dx * 0.3) * H, (fork + (base + dy - fork) * 0.3) * H - 0.003 * H, (x + dx * 0.85) * H, (fork + (base + dy - fork) * 0.85) * H - 0.003 * H, 0.0016 * H, 0.0008 * H, snow)), this.lighting, 0.3);
+      return;
+    }
+    const [crown, specks] = CROWN[this.season];
+    const blobs = [[0, -0.12, 0.05, 0.04], [-0.038, -0.1, 0.034, 0.03], [0.038, -0.104, 0.034, 0.03], [-0.016, -0.148, 0.034, 0.027], [0.022, -0.142, 0.03, 0.025]];
+    this.shape(blobs.map(([dx, dy, rx, ry]) => ell((x + dx) * H, (base + dy) * H, rx * H, ry * H, 0, this.paint(crown))), this.lighting, 0.8);
+    for (let i = 0;i < 46; i++) {
+      const a = hash(i * 1.7 + x) * TAU;
+      const r = Math.sqrt(hash(i * 2.9 + x));
+      const c = this.paint(specks[i % specks.length]);
+      this.disc((x + Math.cos(a) * r * 0.06) * H, (base - 0.122 + Math.sin(a) * r * 0.045) * H, 0.004 * H, c[0], c[1], c[2], 0.9);
+    }
+  }
+  drawWildflowers() {
+    const { W, H } = this;
+    const colors = [[0.95, 0.85, 0.2], [0.95, 0.92, 0.85], [0.6, 0.35, 0.85], [0.95, 0.45, 0.55]];
+    for (let i = 0;i < Math.round(this.A * 160); i++) {
+      const x = hash(i * 3.3) * W;
+      const top = this.nearTop[clamp(Math.round(x), 0, W - 1)] / H;
+      const y = (top + 0.01 + hash(i * 5.1) * (0.95 - top)) * H;
+      const c = this.paint(colors[i % colors.length]);
+      this.disc(x, y, 0.0025 * H, c[0], c[1], c[2], 0.85);
+    }
+  }
+  drawLeaves() {
+    const H = this.H;
+    const size = this.season === "spring" ? 0.0045 : 0.0065;
+    for (const l of this.leaves) {
+      const spin = Math.sin(this.time * 2 + l.phase) * 1.3;
+      const flat = 0.35 + 0.65 * Math.abs(Math.cos(this.time * 1.6 + l.phase));
+      this.shape([ell(l.x * H, l.y * H, size * H, size * 0.55 * flat * H, spin, this.paint(l.color))], this.lighting, 0.5);
+    }
+  }
+  wander(w, dt, zone, speed, pause, stride2) {
+    const [x0, y0] = [w.x, w.y];
+    this.roam(w, dt, zone, speed, pause);
+    stepGait(w.g, Math.hypot(w.x - x0, w.y - y0) / (stride2 * this.depthScale(w.y)), dt, w.face);
+  }
+  roam(w, dt, zone, speed, pause) {
+    w.phase += dt * (w.moving ? 6 : 1.5);
+    if (w.look > 0) {
+      w.look -= dt;
+      w.graze = Math.max(0, w.graze - dt * 8);
+      w.moving = false;
+      return;
+    }
+    if (w.rest > 0) {
+      w.rest -= dt;
+      w.graze = Math.min(1, w.graze + dt * 0.8);
+      w.moving = false;
+      return;
+    }
+    w.graze = Math.max(0, w.graze - dt * 1.2);
+    w.wanderT -= dt;
+    if (w.wanderT <= 0) {
+      w.wanderT = rand(6, 14);
+      [w.wx, w.wy] = this.openSpot(...zone);
+    }
+    const dx = w.wx - w.x;
+    const dy = w.wy - w.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.01) {
+      w.rest = rand(pause[0], pause[1]);
+      w.wanderT = 0;
+      return;
+    }
+    w.moving = true;
+    if (Math.abs(dx) > 0.005)
+      w.face = Math.sign(dx);
+    w.x += dx / d * speed * dt;
+    w.y += dy / d * speed * dt;
+  }
+  depthScale(y) {
+    return 0.6 + (y - 0.7) * 2.5;
+  }
+  drawCow(c, lift2 = 0, size = 1) {
+    const H = this.H;
+    const g = c.g;
+    const P = body(c.x * H, (c.y - lift2) * H, 0.11 * H * this.depthScale(c.y) * size, g.turn);
+    const S = P.S;
+    const hide = this.paint([0.92, 0.9, 0.86]);
+    const black = this.paint(BLACK);
+    const rise = bob(g.phase) * g.go * 0.015;
+    const legs = { fore: 0.25, hind: 0.27, top: 0.42 - rise, w: 0.08, a: 0.21, b: 0.21, reach: 0.15, lift: 0.08, r: [0.07, 0.036, 0.03], paw: [0.03, this.paint([0.25, 0.2, 0.17])] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([0.66, 0.64, 0.6]) }), this.lighting, 0.7);
+    const gz = smoothstep(0, 1, c.graze);
+    const nod = Math.cos(TAU * 2 * g.phase - 1) * 0.02 * g.go;
+    const poll = [lerp(0.47, 0.54, gz), lerp(-0.6, -0.26, gz) + nod - rise];
+    const muzzle = [poll[0] + lerp(0.15, 0.05, gz), poll[1] + lerp(0.11, 0.2, gz)];
+    const swish = Math.sin(this.creatureTime * 2.3 + c.x * 17) * 0.05 - g.lag * 0.06;
+    const tail = (t) => P(-0.43 - t * 0.03 + swish * t * t, -0.6 - rise + t * 0.36);
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: hide }),
+      ell(...P(0.01, -0.47 - rise), P.len(0.34, 0.15), 0.17 * S, 0, hide),
+      ell(...P(-0.25, -0.5 - rise), P.len(0.16, 0.14), 0.15 * S, 0, hide),
+      ell(...P(0.24, -0.47 - rise), P.len(0.15, 0.14), 0.16 * S, 0, hide),
+      ell(...P(-0.12, -0.31 - rise), P.len(0.07, 0.05), 0.045 * S, 0, this.paint([0.9, 0.6, 0.6])),
+      cap(...P(0.28, -0.5 - rise), ...P(...poll), 0.13 * S, 0.085 * S, hide),
+      cap(...P(...poll), ...P(...muzzle), 0.085 * S, 0.068 * S, hide),
+      ell(...P(...muzzle), 0.06 * S, 0.055 * S, 0, this.paint([0.88, 0.62, 0.58])),
+      ...[-1, 1].map((s) => ell(...P(poll[0] - 0.04, poll[1] - 0.01, s * 0.1), 0.075 * S, 0.026 * S, (-0.2 - g.lag * 0.15) * P.along, hide)),
+      ...chain(tail, 3, 0.02 * S, 0.012 * S, hide),
+      ell(...tail(1.1), 0.025 * S, 0.045 * S, 0, black)
+    ], this.lighting, 0.7);
+    this.shape([
+      ell(...P(-0.15, -0.5 - rise), P.len(0.12, 0.06), 0.08 * S, 0.3 * P.along, black),
+      ell(...P(0.13, -0.4 - rise), P.len(0.1, 0.05), 0.07 * S, -0.4 * P.along, black),
+      ell(...P(-0.3, -0.38 - rise), P.len(0.06, 0.03), 0.05 * S, 0, black),
+      ell(...P(poll[0] + 0.02, poll[1] + 0.02), 0.05 * S, 0.045 * S, 0, black)
+    ], this.lighting, 0.4);
+  }
+  drawChicken(h) {
+    const H = this.H;
+    const g = h.g;
+    const P = body(h.x * H, h.y * H, 0.05 * H * this.depthScale(h.y), g.turn);
+    const S = P.S;
+    const peck = Math.max(h.graze, Math.pow(Math.max(0, Math.sin(h.phase * 2)), 6) * (1 - g.go));
+    const feather = this.paint(h.x % 0.3 > 0.15 ? [0.6, 0.35, 0.15] : [0.92, 0.9, 0.82]);
+    const leg = this.paint([0.95, 0.6, 0.15]);
+    const red = this.paint([0.85, 0.08, 0.06]);
+    const rise = bob(g.phase) * g.go * 0.03;
+    const f = g.phase * 2 % 1;
+    const thrust = g.go * 0.09 * (f < 0.75 ? 1 - 2 * f / 0.75 : -1 + 2 * smoothstep(0.75, 1, f));
+    const [hu, hv] = [lerp(0.3, 0.48, peck) + thrust, lerp(-0.84, -0.3, peck) - rise];
+    const legs = [-1, 1].flatMap((w) => {
+      const [reach, raise] = stride(g.phase, w > 0 ? 0 : 0.5);
+      const fu = reach * 0.15 * g.go;
+      const fv = -raise * 0.12 * g.go - 0.02;
+      const Q = (u, v) => P(u, v, w * 0.06);
+      return [...limb(Q, 0, -0.4 - rise, fu, fv, 0.2, 0.22, 1, 0.07 * S, 0.03 * S, 0.025 * S, leg), cap(...Q(fu - 0.06, fv), ...Q(fu + 0.1, fv + 0.01), 0.025 * S, 0.015 * S, leg)];
+    });
+    this.shape([
+      ...legs,
+      cap(...P(-0.2, -0.55 - rise), ...P(-0.36 - g.lag * 0.03, -0.88 - rise), 0.13 * S, 0.05 * S, feather),
+      cap(...P(-0.2, -0.52 - rise), ...P(-0.42 - g.lag * 0.04, -0.72 - rise), 0.1 * S, 0.04 * S, feather),
+      ell(...P(0, -0.52 - rise), P.len(0.3, 0.18), 0.21 * S, 0.25 * P.along, feather),
+      ell(...P(0.14, -0.55 - rise), P.len(0.17, 0.16), 0.18 * S, 0, feather),
+      cap(...P(0.16, -0.62 - rise), ...P(hu, hv), 0.1 * S, 0.075 * S, feather),
+      ell(...P(hu, hv), 0.1 * S, 0.1 * S, 0, feather),
+      ell(...P(hu - 0.01, hv - 0.1), P.len(0.07, 0.02), 0.045 * S, 0, red),
+      ell(...P(hu + 0.05, hv + 0.09), 0.03 * S, 0.045 * S, 0, red),
+      cap(...P(hu + 0.07, hv), ...P(hu + 0.18, hv + 0.03), 0.035 * S, 0.008 * S, leg)
+    ], this.lighting, 0.6);
+  }
+  drawPig(p) {
+    const H = this.H;
+    const g = p.g;
+    const P = body(p.x * H, p.y * H, 0.08 * H * this.depthScale(p.y), g.turn);
+    const S = P.S;
+    const pink = this.paint([0.95, 0.66, 0.66]);
+    const snout = this.paint([0.88, 0.5, 0.52]);
+    const rise = bob(g.phase) * g.go * 0.015;
+    const legs = { fore: 0.2, hind: 0.21, top: 0.22 - rise, w: 0.1, a: 0.1, b: 0.1, reach: 0.13, lift: 0.06, r: [0.07, 0.045, 0.04], paw: [0.025, this.paint([0.5, 0.32, 0.3])] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([0.75, 0.5, 0.5]) }), this.lighting, 0.7);
+    const dip = p.graze * 0.14 + Math.cos(TAU * 2 * g.phase - 1) * 0.015 * g.go - rise;
+    const flop = g.lag * 0.03 + Math.sin(TAU * 2 * g.phase - 2) * 0.015 * g.go;
+    const curl = (t) => P(-0.4 - 0.05 * Math.sin(t * 5), -0.44 - rise + 0.05 * Math.cos(t * 5) - 0.03 * t);
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: pink }),
+      ell(...P(-0.04, -0.34 - rise), P.len(0.38, 0.2), 0.21 * S, -0.06 * P.along, pink),
+      ell(...P(0.34, -0.37 + dip), 0.15 * S, 0.15 * S, 0, pink),
+      cap(...P(0.4, -0.35 + dip), ...P(0.52, -0.31 + dip), 0.1 * S, 0.075 * S, pink),
+      ell(...P(0.54, -0.31 + dip), P.len(0.025, 0.065), 0.065 * S, 0, snout),
+      ...[-1, 1].map((s) => cap(...P(0.3, -0.46 + dip, s * 0.08), ...P(0.42, -0.4 + dip + flop, s * 0.11), 0.055 * S, 0.02 * S, pink)),
+      ...chain(curl, 3, 0.02 * S, 0.015 * S, pink)
+    ], this.lighting, 0.7);
+  }
+  stepFarmer(dt) {
+    const f = this.farmer;
+    if (f.wave >= 0) {
+      f.wave += dt;
+      if (f.wave > 3)
+        f.wave = -1;
+      stepGait(f.g, 0, dt, f.dir);
+      return;
+    }
+    f.next -= dt;
+    if (f.next <= 0) {
+      f.wave = 0;
+      f.next = rand(20, 35);
+      return;
+    }
+    f.x += f.dir * 0.03 * dt;
+    stepGait(f.g, 0.03 * dt / 0.079, dt, f.dir);
+    if (f.x > 0.95 * this.A)
+      f.dir = -1;
+    if (f.x < 0.42 * this.A)
+      f.dir = 1;
+  }
+  drawFarmer() {
+    const H = this.H;
+    const f = this.farmer;
+    const g = f.g;
+    const rise = bob(g.phase) * g.go * 0.015;
+    const P = body(f.x * H, 0.738 * H, 0.105 * H, g.turn);
+    const S = P.S;
+    const denim = this.paint([0.2, 0.3, 0.6]);
+    const shirt = this.paint([0.75, 0.15, 0.12]);
+    const skin = this.paint([0.85, 0.65, 0.5]);
+    const straw = this.paint([0.9, 0.78, 0.4]);
+    const boot = this.paint([0.3, 0.2, 0.12]);
+    const side = (w, far) => {
+      const [reach, raise] = stride(g.phase, w > 0 ? 0 : 0.5);
+      const fu = reach * 0.24 * g.go;
+      const fv = -raise * 0.07 * g.go - 0.03;
+      const Q = (u, v) => P(u, v, w * 0.05);
+      const A = (u, v) => P(u, v, w * 0.1);
+      const waving = f.wave >= 0 && !far;
+      const hand = waving ? [0.12 + Math.sin(f.wave * 8) * 0.04, -1.1] : [-reach * 0.14 * g.go + 0.02, -0.42 - rise];
+      const pants = far ? this.paint([0.13, 0.2, 0.42]) : denim;
+      return [
+        ...limb(Q, 0, -0.48 - rise, fu, fv, 0.25, 0.25, -1, 0.055 * S, 0.045 * S, 0.04 * S, pants),
+        cap(...Q(fu - 0.02, fv), ...Q(fu + 0.06, fv + 0.005), 0.035 * S, 0.03 * S, boot),
+        ...limb(A, 0.01, -0.78 - rise, ...hand, 0.19, 0.19, waving ? -1 : 1, 0.04 * S, 0.033 * S, 0.03 * S, far ? this.paint([0.5, 0.1, 0.08]) : shirt),
+        ell(...A(...hand), 0.03 * S, 0.03 * S, 0, skin)
+      ];
+    };
+    const near2 = P.along >= 0 ? 1 : -1;
+    this.shape(side(-near2, true), this.lighting, 0.7);
+    this.shape([
+      ...side(near2, false),
+      cap(...P(0, -0.45 - rise), ...P(0.02, -0.78 - rise), 0.1 * S, 0.085 * S, denim),
+      cap(...P(0.02, -0.8 - rise, -0.06), ...P(0.02, -0.8 - rise, 0.06), 0.06 * S, 0.06 * S, shirt),
+      ell(...P(0.04, -0.89 - rise), 0.065 * S, 0.07 * S, 0, skin),
+      cap(...P(0.08, -0.89 - rise), ...P(0.115, -0.87 - rise), 0.02 * S, 0.015 * S, skin),
+      ell(...P(0.04, -0.95 - rise), 0.15 * S, 0.028 * S, 0, straw),
+      ell(...P(0.03, -0.99 - rise), 0.075 * S, 0.05 * S, 0, straw)
+    ], this.lighting, 0.7);
+  }
+  drawCrows() {
+    const H = this.H;
+    for (let i = 0;i < 3; i++) {
+      const a = this.creatureTime * (0.5 + i * 0.1) + i * 2.1;
+      const x = (0.17 * this.A + Math.cos(a) * (0.08 + i * 0.03)) * H;
+      const y = (0.3 + Math.sin(a) * 0.03) * H;
+      const flap = Math.sin(this.time * 6 + i * 2);
+      const s = 0.03 * H;
+      const c = this.paint(BLACK);
+      this.shape([ell(x, y, 0.35 * s, 0.15 * s, 0, c), cap(x, y, x - s, y - s * (0.2 + flap * 0.5), 0.12 * s, 0.04 * s, c), cap(x, y, x + s, y - s * (0.2 + flap * 0.5), 0.12 * s, 0.04 * s, c)], this.lighting, 0.4);
+    }
+  }
+  stepTractor(dt) {
+    const t = this.tractor;
+    for (const p of this.smoke) {
+      p.age += dt;
+      p.y -= 0.02 * dt;
+      p.x -= t.dir * 0.01 * dt;
+    }
+    this.smoke = this.smoke.filter((p) => p.age < 4);
+    if (t.x < -5) {
+      t.next -= dt;
+      if (t.next > 0)
+        return;
+      t.dir = Math.random() < 0.5 ? 1 : -1;
+      t.x = t.dir > 0 ? -0.15 : this.A + 0.15;
+      return;
+    }
+    t.x += t.dir * 0.05 * dt;
+    t.wheel += t.dir * 0.05 * dt / 0.026;
+    if (Math.floor(this.time * 2) !== Math.floor((this.time - dt) * 2))
+      this.smoke.push({ x: t.x + t.dir * 0.03, y: this.roadY(t.x) - 0.075, age: 0 });
+    if (t.x < -0.3 || t.x > this.A + 0.3) {
+      t.x = -9;
+      t.next = rand(40, 75);
+    }
+  }
+  drawTractor() {
+    const H = this.H;
+    for (const p of this.smoke) {
+      const k = (1 - p.age / 4) * 0.35;
+      const c = this.paint([0.6, 0.6, 0.62]);
+      this.disc(p.x * H, p.y * H, (0.006 + p.age * 0.005) * H, c[0], c[1], c[2], k);
+    }
+    const t = this.tractor;
+    if (t.x < -5)
+      return;
+    const S = 0.12 * H;
+    const x = t.x * H;
+    const y = (this.roadY(t.x) + 0.004) * H;
+    const P = (u, v) => [x + u * t.dir * S, y + v * S];
+    const red = this.paint([0.75, 0.1, 0.08]);
+    this.polygon([P(-0.1, -0.45), P(0.42, -0.4), P(0.48, -0.2), P(-0.1, -0.2)], red);
+    this.polygon([P(-0.4, -0.78), P(-0.08, -0.78), P(-0.08, -0.4), P(-0.4, -0.4)], this.paint([0.15, 0.12, 0.12]));
+    this.polygon([P(-0.36, -0.74), P(-0.12, -0.74), P(-0.12, -0.46), P(-0.36, -0.46)], this.paint([0.4, 0.6, 0.7]));
+    this.shape([cap(...P(0.25, -0.42), ...P(0.25, -0.62), 0.02 * S, 0.02 * S, this.paint([0.15, 0.15, 0.15]))], this.lighting, 0.4);
+    for (const [u, R] of [[-0.25, 0.22], [0.33, 0.12]]) {
+      const [cx, cy] = P(u, -R);
+      const parts = [ell(cx, cy, R * S, R * S, 0, this.paint([0.08, 0.08, 0.08])), ell(cx, cy, R * 0.55 * S, R * 0.55 * S, 0, this.paint([0.9, 0.75, 0.1]))];
+      this.shape(parts, this.lighting, 0.5);
+      for (let k = 0;k < 4; k++) {
+        const a = t.wheel * (0.22 / R) + k / 4 * Math.PI;
+        this.shape([cap(cx - Math.cos(a) * R * 0.5 * S, cy - Math.sin(a) * R * 0.5 * S, cx + Math.cos(a) * R * 0.5 * S, cy + Math.sin(a) * R * 0.5 * S, 0.012 * S, 0.012 * S, this.paint([0.6, 0.5, 0.08]))], this.lighting, 0);
+      }
+    }
+  }
+  stepEgg(dt, cdt) {
+    const e = this.egg;
+    const c = e.cow;
+    if (!c) {
+      e.wait -= dt;
+      if (e.wait > 0)
+        return;
+      e.cow = { x: this.A + 0.15, y: 0.83, wx: 0, wy: 0, wanderT: 0, face: -1, phase: 0, graze: 0, rest: 0, look: 0, moving: true, g: gait(-1) };
+      e.t = -1;
+      return;
+    }
+    if (e.t < 0) {
+      c.x -= 0.03 * cdt;
+      stepGait(c.g, 0.03 * cdt / (0.055 * this.depthScale(c.y)), cdt, -1);
+      if (c.x > 0.9 * this.A)
+        return;
+      c.moving = false;
+      e.t = 0;
+      return;
+    }
+    e.t += dt;
+    c.phase += cdt * 1.5;
+    stepGait(c.g, 0, cdt, -1);
+    c.graze = e.t < 11 ? Math.min(1, c.graze + cdt * 0.8) : Math.max(0, c.graze - dt * 2);
+    if (e.t < 36)
+      return;
+    e.cow = undefined;
+    e.wait = eggWait(true) * TIME_SCALE5;
+  }
+  drawEgg() {
+    const { A, H, W } = this;
+    const e = this.egg;
+    const c = e.cow;
+    if (!c)
+      return;
+    if (e.t < 0) {
+      this.drawCow(c);
+      return;
+    }
+    const t = e.t;
+    const arrive = smoothstep(0, 10, t);
+    const leave = smoothstep(26, 36, t) ** 2;
+    const ux = lerp(lerp(A + 0.3, c.x, arrive), -0.4, leave);
+    const uy = lerp(lerp(0.1, c.y - 0.4, arrive), -0.2, leave) + Math.sin(this.time * 1.5) * 0.005;
+    const beam = smoothstep(10, 12, t) * (1 - smoothstep(23, 25, t));
+    if (beam > 0) {
+      const top = (uy + 0.02) * H;
+      const bottom = (c.y + 0.01) * H;
+      for (let y2 = Math.max(0, Math.floor(top));y2 < Math.min(H, bottom); y2++) {
+        const f = (y2 - top) / (bottom - top);
+        const half = lerp(0.025, 0.075, f) * H;
+        const k = beam * 0.32 * (0.85 + 0.15 * Math.sin(y2 * 0.4 - this.time * 6)) * (1 - 0.4 * f);
+        for (let x2 = Math.max(0, Math.floor(ux * H - half));x2 < Math.min(W, ux * H + half); x2++) {
+          const a = k * smoothstep(1, 0.7, Math.abs(x2 + 0.5 - ux * H) / half);
+          this.add(x2, y2, 0.3 * a, 1 * a, 0.6 * a);
+        }
+      }
+    }
+    const rise = smoothstep(13, 24, t);
+    if (t < 24)
+      this.drawCow(c, rise * (c.y - uy - 0.025), lerp(1, 0.35, rise));
+    const x = ux * H;
+    const y = uy * H;
+    this.shape([ell(x, y - 0.016 * H, 0.04 * H, 0.03 * H, 0, this.paint([0.45, 0.75, 0.85])), ell(x, y, 0.09 * H, 0.022 * H, 0, this.paint([0.6, 0.62, 0.66]))], this.lighting, 0.8);
+    for (let i = 0;i < 6; i++) {
+      const on = Math.floor(this.time * 4) % 6 === i ? 2 : 0.4;
+      const color = [[1, 0.2, 0.2], [0.2, 1, 0.3], [0.3, 0.5, 1]][i % 3];
+      this.splat(x + Math.cos(i / 5 * Math.PI) * 0.075 * H, y + 0.008 * H, color[0] * on, color[1] * on, color[2] * on);
+    }
+  }
+  drawFireflies() {
+    const H = this.H;
+    for (const f of this.fireflies) {
+      const k = Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6);
+      if (k < 0.02)
+        continue;
+      fireflyLight(this.hdr, this.W, H, f.x * H, f.y * H, k);
+      this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6);
+      this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k);
+    }
+  }
+}
+function lerpRGB(a, b, t) {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+function lightenGrass(hdr, W, H, pasture, gusts) {
+  for (let k = 0;k < pasture.length; k++) {
+    const p = pasture[k];
+    const x = p % W;
+    const g = gusts[x];
+    if (g < 0.01)
+      continue;
+    const y = (p - x) / W;
+    const m = 1 + 0.1 * g * (0.4 + 0.6 * Math.sin((x - y * 1.4) / H * 55) ** 2);
+    hdr[p * 3] *= m;
+    hdr[p * 3 + 1] *= m;
+    hdr[p * 3 + 2] *= m;
+  }
+}
+var farm = {
+  id: "farm",
+  name: "Farm",
+  description: "Rolling fields with a red barn, a turning windmill and swaying corn, and a tractor now and then",
+  activity: {
+    calm: "Barn, windmill, fields and corn",
+    lively: "Adds grazing cows and pecking chickens",
+    teeming: "Adds a farmer, pigs in the mud and crows over the corn"
+  },
+  scrim: {
+    day: [
+      [20, 40, 70],
+      [24, 40, 20],
+      [14, 28, 10]
+    ],
+    sunset: [
+      [16, 18, 34],
+      [40, 28, 14],
+      [14, 12, 6]
+    ],
+    night: [
+      [4, 6, 16],
+      [4, 6, 14],
+      [2, 4, 6]
+    ]
+  },
+  create: (settings) => new Farm(settings)
+};
+
+// wallpapers/haunted-house.ts
+var TIME_SCALE6 = 0.35;
+var CREATURE_SPEED6 = 0.25;
+var HORIZON5 = 0.62;
+var FENCE = 0.8;
+var WALK0 = 0.88;
+var WALK1 = 0.94;
+var ZOMBIE = 0.16;
+var ZOMBIE_STRIDE = 0.05;
+var WITCH_GAP = [70, 140];
+var ROOM = 5;
+var DANCE = 45;
+var LOOKS6 = {
+  day: {
+    style: "front",
+    light: [0.85, 0.9, 0.75],
+    sky: [
+      [0, [0.09, 0.105, 0.11]],
+      [0.3, [0.18, 0.2, 0.19]],
+      [0.5, [0.34, 0.36, 0.28]],
+      [HORIZON5, [0.64, 0.6, 0.38]]
+    ],
+    orb: { x: -0.32, y: 0.15, r: 0.055, core: [0.95, 0.95, 0.72], glow: [0.32, 0.34, 0.24], near: 0.18, wide: 0.08 },
+    stars: 0,
+    clouds: [
+      [0.3, 0.32, 0.29],
+      [0.07, 0.08, 0.08]
+    ],
+    cloudKind: "stratus",
+    ridge: [
+      [0.3, 0.31, 0.23],
+      [0.13, 0.14, 0.1]
+    ],
+    grass: [0.11, 0.13, 0.075],
+    dirt: [0.14, 0.11, 0.075],
+    walls: [0.15, 0.145, 0.14],
+    trim: [0.06, 0.06, 0.06],
+    roof: [0.045, 0.045, 0.055],
+    stone: [0.14, 0.15, 0.13],
+    glass: [0.035, 0.035, 0.04],
+    window: [1.3, 0.68, 0.18],
+    glow: 1.3,
+    fog: [0.26, 0.29, 0.23],
+    fogAlpha: 0.16,
+    ghost: [0.6, 0.95, 0.78],
+    zombie: [0.42, 0.56, 0.32],
+    skin: [0.85, 0.38, 0.06],
+    tint: [0.55, 0.58, 0.52],
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1.6, 0.45, 0.12],
+    sky: [
+      [0, [0.05, 0.012, 0.1]],
+      [0.25, [0.25, 0.04, 0.18]],
+      [0.45, [0.85, 0.16, 0.08]],
+      [HORIZON5, [1.35, 0.42, 0.08]]
+    ],
+    orb: { x: -0.42, y: 0.5, r: 0.11, core: [3.2, 0.62, 0.12], glow: [1, 0.26, 0.06], near: 0.6, wide: 0.38 },
+    stars: 10,
+    clouds: [
+      [0.06, 0.015, 0.06],
+      [0.95, 0.25, 0.1]
+    ],
+    cloudKind: "stratus",
+    ridge: [
+      [0.26, 0.055, 0.12],
+      [0.1, 0.022, 0.06]
+    ],
+    grass: [0.045, 0.014, 0.033],
+    dirt: [0.06, 0.018, 0.035],
+    walls: [0.045, 0.015, 0.04],
+    trim: [0.028, 0.009, 0.026],
+    roof: [0.018, 0.005, 0.018],
+    stone: [0.11, 0.035, 0.08],
+    glass: [0.02, 0.006, 0.02],
+    window: [1.9, 0.72, 0.15],
+    glow: 1.45,
+    fog: [0.42, 0.11, 0.18],
+    fogAlpha: 0.3,
+    ghost: [0.4, 1, 0.72],
+    zombie: [0.45, 0.58, 0.36],
+    skin: [0.5, 0.14, 0.03],
+    tint: [0.2, 0.065, 0.13],
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [1.2, 0.68, 0.22],
+    sky: [
+      [0, [0.01, 0.005, 0.04]],
+      [0.3, [0.06, 0.025, 0.17]],
+      [HORIZON5, [0.18, 0.07, 0.34]]
+    ],
+    orb: { x: -0.2, y: 0.2, r: 0.14, core: [2.4, 0.95, 0.18], glow: [0.9, 0.32, 0.06], near: 0.5, wide: 0.32, moon: true },
+    stars: 90,
+    clouds: [
+      [0.015, 0.008, 0.05],
+      [0.1, 0.045, 0.2]
+    ],
+    cloudKind: "wisp",
+    ridge: [
+      [0.06, 0.028, 0.13],
+      [0.022, 0.01, 0.055]
+    ],
+    grass: [0.016, 0.012, 0.04],
+    dirt: [0.025, 0.014, 0.04],
+    walls: [0.03, 0.02, 0.07],
+    trim: [0.018, 0.012, 0.045],
+    roof: [0.008, 0.005, 0.02],
+    stone: [0.08, 0.06, 0.17],
+    glass: [0.014, 0.008, 0.03],
+    window: [2, 0.88, 0.2],
+    glow: 1.9,
+    fog: [0.13, 0.07, 0.28],
+    fogAlpha: 0.4,
+    ghost: [0.22, 1.1, 0.78],
+    zombie: [0.25, 0.55, 0.3],
+    skin: [0.32, 0.1, 0.02],
+    tint: [0.07, 0.045, 0.14],
+    night: true
+  }
+};
+var DAYLIGHT5 = (() => {
+  const l = Math.hypot(0.4, 0.7, 0.6);
+  return [-0.4 / l, -0.7 / l, 0.6 / l];
+})();
+var CANDLE = [2.3, 1.05, 0.22];
+var BOLT = [0.5, 0.42, 1.5];
+var LEAVES = [
+  [0.6, 0.32, 0.08],
+  [0.5, 0.2, 0.08],
+  [0.55, 0.45, 0.15],
+  [0.35, 0.2, 0.1]
+];
+
+class HauntedHouse extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  weather;
+  lighting = { style: "front", dir: DAYLIGHT5 };
+  light = [1, 1, 1];
+  lights = new LightMap;
+  stars;
+  shown = [];
+  clouds;
+  storm = makeStorm();
+  k = 1;
+  S = 1.48;
+  hx = 1.4;
+  hy = 0.6;
+  orb;
+  fore = new Uint8Array(0);
+  fog = new Float32Array(0);
+  fogY0 = 0;
+  fogRows = 0;
+  pumpkins = [];
+  windows = [];
+  rooms = 0;
+  stones = [];
+  lanterns = [];
+  raven = { x: 0, y: 0 };
+  spider = { x: 0, y: 0 };
+  eyes = [];
+  wisps = [];
+  passer = { win: -1, t: 0, wait: rand(8, 20) };
+  swing = { x: 0, y: 0, len: 0.12 };
+  grave = { x: 0.3, y: 0.92 };
+  bats = [];
+  stream = [];
+  streamWait = 0;
+  burst = [];
+  ghosts = [];
+  leaves = [];
+  ghoul = { stone: -1, t: -1, wait: rand(6, 16), dur: 9 };
+  hand = { t: -1, wait: rand(10, 25) };
+  zombie = { x: 0.5, y: 0.87, dir: 1, phase: 0 };
+  flash = { t: -1, wait: 0, x: 0.5 };
+  witch = { t: -1, wait: rand(20, 50), dir: 1, y: 0.2 };
+  dance = { wait: eggWait() * TIME_SCALE6, t: -1 };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS6[settings.time];
+    this.orb = this.look.orb;
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON5);
+    this.stars = makeStars(this.look.stars, 0.5);
+    this.clouds = makeClouds(settings.time === "day" ? 7 : 4, this.look.cloudKind, 0.05, 0.32);
+    const n = { calm: 6, lively: 9, teeming: 12 }[settings.activity];
+    this.leaves = Array.from({ length: n }, () => this.leaf(Math.random() * 2, rand(0.05, 0.95)));
+    const bats = { calm: 2, lively: 4, teeming: 6 }[settings.activity];
+    this.bats = Array.from({ length: bats }, (_, i) => ({ ax: 0, ay: 0, rx: rand(0.05, 0.1), ry: rand(0.02, 0.05), w: rand(0.9, 1.4), phase: rand(0, TAU), size: rand(0.024, 0.034) + (i === 0 ? 0.008 : 0) }));
+    this.flash.wait = rand(2, 6);
+    if (settings.activity === "calm")
+      return;
+    const ghosts = settings.activity === "teeming" ? 2 : 1;
+    this.ghosts = Array.from({ length: ghosts }, (_, i) => ({ x: 0, y: 0, x0: 0, x1: 0, dir: i ? -1 : 1, phase: rand(0, TAU) }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE6;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED6;
+    this.creatureTime += cdt;
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    driftClouds(this.clouds, this.A, dt * 0.4);
+    if (this.gloom > 0)
+      driftClouds(this.storm, this.A, dt);
+    for (const p of this.pumpkins)
+      p.flare = Math.max(0, p.flare - dt * 0.35);
+    for (const w of this.windows)
+      w.flash = Math.max(0, w.flash - dt * 0.2);
+    this.burst = flyAway(this.burst, dt, this.A);
+    this.stepStream(dt);
+    this.stepLeaves(dt);
+    this.stepGhosts(cdt);
+    this.stepGhoul(dt);
+    this.stepHand(dt);
+    this.stepZombie(cdt);
+    this.stepLightning(dt);
+    this.stepWitch(dt, cdt);
+    this.stepDance(dt);
+    this.stepPasser(dt);
+  }
+  stepPasser(dt) {
+    const p = this.passer;
+    if (p.win >= 0) {
+      p.t += dt * 0.12;
+      if (p.t > 1)
+        p.win = -1;
+      return;
+    }
+    if (this.activity === "calm")
+      return;
+    p.wait -= dt;
+    if (p.wait > 0)
+      return;
+    p.wait = rand(15, 35);
+    const lit = this.windows.map((w, i) => [w, i]).filter(([w]) => w.kind === "glow" || w.kind === "candle");
+    if (!lit.length)
+      return;
+    p.win = lit[Math.floor(Math.random() * lit.length)][1];
+    p.t = 0;
+  }
+  render() {
+    this.restore();
+    const { W, H, look, hdr } = this;
+    if (!this.weather.covered)
+      paintStars(hdr, W, H, this.shown, this.time, 0.5, look.night ? 0.8 : 0.4, this.points);
+    const [top, bottom] = this.weather.scud ?? look.clouds;
+    paintClouds(hdr, W, H, this.clouds, top, bottom, look.night ? 0.75 : 0.6, this.weather.covered ? undefined : this.orb);
+    if (this.gloom > 0)
+      paintStorm(hdr, W, H, this.storm, [0.16, 0.1, 0.22], [0.04, 0.02, 0.06], this.gloom);
+    if (this.flash.t >= 0)
+      this.drawLightning();
+    this.unsky(0, 0, W - 1, Math.ceil(HORIZON5 * H));
+    if (this.witch.t >= 0)
+      this.drawWitch();
+    for (const b of this.bats)
+      this.drawBatAt(b);
+    for (const b of this.stream)
+      this.drawBat(b.x, b.y, 0.022, b.phase, Math.sign(b.vx));
+    this.lights.clear(W, H);
+    this.drawWindows();
+    for (const g of this.ghosts)
+      this.drawGhost(g);
+    this.drawSwing();
+    if (this.activity !== "calm")
+      this.drawSpider();
+    if (this.ghoul.t >= 0)
+      this.drawGhoul();
+    if (this.hand.t >= 0)
+      this.drawHand(this.grave.x, this.grave.y, this.hand.t);
+    creep(hdr, W, H, this.fog, this.fogY0, this.fogRows, this.time * 1.6, this.time * 1.1, look.fog, look.fogAlpha);
+    touch(hdr, 0, this.fogY0, W - 1, this.fogY0 + this.fogRows - 1);
+    this.drawPumpkins();
+    this.drawEyes();
+    this.drawRaven();
+    this.drawWisps();
+    if (this.activity === "teeming")
+      this.drawZombie(this.zombie.x, this.zombie.y, this.zombie.dir, this.zombie.phase, 0, 1);
+    if (this.dance.t >= 0)
+      this.drawDance();
+    this.lights.apply(hdr);
+    this.drawLeaves();
+    for (const b of this.burst)
+      this.drawBat(b.x, b.y, 0.026, b.phase, Math.sign(b.vx));
+    this.weather.draw(hdr, W, H);
+    this.finish();
+  }
+  visit() {
+    for (const w of this.windows)
+      if (w.kind !== "boarded")
+        w.flash = Math.max(w.flash, 0.6);
+    for (const p of this.pumpkins)
+      p.flare = Math.max(p.flare, 0.8);
+    if (this.witch.t < 0)
+      this.startWitch();
+  }
+  poke(x, y) {
+    const H = this.H;
+    const win = this.windows.find((w) => w.kind !== "boarded" && Math.abs(w.x / H - x) < w.w / H + 0.02 && Math.abs(w.y / H - y) < w.h / H + 0.02);
+    if (win) {
+      win.flash = 1.4;
+      return;
+    }
+    const stone = this.stones.findIndex((s) => Math.abs(s.x - x) < s.s * 0.8 + 0.02 && y > s.y - s.s * 2.4 && y < s.y + 0.02);
+    if (stone >= 0 && this.ghoul.t < 0) {
+      Object.assign(this.ghoul, { stone, t: 0, dur: 6 });
+      return;
+    }
+    if (this.burst.length < 24)
+      startle(this.burst, x, y, 6);
+  }
+  layout() {
+    const { W, H, A, look, hdr } = this;
+    const k = this.k = clamp(A / 1.7, 0.58, 1);
+    this.S = Math.min(1.48, A / 0.64);
+    this.hx = A / 2 + 0.01;
+    this.hy = this.riseY(this.hx);
+    this.orb = { ...look.orb, x: Math.max(0.12, this.hx + look.orb.x * this.S) / A };
+    const veil = this.weather.covered ? 0.3 : 1;
+    this.light = [look.light[0] * veil, look.light[1] * veil, look.light[2] * veil];
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT5 } : { style: "rim", color: this.light, x: this.orb.x * W, y: this.orb.y * H };
+    this.pumpkins = [];
+    this.windows = [];
+    paintSky(hdr, W, H, look.sky, { ...this.orb, moon: false }, this.px);
+    if (this.orb.moon) {
+      const R = this.orb.r * H;
+      const mx = this.orb.x * W;
+      const my = this.orb.y * H;
+      const c = this.orb.core;
+      for (const [u, v, r] of [
+        [-0.3, -0.25, 0.32],
+        [0.15, -0.35, 0.22],
+        [0.25, 0.1, 0.28],
+        [-0.2, 0.3, 0.2],
+        [0.45, 0.45, 0.14]
+      ])
+        this.ellipse(mx + u * R, my + v * R, r * R, r * R * 0.85, c[0] * 0.72, c[1] * 0.62, c[2] * 0.6, 0.55);
+    }
+    this.weather.cover(hdr, W, H);
+    const sky = hdr.slice();
+    this.paintLand();
+    this.paintForest();
+    this.paintHouse();
+    this.paintFences();
+    this.paintCrypt();
+    this.paintGraves();
+    this.paintTrees();
+    this.paintUndergrowth();
+    for (const p of this.pumpkins)
+      this.drawPumpkin(p, 1, true);
+    if (this.px !== 1)
+      return;
+    this.fore = new Uint8Array(W * H);
+    for (let i = 0;i < W * H; i++)
+      if (hdr[i * 3] !== sky[i * 3] || hdr[i * 3 + 1] !== sky[i * 3 + 1] || hdr[i * 3 + 2] !== sky[i * 3 + 2])
+        this.fore[i] = 1;
+    this.shown = this.stars.filter((s) => {
+      const i = Math.floor(s.y * H) * W + Math.floor(s.x * W);
+      return !this.fore[i] && Math.hypot(s.x * W - this.orb.x * W, s.y * H - this.orb.y * H) > this.orb.r * H * 1.6;
+    });
+    this.fogY0 = Math.floor(0.58 * H);
+    this.fogRows = Math.ceil(0.4 * H);
+    this.fog = makeFog(W, H, this.fogY0, this.fogRows);
+    this.placeCreatures();
+  }
+  paint(c, k = 1) {
+    const t = this.look.tint;
+    return [c[0] * t[0] * k, c[1] * t[1] * k, c[2] * t[2] * k];
+  }
+  riseY(x) {
+    return 0.725 - 0.03 * Math.exp(-(((x - this.hx) / (0.45 * this.S)) ** 2)) + (fbm1(x * 3, 7) - 0.5) * 0.012;
+  }
+  paintLand() {
+    const { W, H, look, hdr, px } = this;
+    const [far, near2] = look.ridge;
+    for (let x = 0;x < W; x++) {
+      const u = (x + 0.5) / H;
+      const r1 = HORIZON5 - 0.03 - (fbm1(u * 2.2, 11) - 0.5) * 0.06;
+      const rise = this.riseY(u);
+      for (let y = Math.max(0, Math.floor(Math.min(r1, rise) * H) - 1);y < H; y++) {
+        const v = (y + 0.5) / H;
+        const o = (y * W + x) * 3;
+        const a1 = clamp((v - r1) * H / px + 0.5, 0, 1);
+        const a2 = clamp((v - rise) * H / px + 0.5, 0, 1);
+        const fade = smoothstep(r1, rise, v);
+        if (a1 > 0)
+          for (let c = 0;c < 3; c++)
+            hdr[o + c] += (lerp(far[c], near2[c], fade) - hdr[o + c]) * a1;
+        if (a2 <= 0)
+          continue;
+        const depth2 = smoothstep(rise, 1, v);
+        const patch = smoothstep(0.55, 0.75, fbm2(u * 7, v * 22, 3));
+        const tuft = 0.88 + 0.24 * fbm2(u * 14, v * 50, 2);
+        const rim = look.style === "rim" ? Math.exp(-((v - rise) * H) / (2 * px)) * (look.night ? 0.1 : 0.18) : 0;
+        for (let c = 0;c < 3; c++) {
+          const ground = lerp(near2[c], lerp(look.grass[c], look.dirt[c], patch * 0.6), smoothstep(0, 0.08, v - rise)) * tuft * (1 - 0.25 * depth2);
+          hdr[o + c] += (ground + this.light[c] * rim - hdr[o + c]) * a2;
+        }
+      }
+    }
+    const k = this.k;
+    for (const [i, x] of [0.36 * k, this.A - 0.34 * k, this.A - 0.16 * k].entries()) {
+      const y = HORIZON5 - 0.03 - (fbm1(x * 2.2, 11) - 0.5) * 0.06 + 0.004;
+      const h = 0.04 + 0.015 * hash(i * 3.1);
+      const c = [far[0] * 0.75, far[1] * 0.75, far[2] * 0.8];
+      const r = this.thick(0.0018, 0.6);
+      const parts = [cap(x * H, y * H, x * H, (y - h) * H, r * 1.4, r, c)];
+      for (let j = 0;j < 4; j++) {
+        const a = -Math.PI / 2 + (j - 1.5) * 0.55;
+        const by = y - h * (0.45 + 0.15 * j);
+        parts.push(cap(x * H, by * H, (x + Math.cos(a) * h * 0.4) * H, (by + Math.sin(a) * h * 0.4) * H, r, r * 0.7, c));
+      }
+      this.shape(parts, this.lighting, 0);
+    }
+  }
+  paintHouse() {
+    const { H, look } = this;
+    const S = this.S;
+    const hx = this.hx;
+    const gy = this.hy + 0.006;
+    const X = (u) => (hx + u * S) * H;
+    const Y = (v) => (gy - v * S) * H;
+    const L = (u, v) => [X(u) + v * 0.035 * S * H, Y(v)];
+    const T = (u, v) => [X(-0.15 + u) + v * 0.02 * S * H, Y(v)];
+    const walls = look.walls;
+    const side = [walls[0] * 0.62, walls[1] * 0.62, walls[2] * 0.66];
+    const seam = [walls[0] * 0.78, walls[1] * 0.78, walls[2] * 0.8];
+    const crack = [walls[0] * 0.4, walls[1] * 0.38, walls[2] * 0.42];
+    const roof = look.roof;
+    const tile = [roof[0] * 1.7 + 0.01, roof[1] * 1.7 + 0.01, roof[2] * 1.6 + 0.01];
+    const trim = look.trim;
+    const line = (pts, r, color) => {
+      const w = this.thick(r * S, 0.5);
+      this.shape(pts.slice(1).map((p2, i) => cap(...pts[i], ...p2, w, w, color)), this.lighting, 0);
+    };
+    this.polygon([L(0.16, 0), L(0.22, 0.02), L(0.22, 0.2), L(0.16, 0.19)], side);
+    for (let v = 0.016;v < 0.19; v += 0.016)
+      line([L(0.16, v), L(0.22, v + 0.02 * (1 - v / 0.2))], 0.0005, [side[0] * 0.8, side[1] * 0.8, side[2] * 0.8]);
+    this.polygon([L(0.1, 0.3), L(0.17, 0.32), L(0.235, 0.2), L(0.17, 0.185)], roof);
+    const brick = [walls[0] * 0.55, walls[1] * 0.42, walls[2] * 0.4];
+    this.polygon([L(0.115, 0.25), L(0.145, 0.25), L(0.16, 0.38), L(0.13, 0.385)], brick);
+    for (let v = 0.27;v < 0.37; v += 0.018)
+      line([L(0.117 + (v - 0.25) * 0.11, v), L(0.147 + (v - 0.25) * 0.11, v)], 0.0005, [brick[0] * 0.7, brick[1] * 0.7, brick[2] * 0.7]);
+    this.polygon([L(0.122, 0.378), L(0.168, 0.373), L(0.168, 0.393), L(0.14, 0.397), L(0.135, 0.388), L(0.125, 0.398)], roof);
+    this.polygon([L(-0.12, 0), L(0.16, 0), L(0.16, 0.19), L(-0.12, 0.19)], walls);
+    for (let v = 0.016;v < 0.185; v += 0.016)
+      line([L(-0.12, v), L(0.16, v)], 0.0005, seam);
+    const ridgeV = (t) => 0.3 - 0.025 * Math.sin(t * Math.PI);
+    const ridge = [];
+    for (let i = 0;i <= 8; i++)
+      ridge.push(L(lerp(-0.1, 0.12, i / 8), ridgeV(i / 8)));
+    this.polygon([L(-0.14, 0.18), ...ridge, L(0.185, 0.18)], roof);
+    for (let t = 0.12;t < 0.95; t += 0.13) {
+      const row = [];
+      for (let i = 0;i <= 8; i++) {
+        const s = i / 8;
+        row.push(L(lerp(lerp(-0.14, -0.1, t), lerp(0.185, 0.12, t), s), lerp(0.18, ridgeV(s), t)));
+      }
+      line(row, 0.0006, tile);
+    }
+    this.polygon([L(0.088, 0.215), L(0.118, 0.22), L(0.124, 0.252), L(0.1, 0.262), L(0.084, 0.24)], [roof[0] * 0.3, roof[1] * 0.3, roof[2] * 0.3]);
+    for (const u of [0.094, 0.108])
+      line([L(u, 0.214), L(u + 0.006, 0.26)], 0.001, tile);
+    this.polygon([L(-0.06, 0.18), L(0.08, 0.18), L(0.012, 0.34)], walls);
+    for (let v = 0.196;v < 0.33; v += 0.016) {
+      const t = (v - 0.18) / 0.16;
+      line([L(lerp(-0.06, 0.012, t), v), L(lerp(0.08, 0.012, t), v)], 0.0005, seam);
+    }
+    this.edge(L(-0.075, 0.172), L(0.012, 0.345), 0.006 * S, roof);
+    this.edge(L(0.012, 0.345), L(0.095, 0.172), 0.006 * S, roof);
+    line([L(-0.055, 0.19), L(0.012, 0.318), L(0.077, 0.19)], 0.0012, trim);
+    this.edge(L(0.012, 0.345), L(0.012, 0.37), 0.0015 * S, roof);
+    const tw = 0.042;
+    this.polygon([T(-tw, 0), T(tw, 0), T(tw, 0.27), T(-tw, 0.27)], walls);
+    this.polygon([T(tw * 0.35, 0), T(tw, 0), T(tw, 0.27), T(tw * 0.35, 0.27)], [walls[0] * 0.75, walls[1] * 0.75, walls[2] * 0.78]);
+    for (let v = 0.016;v < 0.265; v += 0.016)
+      line([T(-tw, v), T(-tw * 0.3, v + 0.002), T(tw * 0.3, v + 0.002), T(tw, v)], 0.0005, seam);
+    for (const v of [0.095, 0.185])
+      this.polygon([T(-tw - 0.004, v), T(tw + 0.004, v), T(tw + 0.004, v + 0.008), T(-tw - 0.004, v + 0.008)], trim);
+    this.polygon([T(-tw - 0.012, 0.265), T(tw + 0.012, 0.265), T(tw + 0.008, 0.285), T(-tw - 0.008, 0.285)], trim);
+    const tip = [T(0, 0.43)[0] + 0.022 * S * H, Y(0.43)];
+    const shoulderL = [T(-tw * 0.3, 0.36)[0] + 0.004 * S * H, Y(0.36)];
+    const shoulderR = [T(tw * 0.4, 0.36)[0] + 0.01 * S * H, Y(0.36)];
+    this.polygon([T(-tw - 0.01, 0.282), T(tw + 0.01, 0.282), shoulderR, tip, shoulderL], roof);
+    for (let t = 0.15;t < 0.8; t += 0.16) {
+      const a = t < 0.55 ? lerp(T(-tw - 0.01, 0.282)[0], shoulderL[0], t / 0.55) : lerp(shoulderL[0], tip[0], (t - 0.55) / 0.45);
+      const b = t < 0.55 ? lerp(T(tw + 0.01, 0.282)[0], shoulderR[0], t / 0.55) : lerp(shoulderR[0], tip[0], (t - 0.55) / 0.45);
+      const y = lerp(Y(0.282), tip[1], t);
+      line([[a, y], [(a + b) / 2, y + 0.002 * S * H], [b, y]], 0.0006, tile);
+    }
+    this.edge(tip, [tip[0] + 0.004 * S * H, tip[1] - 0.04 * S * H], 0.0018 * S, roof);
+    const vy = tip[1] - 0.032 * S * H;
+    line([[tip[0] - 0.014 * S * H, vy + 0.004 * S * H], [tip[0] + 0.02 * S * H, vy - 0.002 * S * H]], 0.0012, roof);
+    this.polygon([[tip[0] + 0.02 * S * H, vy - 0.007 * S * H], [tip[0] + 0.03 * S * H, vy - 0.003 * S * H], [tip[0] + 0.02 * S * H, vy + 0.003 * S * H]], roof);
+    this.edge(L(-0.12, 0.1), L(0.16, 0.1), 0.004 * S, trim);
+    this.edge(L(-0.14, 0.182), L(0.185, 0.182), 0.005 * S, trim);
+    line([L(0.03, 0.19), L(0.036, 0.168), L(0.028, 0.15), L(0.04, 0.128), L(0.034, 0.112)], 0.001, crack);
+    line([L(-0.11, 0.098), L(-0.1, 0.082), L(-0.106, 0.064)], 0.001, crack);
+    line([T(-0.02, 0.26), T(-0.01, 0.24), T(-0.024, 0.22)], 0.001, crack);
+    if (look.style === "rim")
+      this.rimEdges([T(-tw, 0), T(-tw, 0.27), T(-tw - 0.01, 0.282), shoulderL, tip, ...ridge, L(0.185, 0.18)]);
+    const plan = [
+      [-0.09, 0.024, 0.016, 0.032, "glow"],
+      [-0.05, 0.024, 0.012, 0.032, "dark"],
+      [0.08, 0.024, 0.016, 0.032, "dark"],
+      [0.128, 0.024, 0.013, 0.032, "boarded"],
+      [-0.08, 0.122, 0.016, 0.038, "dark"],
+      [-0.02, 0.122, 0.016, 0.038, "candle"],
+      [0.05, 0.122, 0.016, 0.038, "boarded"],
+      [0.115, 0.122, 0.015, 0.038, "glow"],
+      [0.012, 0.225, 0.014, 0.034, "dark"]
+    ];
+    const turret = [
+      [0.04, 0.032],
+      [0.13, 0.036],
+      [0.21, 0.034]
+    ];
+    for (const [i, [u, v, w, h, kind]] of plan.entries())
+      this.paintWindow(L(u, v), L(u, v + h), w * S * H, h * S * H, kind, i);
+    for (const [i, [v, h]] of turret.entries())
+      this.paintWindow(T(0, v), T(0, v + h), 0.012 * S * H, h * S * H, i === 2 ? "glow" : "dark", 20 + i);
+    const order = this.windows.filter((w) => w.kind !== "boarded").sort((a, b) => b.y - a.y || a.x - b.x);
+    for (const [i, w] of order.entries())
+      w.room = i;
+    this.rooms = order.length;
+    const door = this.paint([0.18, 0.11, 0.08]);
+    this.polygon([L(-0.002, 0), L(0.032, 0), L(0.032, 0.058), L(-0.002, 0.058)], door);
+    for (const v of [0.008, 0.032])
+      for (const u of [0.003, 0.018])
+        this.polygon([L(u, v), L(u + 0.01, v), L(u + 0.01, v + 0.02), L(u, v + 0.02)], [door[0] * 0.7, door[1] * 0.7, door[2] * 0.7]);
+    const fan = look.glow * 0.45;
+    this.disc(...L(0.015, 0.06), 0.013 * S * H, trim[0], trim[1], trim[2], 1);
+    this.disc(...L(0.015, 0.06), 0.01 * S * H, look.window[0] * fan, look.window[1] * fan, look.window[2] * fan, 1);
+    this.polygon([L(-0.004, 0.058), L(0.034, 0.058), L(0.034, 0.05), L(-0.004, 0.05)], trim);
+    const pr = this.thick(0.0024 * S, 0.7);
+    const posts = [];
+    for (const u of [-0.12, -0.045, 0.072, 0.158]) {
+      posts.push(cap(...L(u, 0), ...L(u, 0.068), pr, pr, trim));
+      for (const s of [-1, 1])
+        posts.push(cap(...L(u + s * 0.014, 0.068), ...L(u, 0.054), pr * 0.6, pr * 0.6, trim));
+    }
+    this.shape(posts, this.lighting, 0.4);
+    const porch = [];
+    for (let i = 0;i <= 6; i++)
+      porch.push(L(lerp(-0.135, 0.17, i / 6), 0.074 - 0.009 * Math.sin(i / 6 * Math.PI) - (i === 6 ? 0.007 : 0)));
+    this.polygon([...porch, L(0.175, 0.059), L(-0.14, 0.062)], roof);
+    line(porch.map(([x, y]) => [x, y + 0.012 * S * H]), 0.0015, trim);
+    this.polygon([L(-0.135, 0.008), L(0.175, 0.008), L(0.175, -0.004), L(-0.135, -0.004)], trim);
+    for (let s = 0;s < 3; s++)
+      this.polygon([L(-0.014 - s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.013 - s * 0.009), L(-0.014 - s * 0.006, -0.013 - s * 0.009)], [trim[0] * 1.3, trim[1] * 1.3, trim[2] * 1.3]);
+    const rr = this.thick(0.0012 * S, 0.5);
+    const rail = [cap(...L(-0.12, 0.032), ...L(-0.06, 0.032), rr, rr, trim), cap(...L(-0.06, 0.032), ...L(-0.035, 0.012), rr, rr, trim), cap(...L(0.072, 0.032), ...L(0.158, 0.028), rr, rr, trim)];
+    for (let u = -0.11;u < 0.158; u += this.cells ? 0.02 : 0.012)
+      if ((u < -0.065 || u > 0.08) && Math.abs(u - 0.115) > 0.008)
+        rail.push(cap(...L(u, 0.008), ...L(u, 0.03), rr, rr, trim));
+    rail.push(cap(...L(0.112, 0.008), ...L(0.124, 0.022), rr, rr, trim));
+    this.shape(rail, this.lighting, 0);
+    this.paintWeb(...L(-0.12, 0.068), 0.03 * S * H, -0.1, Math.PI / 2 + 0.1);
+    this.paintWeb(...L(0.158, 0.064), 0.026 * S * H, Math.PI / 2 - 0.1, Math.PI + 0.1);
+    this.spider = { x: L(0.15, 0.064)[0] / H, y: L(0.15, 0.064)[1] / H };
+    const p = (u, v, r, seed) => this.pumpkins.push({ x: L(u, v)[0], y: Y(v), r: r * S * H, seed, flare: 0 });
+    p(-0.03, -0.01, 0.011, 1);
+    p(0.06, -0.022, 0.013, 2);
+    p(-0.1, 0.032, 0.008, 3);
+    p(-0.045, -0.028, 0.009, 4);
+  }
+  paintWindow(a, b, w, h, kind, seed) {
+    const look = this.look;
+    const frame = look.trim;
+    const dx = b[0] - a[0];
+    const f = Math.max(0.0045 * this.S * this.H, this.cells ? 1 : 0.5);
+    this.polygon([[a[0] - w - f, a[1] + f], [a[0] + w + f, a[1] + f], [b[0] + w + f, b[1] - f], [b[0] - w - f, b[1] - f]], frame);
+    this.polygon([[a[0] - w - f * 2, a[1] + f * 2], [a[0] + w + f * 2, a[1] + f * 2], [a[0] + w + f * 2, a[1] + f * 0.6], [a[0] - w - f * 2, a[1] + f * 0.6]], [frame[0] * 1.3, frame[1] * 1.3, frame[2] * 1.3]);
+    this.polygon([[b[0] - w - f * 1.6, b[1] - f * 0.6], [b[0] + w + f * 1.6, b[1] - f * 0.6], [b[0] + w + f, b[1] - f * 2.2], [b[0] - w - f, b[1] - f * 2.2]], frame);
+    const pts = [
+      [a[0] - w, a[1]],
+      [a[0] + w, a[1]],
+      [b[0] + w, b[1]],
+      [b[0] - w, b[1]]
+    ];
+    const lit = kind === "glow" || kind === "candle";
+    const g = lit ? look.window : look.glass;
+    const k = lit ? look.glow * (kind === "candle" ? 0.5 : 0.7) : 1;
+    this.polygon(pts, [g[0] * k, g[1] * k, g[2] * k]);
+    if (kind === "dark" && hash(seed * 3.3) < 0.6)
+      this.polygon([[a[0] - w * 0.2, a[1] - h * 0.55], [a[0] + w * 0.7, a[1] - h * 0.9], [a[0] + w * 0.3, a[1] - h * 0.6], [a[0] + w * 0.8, a[1] - h * 0.3]], [g[0] * 0.3, g[1] * 0.3, g[2] * 0.3]);
+    this.windows.push({ pts, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w, h, kind, room: -1, seed, flash: 0 });
+    if (seed === 0 || seed === 4 || seed === 7 || seed === 21) {
+      const sx = a[0] + w + f * 1.5;
+      const sw = w * 0.85;
+      const c = [frame[0] * 1.25, frame[1] * 1.2, frame[2] * 1.15];
+      const sh = [[sx, b[1] - f], [sx + sw, b[1] - f + sw * 0.25], [sx + sw * 0.5, a[1] + f + sw * 0.7], [sx - sw * 0.45, a[1] + f + sw * 0.35]];
+      this.polygon(sh, c);
+      if (w > 3 * this.px)
+        for (const t of [0.33, 0.66])
+          this.edge([lerp(sh[0][0], sh[3][0], t), lerp(sh[0][1], sh[3][1], t)], [lerp(sh[1][0], sh[2][0], t), lerp(sh[1][1], sh[2][1], t)], 0.0005, [c[0] * 0.7, c[1] * 0.7, c[2] * 0.7]);
+    }
+    if (kind === "boarded") {
+      const wood = this.paint([0.42, 0.34, 0.24]);
+      const r = this.thick(0.003 * this.S, 0.8);
+      this.shape([cap(a[0] - w * 1.3, a[1] - h * 0.2, b[0] + w * 1.3, b[1] + h * 0.25, r, r, wood), cap(a[0] - w * 1.2, b[1] + h * 0.3, a[0] + w * 1.3 + dx, a[1] - h * 0.35, r, r, wood), cap(a[0] - w * 1.25 + dx * 0.5, a[1] - h * 0.55, a[0] + w * 1.25 + dx * 0.5, a[1] - h * 0.5, r, r, wood)], this.lighting, 0.5);
+      return;
+    }
+    this.drawMuntins(this.windows[this.windows.length - 1]);
+  }
+  drawMuntins(w) {
+    if (w.w < 3 * this.px)
+      return;
+    const [a, b, c, d] = w.pts;
+    const frame = this.look.trim;
+    this.edge([(a[0] + b[0]) / 2, a[1]], [(c[0] + d[0]) / 2, c[1]], 0.0008, frame);
+    this.edge([(a[0] + d[0]) / 2, (a[1] + d[1]) / 2], [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2], 0.0008, frame);
+  }
+  paintDeadTree(x, y, z, color, limbs, light, extra = () => []) {
+    const { H } = this;
+    const min = (this.cells ? 0.7 : 0.3) * this.px * Math.min(1, z * 1.2);
+    const groups = [[]];
+    const tips = [];
+    const grow = (px, py, angle, len, r, depth2, seed, parts) => {
+      let ax = px;
+      let ay = py;
+      let a = angle;
+      for (let s = 0;s < 3; s++) {
+        a += (hash(seed * 3.1 + s) - 0.5) * 0.9;
+        const bx = ax + Math.cos(a) * (len / 3);
+        const by = ay + Math.sin(a) * (len / 3);
+        parts.push(cap(ax * H, ay * H, bx * H, by * H, Math.max(r * (1 - 0.18 * s) * H, min), Math.max(r * (1 - 0.18 * (s + 1)) * H, min), color));
+        ax = bx;
+        ay = by;
+      }
+      if (depth2 === 0) {
+        tips.push([ax, ay]);
+        return;
+      }
+      const kids = depth2 > 2 ? 3 : 2;
+      for (let i = 0;i < kids; i++) {
+        const spread = (i - (kids - 1) / 2) * (0.55 + 0.25 * hash(seed + i * 7.7)) + (hash(seed * 1.9 + i) - 0.5) * 0.4;
+        const droop = depth2 <= 2 ? Math.sign(Math.cos(a + spread)) * 0.35 : 0;
+        grow(ax, ay, a + spread + droop, len * (0.62 + 0.12 * hash(seed * 4.3 + i)), r * 0.62, depth2 - 1, seed * 3 + i + 1, depth2 >= 2 ? groups[groups.push([]) - 1] : parts);
+      }
+    };
+    const P = (u, v) => [(x + u * z) * H, (y + v * z) * H];
+    const trunk = groups[0];
+    for (const [u, v, s] of [
+      [-0.05, 0.006, -1],
+      [0.05, 0.008, 1],
+      [-0.02, 0.012, -1]
+    ])
+      trunk.push(cap(...P(0, -0.018), ...P(u * 0.5, v * 0.3 - 0.004), 0.012 * z * H, 0.008 * z * H, color), cap(...P(u * 0.5, v * 0.3 - 0.004), ...P(u, v), 0.008 * z * H, Math.max(0.003 * z * H, min), color), cap(...P(u, v), ...P(u + s * 0.02, v + 0.002), Math.max(0.003 * z * H, min), min, color));
+    trunk.push(cap(...P(0, 0), ...P(-0.01, -0.1), 0.02 * z * H, 0.016 * z * H, color), cap(...P(-0.01, -0.1), ...P(0.004, -0.17), 0.016 * z * H, 0.012 * z * H, color), ...extra(P));
+    for (const [u, v, angle, len, r, depth2, seed] of limbs)
+      grow(x + u * z, y + v * z, angle, len * z, r * z, depth2, seed, trunk);
+    for (const g of groups)
+      if (g.length)
+        this.shape(g, this.lighting, light);
+    return tips;
+  }
+  paintMoss(tips, z, share) {
+    const H = this.H;
+    const moss = this.paint([0.36, 0.4, 0.28], this.look.night ? 1.6 : 1);
+    const w = this.thick(0.0012 * z, 0.5);
+    const parts = [];
+    for (const [i, [x, y]] of tips.entries()) {
+      if (hash(i * 7.3 + x * 3) > share)
+        continue;
+      const len = (0.025 + 0.04 * hash(i * 2.1)) * z;
+      let px = x;
+      let py = y;
+      for (let s = 1;s <= 4; s++) {
+        const nx = x + Math.sin(s * 1.7 + i) * 0.004 * z;
+        const ny = y + len * s / 4;
+        parts.push(cap(px * H, py * H, nx * H, ny * H, w, w * 0.8, moss));
+        px = nx;
+        py = ny;
+      }
+    }
+    if (parts.length)
+      this.shape(parts, this.lighting, 0);
+  }
+  paintWeb(x, y, r, a0, a1) {
+    const look = this.look;
+    const c = look.night ? this.paint([0.6, 0.62, 0.7], 3) : this.paint([0.62, 0.64, 0.6], 1.3);
+    const w = this.thick(0.0005, 0.4);
+    const parts = [];
+    const n = 5;
+    const at = (i, f) => {
+      const a = lerp(a0, a1, i / (n - 1));
+      return [x + Math.cos(a) * r * f, y + Math.sin(a) * r * f];
+    };
+    for (let i = 0;i < n; i++)
+      parts.push(cap(x, y, ...at(i, 1), w, w, c));
+    for (const f of [0.35, 0.65, 0.95])
+      for (let i = 0;i + 1 < n; i++)
+        parts.push(cap(...at(i, f), ...at(i + 1, f * 0.92), w, w, c));
+    this.shape(parts, this.lighting, 0);
+  }
+  paintForest() {
+    const { A, look } = this;
+    const S = this.S;
+    const [far, near2] = look.ridge;
+    const ridgeY = (x) => HORIZON5 - 0.03 - (fbm1(x * 2.2, 11) - 0.5) * 0.06 + 0.008;
+    const farC = [far[0] * 0.62, far[1] * 0.62, far[2] * 0.66];
+    for (let x = -0.04, i = 0;x < A + 0.05; x += 0.05 + 0.06 * hash(i * 3.7), i++) {
+      const z = 0.2 + 0.12 * hash(i * 1.9);
+      const a = (hash(i * 5.1) - 0.5) * 0.5;
+      this.paintDeadTree(x, ridgeY(x), z, farC, [[0.004, -0.17, -Math.PI / 2 - 0.5 + a, 0.15, 0.01, 2, i * 3 + 1], [0.004, -0.17, -Math.PI / 2 + 0.5 + a, 0.15, 0.01, 2, i * 3 + 2]], 0);
+    }
+    const nearC = [near2[0] * 0.55, near2[1] * 0.55, near2[2] * 0.6];
+    for (let x = 0.02, i = 0;x < A; x += 0.13 + 0.1 * hash(i * 2.3), i++) {
+      if (x > this.hx - 0.24 * S && x < this.hx + 0.26 * S)
+        continue;
+      const z = 0.5 + 0.25 * hash(i * 4.1);
+      const tips = this.paintDeadTree(x, this.riseY(x) + 0.006, z, nearC, [[0.004, -0.17, -Math.PI / 2 - 0.6, 0.15, 0.01, 3, i * 7 + 40], [0.004, -0.17, -Math.PI / 2 + 0.5, 0.16, 0.01, 3, i * 7 + 41]], 0.2);
+      if (hash(i * 9.7) < 0.4)
+        this.paintMoss(tips, z, 0.35);
+    }
+  }
+  paintTrees() {
+    const { A, H } = this;
+    const k = this.k;
+    const bark = this.paint([0.15, 0.12, 0.1]);
+    const z = 1.35 * (0.5 + 0.5 * k);
+    const x = 0.13 * k;
+    const y = 0.86;
+    this.lanterns = [];
+    const tips = this.paintDeadTree(x, y, z, bark, [
+      [0.004, -0.17, -Math.PI / 2 - 0.6, 0.15, 0.01, 4, 3],
+      [0.004, -0.17, -Math.PI / 2 + 0.45, 0.16, 0.01, 4, 11],
+      [-0.008, -0.13, -Math.PI / 2 - 1.2, 0.1, 0.007, 3, 23]
+    ], 0.6, (P) => [cap(...P(-0.008, -0.15), ...P(0.08, -0.172), 0.009 * z * H, 0.007 * z * H, bark), cap(...P(0.08, -0.172), ...P(0.17, -0.16), 0.007 * z * H, 0.004 * z * H, bark), cap(...P(-0.006, -0.12), ...P(-0.09, -0.17), 0.007 * z * H, 0.004 * z * H, bark)]);
+    this.swing = { x: x + 0.11 * z, y: y - 0.172 * z, len: 0.13 * z };
+    this.lanterns.push({ x: x - 0.075 * z, y: y - 0.162 * z, len: 0.035 * z, seed: 77 });
+    this.paintMoss(tips, z, 0.22);
+    this.paintWeb((x + 0.002 * z) * H, (y - 0.17 * z) * H, 0.03 * z * H, -Math.PI * 0.9, -Math.PI * 0.15);
+    const rz = 1.5 * (0.4 + 0.6 * k);
+    const rx = A + 0.02;
+    const ry = 0.95;
+    const right = this.paintDeadTree(rx, ry, rz, bark, [
+      [0.004, -0.17, -Math.PI / 2 - 0.85, 0.16, 0.011, 4, 61],
+      [0.004, -0.17, -Math.PI / 2 - 0.2, 0.14, 0.01, 4, 67],
+      [-0.008, -0.11, -Math.PI + 0.25, 0.13, 0.008, 3, 71]
+    ], 0.6);
+    this.paintMoss(right, rz, 0.3);
+    this.lanterns.push({ x: rx - 0.14 * rz, y: ry - 0.13 * rz, len: 0.03 * rz, seed: 78 });
+    this.paintWeb((rx - 0.004 * rz) * H, (ry - 0.15 * rz) * H, 0.028 * rz * H, -Math.PI * 0.85, -Math.PI * 0.2);
+  }
+  paintUndergrowth() {
+    const { A, H } = this;
+    const S = this.S;
+    const twig = this.paint([0.14, 0.11, 0.09]);
+    const w = this.thick(0.0012, 0.55);
+    const bush = (x, y, size, seed) => {
+      const parts = [];
+      for (let i = 0;i < 7; i++) {
+        const a = -Math.PI / 2 + (i / 6 - 0.5) * 2.2 + (hash(seed + i) - 0.5) * 0.3;
+        const len = size * (0.6 + 0.4 * hash(seed * 2 + i));
+        const mx = x + Math.cos(a) * len * 0.55;
+        const my = y + Math.sin(a) * len * 0.55;
+        parts.push(cap(x * H, y * H, mx * H, my * H, w * 1.4, w, twig), cap(mx * H, my * H, (x + Math.cos(a) * len) * H, (y + Math.sin(a) * len) * H, w, w * 0.7, twig));
+        const b = a + (hash(seed * 3 + i) < 0.5 ? -0.6 : 0.6);
+        parts.push(cap(mx * H, my * H, (mx + Math.cos(b) * len * 0.35) * H, (my + Math.sin(b) * len * 0.35) * H, w * 0.8, w * 0.6, twig));
+      }
+      this.shape(parts, this.lighting, 0.2);
+    };
+    const spots = [
+      [this.hx - 0.27 * S, this.hy + 0.01, 0.05],
+      [this.hx + 0.3 * S, this.hy + 0.012, 0.045],
+      [this.hx - 0.36 * S, this.riseY(this.hx - 0.36 * S) + 0.01, 0.035],
+      [this.hx + 0.42 * S, this.riseY(this.hx + 0.42 * S) + 0.01, 0.04],
+      [0.3 * this.k, 0.83, 0.04],
+      [A - 0.36 * this.k, 0.84, 0.04]
+    ];
+    for (const [i, [x, y, s]] of spots.entries())
+      bush(x, y, s, i * 11 + 5);
+    const thorn = this.paint([0.12, 0.09, 0.08]);
+    const stem = this.thick(0.0016, 0.6);
+    for (const side of [-1, 1]) {
+      const x0 = side < 0 ? 0 : A;
+      const parts = [];
+      for (let j = 0;j < 4; j++) {
+        const reach = 0.09 + 0.05 * hash(j * 3.3 + side);
+        const lift2 = 0.05 + 0.05 * hash(j * 1.7 + side);
+        let px = x0;
+        let py = 1.01;
+        for (let i = 1;i <= 8; i++) {
+          const t = i / 8;
+          const nx = x0 - side * reach * t;
+          const ny = 1.01 - lift2 * Math.sin(t * Math.PI * 0.85) - j * 0.012;
+          parts.push(cap(px * H, py * H, nx * H, ny * H, stem, stem, thorn));
+          if (i % 2 === 0 && !this.cells)
+            parts.push(cap(nx * H, ny * H, (nx - side * 0.004) * H, (ny - 0.006) * H, stem, 0.3 * this.px, thorn));
+          px = nx;
+          py = ny;
+        }
+      }
+      this.shape(parts, this.lighting, 0);
+    }
+  }
+  paintSkull(x, y, r) {
+    const H = this.H;
+    const bone = this.paint([0.78, 0.74, 0.6], this.look.night ? 2.4 : 1);
+    const hole = this.paint([0.03, 0.02, 0.03]);
+    this.shape([ell(x * H, (y - r * 1.1) * H, r * H, r * 0.95 * H, 0, bone), ell(x * H, (y - r * 0.3) * H, r * 0.6 * H, r * 0.4 * H, 0, bone)], this.lighting, 0.5);
+    for (const s of [-1, 1])
+      this.ellipse((x + s * r * 0.38) * H, (y - r * 1) * H, Math.max(r * 0.26 * H, 0.6), Math.max(r * 0.3 * H, 0.6), hole[0], hole[1], hole[2], 1);
+    this.ellipse(x * H, (y - r * 0.58) * H, Math.max(r * 0.1 * H, 0.4), Math.max(r * 0.14 * H, 0.4), hole[0], hole[1], hole[2], 0.9);
+  }
+  paintSign(x) {
+    const H = this.H;
+    const wood = this.paint([0.34, 0.24, 0.14]);
+    const post = this.paint([0.22, 0.15, 0.09]);
+    const y = FENCE + 0.02;
+    this.shape([cap(x * H, y * H, (x + 0.004) * H, (y - 0.1) * H, this.thick(0.003, 0.8), this.thick(0.0025, 0.7), post)], this.lighting, 0.4);
+    const a = -0.18;
+    const cx = x + 0.004;
+    const cy = y - 0.085;
+    const R = (u, v) => [(cx + u * Math.cos(a) - v * Math.sin(a)) * H, (cy + u * Math.sin(a) + v * Math.cos(a)) * H];
+    this.polygon([R(-0.04, -0.022), R(0.038, -0.024), R(0.042, 0.02), R(-0.036, 0.024)], wood);
+    this.polygon([R(0.02, -0.024), R(0.038, -0.024), R(0.042, 0.02), R(0.03, 0.021)], [wood[0] * 0.7, wood[1] * 0.7, wood[2] * 0.7]);
+    const mark = this.paint([0.06, 0.03, 0.03]);
+    const w = this.thick(0.0018, 0.6);
+    this.shape([cap(...R(-0.018, 0.016), ...R(0.016, -0), w, w, mark), cap(...R(-0.018, -0), ...R(0.016, 0.016), w, w, mark)], this.lighting, 0);
+    const [sx, sy] = R(-0.001, -0.004);
+    this.ellipse(sx, sy, 0.009 * H, 0.008 * H, mark[0], mark[1], mark[2], 1);
+    this.ellipse(sx, sy + 0.007 * H, 0.005 * H, 0.004 * H, mark[0], mark[1], mark[2], 1);
+    this.raven = { x: R(0.03, -0.024)[0] / H, y: R(0.03, -0.024)[1] / H };
+  }
+  paintCoffin(x, y) {
+    const H = this.H;
+    const wood = this.paint([0.24, 0.15, 0.1]);
+    const a = 0.22;
+    const R = (u, v) => [(x + u * Math.cos(a) + v * Math.sin(a)) * H, (y - v * Math.cos(a) + u * Math.sin(a)) * H];
+    const shapeOf = (s, du) => [R(-0.014 * s + du, 0), R(0.014 * s + du, 0), R(0.022 * s + du, 0.075), R(0.016 * s + du, 0.11), R(-0.016 * s + du, 0.11), R(-0.022 * s + du, 0.075)];
+    this.polygon(shapeOf(1, 0), [wood[0] * 0.5, wood[1] * 0.5, wood[2] * 0.5]);
+    this.polygon(shapeOf(0.92, 0.008), wood);
+    this.edge(R(0.008, 0.08), R(0.008, 0.03), 0.0008, [wood[0] * 0.6, wood[1] * 0.6, wood[2] * 0.6]);
+    this.edge(R(-0.006, 0.065), R(0.022, 0.065), 0.0008, [wood[0] * 0.6, wood[1] * 0.6, wood[2] * 0.6]);
+  }
+  paintReaper(x, y) {
+    const H = this.H;
+    const s = 0.2;
+    const cloak = this.paint([0.05, 0.045, 0.06]);
+    const P = (u, v) => [(x + u * s) * H, (y - v * s) * H];
+    const hem = [];
+    for (let i = 0;i <= 6; i++)
+      hem.push(P(0.2 - i / 6 * 0.42, i % 2 * 0.03));
+    this.polygon([...hem, P(-0.16, 0.5), P(-0.11, 0.78), P(-0.02, 0.9), P(0.09, 0.82), P(0.14, 0.55)], cloak);
+    this.polygon([P(-0.02, 0.9), P(0.11, 0.86), P(0.13, 0.72), P(0.06, 0.66), P(-0.06, 0.7)], [cloak[0] * 1.3, cloak[1] * 1.3, cloak[2] * 1.4]);
+    this.ellipse(...P(0.055, 0.76), 0.038 * s * H * 1.2, 0.055 * s * H, 0.008, 0.005, 0.01, 1);
+    const eye = this.look.style === "front" ? [0.6, 0.12, 0.05] : [1.6, 0.25, 0.08];
+    for (const e of [-1, 1])
+      this.disc(...P(0.055 + e * 0.022, 0.765), Math.max(0.006 * s * H, 0.6 * this.px), eye[0], eye[1], eye[2], 1);
+    const wood = this.paint([0.2, 0.15, 0.1]);
+    const w = this.thick(0.0022, 0.7);
+    this.shape([cap(...P(0.18, -0.02), ...P(0.26, 1.08), w, w, wood), cap(...P(0.14, 0.52), ...P(0.22, 0.54), w * 1.8, w * 1.6, cloak)], this.lighting, 0.3);
+    const blade2 = this.paint([0.55, 0.56, 0.6], this.look.night ? 1.8 : 1);
+    const arc = [];
+    for (let i = 0;i <= 8; i++) {
+      const t = i / 8;
+      arc.push(P(0.26 - t * 0.34, 1.08 + Math.sin(t * Math.PI) * 0.06 - t * 0.1));
+    }
+    for (let i = 8;i >= 0; i--) {
+      const t = i / 8;
+      arc.push(P(0.26 - t * 0.3, 1.06 + Math.sin(t * Math.PI) * 0.025 - t * 0.09));
+    }
+    this.polygon(arc, blade2);
+    if (this.look.style === "rim")
+      this.rimEdges([P(-0.16, 0.5), P(-0.11, 0.78), P(-0.02, 0.9), P(0.09, 0.82)]);
+  }
+  paintFences() {
+    const { A, H, look } = this;
+    const S = this.S;
+    const gate = this.hx + 0.015 * S;
+    const half = 0.045;
+    this.paintFence(-0.02, gate - half, 0.05);
+    this.paintFence(gate + half, A + 0.02, 0.05);
+    const post = this.paint([0.08, 0.07, 0.09]);
+    for (const side of [-1, 1])
+      for (let x = gate + side * half, i = 0;x > 0.02 && x < A - 0.02; x += side * 0.28, i++) {
+        if (i > 0)
+          this.polygon([[(x - 0.005) * H, FENCE * H], [(x + 0.005) * H, FENCE * H], [(x + 0.005) * H, (FENCE - 0.062) * H], [(x - 0.005) * H, (FENCE - 0.062) * H]], post);
+        if (i % 2 === 0)
+          this.paintSkull(x, FENCE - 0.062, 0.011);
+      }
+    this.paintSign(gate - half - 0.1);
+    const path = this.paint(look.dirt, look.night ? 2 : 1.3);
+    this.polygon([[(gate - half) * H, (FENCE + 0.004) * H], [(gate + half) * H, (FENCE + 0.004) * H], [(this.hx + 0.05 * S) * H, (this.hy + 0.03 * S) * H], [(this.hx - 0.02 * S) * H, (this.hy + 0.03 * S) * H]], path, 0.45);
+    const iron = this.paint([0.06, 0.05, 0.07]);
+    const r = this.thick(0.0016, 0.55);
+    const parts = [];
+    const top = FENCE - 0.065;
+    for (const [x0, x1, y1] of [
+      [gate - half, gate - 0.003, 0],
+      [gate + half, gate + 0.016, 0.016]
+    ]) {
+      parts.push(cap(x0 * H, FENCE * H, x1 * H, (FENCE + y1) * H, r, r, iron), cap(x0 * H, (top + 0.012) * H, x1 * H, (top + 0.012 + y1 * 1.2) * H, r, r, iron));
+      for (let i = 0;i <= 5; i++) {
+        const xx = lerp(x0, x1, i / 5);
+        const yy = lerp(0, y1, i / 5);
+        parts.push(cap(xx * H, (FENCE + yy) * H, xx * H, (top + yy * 1.1 - Math.sin(i / 5 * Math.PI) * 0.008) * H, r, r, iron));
+      }
+    }
+    this.shape(parts, this.lighting, 0.4);
+  }
+  paintFence(x0, x1, h) {
+    const { H } = this;
+    const iron = this.paint([0.06, 0.05, 0.07]);
+    const bar = this.thick(0.0016, 0.55);
+    const parts = [];
+    const top = FENCE - h;
+    parts.push(cap(x0 * H, (top + 0.008) * H, x1 * H, (top + 0.008) * H, bar, bar, iron), cap(x0 * H, (FENCE - 0.008) * H, x1 * H, (FENCE - 0.008) * H, bar, bar, iron));
+    const step = this.cells ? 0.026 : 0.018;
+    for (let x = x0 + step / 2;x < x1; x += step)
+      parts.push(cap(x * H, FENCE * H, x * H, top * H, bar, bar, iron));
+    this.shape(parts, this.lighting, 0.4);
+    for (let x = x0 + step / 2;x < x1; x += step)
+      this.polygon([[x * H - bar * 1.8, top * H], [x * H + bar * 1.8, top * H], [x * H, (top - 0.009) * H]], iron);
+    const post = this.paint([0.08, 0.07, 0.09]);
+    for (const x of [x0, x1])
+      if (x > 0 && x < this.A)
+        this.polygon([[(x - 0.005) * H, FENCE * H], [(x + 0.005) * H, FENCE * H], [(x + 0.005) * H, (top - 0.012) * H], [(x - 0.005) * H, (top - 0.012) * H]], post);
+  }
+  cryptX() {
+    return Math.min(this.A - 0.2 * this.k, this.hx + 0.6 * this.S);
+  }
+  paintCrypt() {
+    const { A, H, look } = this;
+    const x = this.cryptX();
+    const y = 0.88;
+    const z = 1.35;
+    const Q = (u, v) => [(x + u * z) * H, (y - v * z) * H];
+    const w = 0.055;
+    const stone = look.stone;
+    const dark = [stone[0] * 0.6, stone[1] * 0.6, stone[2] * 0.65];
+    this.polygon([Q(w, 0), Q(w + 0.025, 0.01), Q(w + 0.025, 0.095), Q(w, 0.085)], dark);
+    this.polygon([Q(-w, 0), Q(w, 0), Q(w, 0.085), Q(-w, 0.085)], stone);
+    for (let v = 0.02;v < 0.08; v += 0.02)
+      this.edge(Q(-w, v), Q(w, v), 0.0006, dark);
+    this.polygon([Q(-w - 0.008, 0.083), Q(w + 0.008, 0.083), Q(0, 0.125)], [stone[0] * 0.85, stone[1] * 0.85, stone[2] * 0.88]);
+    this.polygon([Q(-w * 0.55, 0.096), Q(w * 0.55, 0.096), Q(0, 0.116)], dark);
+    for (const s of [-1, 1])
+      this.polygon([Q(s * w * 0.7 - 0.006, 0), Q(s * w * 0.7 + 0.006, 0), Q(s * w * 0.7 + 0.006, 0.08), Q(s * w * 0.7 - 0.006, 0.08)], [stone[0] * 1.15, stone[1] * 1.15, stone[2] * 1.15]);
+    this.polygon([Q(-0.022, 0), Q(0.022, 0), Q(0.022, 0.058), Q(0, 0.066), Q(-0.022, 0.058)], this.paint([0.08, 0.08, 0.09]));
+    this.edge(Q(0, 0), Q(0, 0.064), 0.0008, this.paint([0.03, 0.03, 0.04]));
+    this.polygon([Q(-w - 0.01, -0.008), Q(w + 0.01, -0.008), Q(w + 0.01, 0), Q(-w - 0.01, 0)], dark);
+    this.edge(Q(-0.035, 0.07), Q(-0.02, 0.04), 0.0008, dark);
+    if (look.style === "rim")
+      this.rimEdges([Q(-w - 0.008, 0.083), Q(0, 0.125), Q(w + 0.008, 0.083)]);
+    this.paintCoffin(x - (w + 0.02) * z - 0.02, y);
+  }
+  paintGraves() {
+    const { A, H, look } = this;
+    const k = this.k;
+    const S = this.S;
+    const gate = this.hx + 0.015 * S;
+    const crypt = this.cryptX();
+    const open = { x: this.hx - 0.3 * S, y: 0.955 };
+    this.grave = { x: this.hx + 0.28 * S, y: 0.955 };
+    const stones = [];
+    for (let i = 0;stones.length < 26 && i < 500; i++) {
+      const y = lerp(FENCE + 0.03, 0.985, hash(i * 1.93) ** 0.8);
+      const x = hash(i * 2.71) * A;
+      if (Math.abs(x - crypt) < 0.12 && y < 0.9)
+        continue;
+      if (Math.abs(x - 0.13 * k) < 0.07 && y < 0.9)
+        continue;
+      if (Math.abs(x - gate) < 0.06 && y < 0.86)
+        continue;
+      if ((Math.abs(x - open.x) < 0.09 || Math.abs(x - this.grave.x) < 0.07) && Math.abs(y - 0.955) < 0.05)
+        continue;
+      if (Math.abs(x - this.hx) < 0.25 && hash(i * 5.7) < 0.5)
+        continue;
+      const s = 0.02 + 0.03 * smoothstep(FENCE, 1, y);
+      if (stones.some((o) => Math.abs(o.x - x) < (o.s + s) * 1.1 && Math.abs(o.y - y) < 0.04))
+        continue;
+      stones.push({ x, y, s, tilt: (hash(i * 7.9) - 0.5) * 0.5, kind: Math.floor(hash(i * 3.3) * 4) });
+    }
+    const reaper = this.activity === "calm" ? undefined : { x: Math.max(0.24, this.hx - 0.42 * S), y: 0.905 };
+    this.stones = stones.filter((s) => !reaper || Math.abs(s.x - reaper.x) > 0.06 || s.y < reaper.y - 0.07 || s.y > reaper.y + 0.01).sort((a, b) => a.y - b.y);
+    const mound = this.paint(look.dirt, 0.8);
+    let stood = !reaper;
+    for (const s of this.stones) {
+      if (!stood && reaper && s.y > reaper.y) {
+        this.paintReaper(reaper.x, reaper.y);
+        stood = true;
+      }
+      if (hash(s.x * 13.1) < 0.6)
+        this.ellipse(s.x * H, (s.y + s.s * 0.5) * H, s.s * 1.6 * H, s.s * 0.45 * H, mound[0], mound[1], mound[2], 0.6);
+      this.drawStone(s);
+    }
+    if (!stood && reaper)
+      this.paintReaper(reaper.x, reaper.y);
+    const mist = look.fog;
+    for (let i = 0;i < 12; i++) {
+      const x = hash(i * 4.3 + 0.7) * A;
+      const y = lerp(FENCE + 0.03, 0.97, hash(i * 2.9));
+      this.ellipse(x * H, y * H, (0.06 + 0.05 * hash(i * 1.3)) * H, (0.008 + 0.006 * hash(i * 6.1)) * H, mist[0], mist[1], mist[2], 0.22);
+    }
+    const ox = open.x;
+    const oy = open.y;
+    const pit = this.paint([0.03, 0.02, 0.02]);
+    this.ellipse((ox + 0.075) * H, (oy - 0.006) * H, 0.045 * H, 0.02 * H, mound[0] * 1.2, mound[1] * 1.2, mound[2] * 1.2, 1);
+    this.polygon([[(ox - 0.058) * H, (oy - 0.015) * H], [(ox + 0.052) * H, (oy - 0.015) * H], [(ox + 0.064) * H, (oy + 0.018) * H], [(ox - 0.07) * H, (oy + 0.018) * H]], pit);
+    this.edge([(ox - 0.07) * H, (oy + 0.018) * H], [(ox + 0.064) * H, (oy + 0.018) * H], 0.0025, mound);
+    this.shape([cap((ox + 0.09) * H, (oy - 0.015) * H, (ox + 0.105) * H, (oy - 0.078) * H, this.thick(0.0022, 0.6), this.thick(0.0022, 0.6), this.paint([0.32, 0.22, 0.14])), ell((ox + 0.088) * H, (oy - 0.01) * H, 0.008 * H, 0.012 * H, 0.2, this.paint([0.4, 0.4, 0.42]))], this.lighting, 0.5);
+    this.ellipse(this.grave.x * H, this.grave.y * H, 0.06 * H, 0.016 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1);
+    this.drawStone({ x: this.grave.x - 0.06, y: this.grave.y, s: 0.04, tilt: -0.2, kind: 1 });
+  }
+  drawStone(s) {
+    const { H, look } = this;
+    const x = s.x * H;
+    const y = s.y * H;
+    const w = s.s * 0.6 * H;
+    const h = s.s * 1.9 * H;
+    const t = s.tilt;
+    const R = (u, v) => [x + u * w + v * h * t * 0.3, y - v * h];
+    const c = look.stone;
+    const shade = [c[0] * 0.65, c[1] * 0.65, c[2] * 0.7];
+    if (s.kind === 2) {
+      this.polygon([R(-0.6, 0), R(0.6, 0), R(0.6, 0.12), R(-0.6, 0.12)], shade);
+      this.polygon([R(-0.38, 0.1), R(0.38, 0.1), R(0.26, 1.05), R(0, 1.25), R(-0.26, 1.05)], c);
+    }
+    if (s.kind !== 2) {
+      const top = s.kind === 1 ? [R(1, 0.78), R(0, 1.05), R(-1, 0.78)] : [R(1, 0.75), R(0.7, 0.95), R(0, 1.03), R(-0.7, 0.95), R(-1, 0.75)];
+      this.polygon([R(-1.05, 0), R(1.05, 0), R(1.05, 0.06), R(1, 0.07), ...top, R(-1, 0.07), R(-1.05, 0.06)], c);
+      this.polygon([R(0.55, 0), R(1.05, 0), R(1, 0.7), R(0.6, 0.7)], [c[0] * 0.85, c[1] * 0.85, c[2] * 0.88]);
+      if (s.kind === 3 && w > 2.5 * this.px)
+        this.polygon([R(-0.4, 0.5), R(0.4, 0.5), R(0.4, 0.58), R(-0.4, 0.58)], shade);
+    }
+    if (look.style === "rim") {
+      const r = this.thick(0.0011, 0.45);
+      const k = look.night ? 0.12 : 0.2;
+      const l = [this.light[0] * k, this.light[1] * k, this.light[2] * k];
+      this.shape([cap(...R(-1, 0.1), ...R(-1, 0.8), r, r, l), cap(...R(-1, 0.8), ...R(0, 1.04), r, r, l)], this.lighting, 0);
+    }
+  }
+  drawPumpkin(p, light, body2) {
+    const look = this.look;
+    const x = p.x;
+    const r = p.r;
+    const cy = p.y - r * 0.85;
+    const rx = r * 1.22;
+    const ry = r * 0.86;
+    if (body2) {
+      this.shape([ell(x, cy, rx, ry, 0, look.style === "rim" ? look.skin : this.paint(look.skin), 4)], this.lighting, 0.7);
+      this.shape([cap(x, cy - r * 0.75, x + r * 0.18, cy - r * 1.15, Math.max(r * 0.16, 0.5 * this.px), Math.max(r * 0.11, 0.4 * this.px), this.paint([0.3, 0.32, 0.1]))], this.lighting, 0.4);
+    }
+    const g = look.glow * light;
+    const c = [CANDLE[0] * g, CANDLE[1] * g, CANDLE[2] * g];
+    if (rx < 3.2 * this.px) {
+      this.ellipse(x, cy + ry * 0.05, rx * 0.62, Math.max(ry * 0.32, 0.55 * this.px), c[0], c[1], c[2], 0.9);
+      return;
+    }
+    for (const s of [-1, 1])
+      this.polygon([[x + s * rx * 0.52, cy - ry * 0.02], [x + s * rx * 0.14, cy - ry * 0.02], [x + s * rx * 0.34, cy - ry * 0.48]], c);
+    this.polygon([[x - rx * 0.08, cy + ry * 0.16], [x + rx * 0.08, cy + ry * 0.16], [x, cy + ry * 0.02]], c);
+    const mouth = [];
+    for (let i = 0;i <= 8; i++) {
+      const u = -0.62 + 1.24 * i / 8;
+      mouth.push([x + u * rx, cy + (0.26 + 0.36 * (1 - u * u / 0.4)) * ry * 0.85]);
+    }
+    for (let i = 8;i >= 0; i--) {
+      const u = -0.62 + 1.24 * i / 8;
+      mouth.push([x + u * rx, cy + (0.24 + 0.12 * (1 - u * u / 0.4) + (i % 4 === 2 ? 0.14 : 0)) * ry]);
+    }
+    this.polygon(mouth, c);
+  }
+  placeCreatures() {
+    const { A } = this;
+    const k = this.k;
+    const S = this.S;
+    const anchors = [
+      [this.hx - 0.13 * S, this.hy - 0.5 * S],
+      [this.orb.x * A + 0.15, 0.1],
+      [0.2 * k, 0.42],
+      [this.hx + 0.16 * S, this.hy - 0.45 * S],
+      [this.orb.x * A - 0.2, 0.22],
+      [this.hx + 0.3 * S, 0.12]
+    ];
+    for (const [i, b] of this.bats.entries())
+      [b.ax, b.ay] = anchors[i % anchors.length];
+    for (const [i, g] of this.ghosts.entries()) {
+      const [x0, x1] = i === 0 ? [this.hx - 0.12 * S, this.hx + 0.14 * S] : [0.05 * k, this.hx - 0.3 * S];
+      g.x0 = x0;
+      g.x1 = x1;
+      if (g.x === 0)
+        g.x = lerp(x0, x1, hash(i * 3.7 + 1));
+      g.y = i === 0 ? this.hy - 0.13 * S : 0.86;
+    }
+    const eyes = { calm: 1, lively: 3, teeming: 5 }[this.activity];
+    this.eyes = Array.from({ length: eyes }, (_, i) => {
+      const left = i % 2 === 0;
+      const x = left ? lerp(0.04, Math.max(0.08, this.hx - 0.3 * S), hash(i * 3.9)) : lerp(Math.min(A - 0.08, this.hx + 0.34 * S), A - 0.04, hash(i * 3.9));
+      return { x, y: this.riseY(x) - 0.012 - 0.04 * hash(i * 7.1), phase: hash(i * 5.3) * 40, green: i % 3 === 1 };
+    });
+    const wisps = { calm: 1, lively: 3, teeming: 5 }[this.activity];
+    this.wisps = Array.from({ length: wisps }, (_, i) => ({ x: lerp(0.08, A - 0.08, hash(i * 2.3 + 0.4)), y: lerp(0.84, 0.95, hash(i * 6.7)), phase: hash(i * 1.7) * TAU }));
+    const z = this.zombie;
+    if (z.x === 0.5)
+      Object.assign(z, { x: A * 0.3, y: lerp(WALK0, WALK1, 0.5) });
+  }
+  drawWindows() {
+    const { H, look } = this;
+    const dim = 1 - 0.6 * this.gloom * (0.6 + 0.4 * Math.sin(this.time * 9));
+    const wander = this.activity === "teeming" ? this.time / ROOM % (this.rooms + 2) : -10;
+    for (const w of this.windows) {
+      if (w.kind === "boarded")
+        continue;
+      const pass = Math.exp(-(((wander - w.room) / 0.6) ** 2));
+      const base = w.kind === "glow" ? 0.7 * firelight(this.time * 0.8, w.seed) : w.kind === "candle" ? 0.5 * firelight(this.time * 2, w.seed) : 0;
+      const k = (base + 0.85 * pass + w.flash) * dim * look.glow;
+      if (k <= 0.01 && w.kind === "dark")
+        continue;
+      const g = look.window;
+      this.polygon(w.pts, [lerp(look.glass[0], g[0] * k, Math.min(1, k * 2)), lerp(look.glass[1], g[1] * k, Math.min(1, k * 2)), lerp(look.glass[2], g[2] * k, Math.min(1, k * 2))]);
+      this.drawMuntins(w);
+      if (w.kind === "candle")
+        this.drawCandle(w, dim);
+      if (w.flash > 0.7)
+        this.drawFigure(w);
+      if (this.windows[this.passer.win] === w)
+        this.drawPasser(w, this.passer.t);
+      if (look.style === "rim" || k > 0.4)
+        this.lights.pool(w.x, w.y + w.h, w.w * 4, w.h * 1.5, [1, 0.55, 0.15], 1.2 * k, 0.006 * k);
+    }
+    for (const l of this.lanterns) {
+      const sway2 = Math.sin(this.time * 0.7 + l.seed) * 0.15 + gust(l.x, this.time) * 0.25;
+      const lx = (l.x + Math.sin(sway2) * l.len) * H;
+      const ly = (l.y + Math.cos(sway2) * l.len) * H;
+      this.shape([cap(l.x * H, l.y * H, lx, ly - 0.008 * H, this.thick(0.0008, 0.45), this.thick(0.0008, 0.45), this.paint([0.1, 0.08, 0.06]))], this.lighting, 0);
+      const f = firelight(this.time * 2.4, l.seed) * dim;
+      this.polygon([[lx - 0.008 * H, ly - 0.013 * H], [lx + 0.008 * H, ly - 0.013 * H], [lx + 0.007 * H, ly + 0.011 * H], [lx - 0.007 * H, ly + 0.011 * H]], this.paint([0.12, 0.1, 0.08]));
+      const lg = look.glow * f * 1.2;
+      this.ellipse(lx, ly, 0.005 * H, 0.009 * H, CANDLE[0] * lg, CANDLE[1] * lg, CANDLE[2] * lg, 1);
+      this.lights.pool(lx, ly, 0.09 * H, 0.08 * H, [1, 0.5, 0.12], 2 * f * (look.style === "front" ? 0.5 : 1), 0.014 * f);
+    }
+  }
+  drawCandle(w, dim) {
+    const H = this.H;
+    const x = w.x;
+    const y = w.y + w.h * 0.45;
+    const f = firelight(this.time * 3, w.seed + 5) * dim;
+    this.polygon([[x - 0.003 * H, y], [x + 0.003 * H, y], [x + 0.003 * H, y - 0.01 * H], [x - 0.003 * H, y - 0.01 * H]], this.paint([0.9, 0.85, 0.7], this.look.night ? 2 : 1));
+    const lean = Math.sin(this.time * 1.7 + w.seed) * 0.002 * H;
+    this.ellipse(x + lean, y - 0.016 * H, 0.0028 * H, 0.0065 * H * f, CANDLE[0] * 1.3 * f, CANDLE[1] * 1.3 * f, CANDLE[2] * f, 1);
+    this.lights.pool(x, y - 0.015 * H, 0.05 * H, 0.04 * H, [1, 0.5, 0.12], 1.5 * f, 0.01 * f);
+  }
+  drawPasser(w, t) {
+    const c = this.paint([0.02, 0.015, 0.03]);
+    const x = w.x + (t * 2.6 - 1.3) * w.w;
+    const y = w.y + w.h * 0.5;
+    const x0 = w.x - w.w;
+    const x1 = w.x + w.w;
+    const X = (u) => clamp(x + u * w.w, x0, x1);
+    if (X(-0.7) >= X(0.7))
+      return;
+    this.polygon([[X(-0.7), y], [X(0.7), y], [X(0.45), y - w.h * 0.5], [X(-0.45), y - w.h * 0.5]], c);
+    const hx = x;
+    if (hx - w.w * 0.3 > x0 && hx + w.w * 0.3 < x1)
+      this.ellipse(hx, y - w.h * 0.66, w.w * 0.3, w.h * 0.19, c[0], c[1], c[2], 1);
+  }
+  drawFigure(w) {
+    const k = smoothstep(0.7, 0.95, w.flash);
+    const c = this.paint([0.02, 0.015, 0.03]);
+    const x = w.x;
+    const y = w.y + w.h * 0.5;
+    this.polygon([[x - w.w * 0.75, y], [x + w.w * 0.75, y], [x + w.w * 0.5, y - w.h * 0.45], [x - w.w * 0.5, y - w.h * 0.45]], c, k);
+    this.ellipse(x, y - w.h * 0.62, w.w * 0.34, w.h * 0.2, c[0], c[1], c[2], k);
+  }
+  drawSwing() {
+    const H = this.H;
+    const s = this.swing;
+    const a = Math.sin(this.time * 0.75) * (0.16 + 0.2 * gust(s.x, this.time)) + 0.03;
+    const rope = this.paint([0.36, 0.3, 0.22]);
+    const r = this.thick(0.0008, 0.45);
+    const parts = [];
+    const ends = [];
+    for (const o of [-0.016, 0.016]) {
+      const ex = s.x + o + Math.sin(a) * s.len;
+      const ey = s.y + Math.cos(a) * s.len;
+      parts.push(cap((s.x + o) * H, s.y * H, ex * H, ey * H, r, r, rope));
+      ends.push([ex * H, ey * H]);
+    }
+    this.shape(parts, this.lighting, 0);
+    this.shape([cap(ends[0][0] - 0.004 * H, ends[0][1], ends[1][0] + 0.004 * H, ends[1][1], this.thick(0.0025, 0.7), this.thick(0.0025, 0.7), this.paint([0.36, 0.26, 0.16]))], this.lighting, 0.5);
+  }
+  drawPumpkins() {
+    const look = this.look;
+    const dim = 1 - 0.6 * this.gloom * (0.6 + 0.4 * Math.sin(this.time * 7));
+    const night = look.night ? 1 : look.style === "rim" ? 0.7 : 0.25;
+    for (const p of this.pumpkins) {
+      const f = (firelight(this.time * 2.2, p.seed) + p.flare) * dim;
+      this.drawPumpkin(p, f, false);
+      const r = p.r * (5 + 3 * p.flare);
+      this.lights.pool(p.x, p.y - p.r, r, r * 0.7, [1, 0.45, 0.1], (1.6 + 2 * p.flare) * night * f, 0.012 * (night + p.flare) * f);
+    }
+  }
+  leaf(x, y) {
+    return { x, y, fall: rand(0.008, 0.02), spin: rand(0, TAU), rate: rand(1, 2.5), color: LEAVES[Math.floor(Math.random() * LEAVES.length)] };
+  }
+  stepLeaves(dt) {
+    for (const [i, l] of this.leaves.entries()) {
+      const g = gust(l.x, this.time);
+      l.x += (0.012 + 0.16 * g) * dt;
+      l.y += (l.fall + Math.sin(this.time * 0.9 + l.spin) * 0.01 - g * 0.01) * dt;
+      l.spin += l.rate * (1 + 2 * g) * dt;
+      if (l.x < this.A + 0.05 && l.y < 1.02)
+        continue;
+      Object.assign(l, i % 2 ? this.leaf(0.13 * this.k + rand(-0.15, 0.2), rand(0.4, 0.62)) : this.leaf(-0.04, rand(0.05, 0.9)));
+    }
+  }
+  drawLeaves() {
+    const H = this.H;
+    const r = this.thick(0.006, 1.1);
+    const k = this.look.night ? 2.4 : this.look.style === "rim" ? 1.8 : 1;
+    for (const l of this.leaves) {
+      const c = this.paint(l.color, k);
+      this.shape([ell(l.x * H, l.y * H, r, Math.max(r * 0.55 * Math.abs(Math.cos(l.spin)) + 0.3, this.cells ? 0.7 : 0.4), l.spin * 0.6, c)], this.lighting, 0.3);
+    }
+  }
+  drawRaven() {
+    const { H, look } = this;
+    const x = this.raven.x * H;
+    const y = this.raven.y * H;
+    const s = 0.03 * H;
+    const turn = Math.sin(this.time * 0.25) > 0.3 ? -1 : 1;
+    const black = this.paint([0.04, 0.035, 0.05]);
+    this.shape([ell(x, y - s * 0.38, s * 0.3, s * 0.22, -0.4 * turn, black), cap(x - turn * s * 0.2, y - s * 0.3, x - turn * s * 0.55, y - s * 0.05, s * 0.1, s * 0.04, black), ell(x + turn * s * 0.2, y - s * 0.62, s * 0.14, s * 0.13, 0, black), cap(x - s * 0.04, y - s * 0.18, x - s * 0.05, y, s * 0.03, s * 0.025, black), cap(x + s * 0.06, y - s * 0.18, x + s * 0.07, y, s * 0.03, s * 0.025, black)], this.lighting, 0.4);
+    this.polygon([[x + turn * s * 0.3, y - s * 0.66], [x + turn * s * 0.52, y - s * 0.6], [x + turn * s * 0.3, y - s * 0.57]], this.paint([0.12, 0.1, 0.08]));
+    const eye = look.style === "front" ? [0.5, 0.35, 0.08] : [1.6, 0.9, 0.12];
+    this.disc(x + turn * s * 0.25, y - s * 0.65, Math.max(s * 0.04, 0.5), eye[0], eye[1], eye[2], 1);
+  }
+  drawEyes() {
+    const H = this.H;
+    const look = this.look;
+    const k = look.style === "front" ? 0.45 : 1;
+    for (const e of this.eyes) {
+      const t = (this.time + e.phase) % 40;
+      if (t > 14)
+        continue;
+      const open = smoothstep(0, 1.5, t) * (1 - smoothstep(12.5, 14, t)) * (Math.abs(t - 6) < 0.15 ? 0.1 : 1);
+      if (open < 0.05)
+        continue;
+      const c = e.green ? [0.5, 1.5, 0.3] : [1.6, 1, 0.12];
+      for (const sx of [-1, 1])
+        this.ellipse((e.x + sx * 0.006) * H, e.y * H, Math.max(0.003 * H, 0.7), Math.max(0.0022 * H * open, 0.4), c[0] * k, c[1] * k, c[2] * k, open);
+    }
+  }
+  drawWisps() {
+    const H = this.H;
+    const c = this.look.ghost;
+    const k = this.look.style === "front" ? 0.6 : 1;
+    for (const w of this.wisps) {
+      const t = this.creatureTime * 0.6 + w.phase;
+      const x = (w.x + Math.sin(t * 1.3) * 0.05 + Math.sin(t * 0.37) * 0.04) * H;
+      const y = (w.y + Math.sin(t * 2.1) * 0.012) * H;
+      const pulse = (0.55 + 0.45 * Math.sin(this.time * 1.4 + w.phase * 3)) * k;
+      lightPool(this.hdr, this.W, H, x, y, 0.045 * H, 0.03 * H, c, 0.8 * pulse, 0.05 * pulse);
+      this.disc(x, y, Math.max(0.005 * H, 0.9), c[0] * 1.2 * pulse, c[1] * 1.2 * pulse, c[2] * 1.2 * pulse, 1);
+    }
+  }
+  drawSpider() {
+    const H = this.H;
+    const x = this.spider.x * H;
+    const top = this.spider.y * H;
+    const drop = (0.5 - 0.5 * Math.cos(this.creatureTime * 1.5)) * 0.045 * this.S * H;
+    const silk = this.look.night ? this.paint([0.6, 0.62, 0.7], 3) : this.paint([0.62, 0.64, 0.6], 1.3);
+    const w = this.thick(0.0005, 0.4);
+    const y = top + drop;
+    this.shape([cap(x, top, x, y, w, w, silk)], this.lighting, 0);
+    const body2 = this.paint([0.05, 0.04, 0.05]);
+    const s = 0.006 * this.S * H;
+    const legs = [];
+    for (const side of [-1, 1])
+      for (let i = 0;i < 4; i++)
+        legs.push(cap(x, y + s * 0.5, x + side * s * 1.6, y + s * (i * 0.6 - 0.3), Math.max(s * 0.12, 0.4), Math.max(s * 0.08, 0.3), body2));
+    this.shape([...legs, ell(x, y + s * 0.6, s * 0.7, s * 0.8, 0, body2), ell(x, y, s * 0.45, s * 0.45, 0, body2)], this.lighting, 0.3);
+  }
+  stepStream(dt) {
+    this.stream = flyAway(this.stream, dt, this.A);
+    if (this.activity === "calm")
+      return;
+    this.streamWait -= dt;
+    if (this.streamWait > 0)
+      return;
+    const n = this.activity === "teeming" ? 7 : 4;
+    this.streamWait = rand(25, 50);
+    const w = this.windows.find((o) => o.seed === 22);
+    if (!w)
+      return;
+    for (let i = 0;i < n; i++)
+      this.stream.push({ x: w.x / this.H + rand(-0.01, 0.01), y: w.y / this.H - i * 0.012, vx: rand(-0.16, 0.02) - i * 0.01, vy: -rand(0.06, 0.14), phase: rand(0, TAU) });
+  }
+  stepGhosts(cdt) {
+    for (const g of this.ghosts) {
+      g.phase += cdt;
+      g.x += g.dir * 0.05 * cdt;
+      if (g.x > g.x1)
+        g.dir = -1;
+      if (g.x < g.x0)
+        g.dir = 1;
+    }
+  }
+  drawGhost(g) {
+    const { H, look } = this;
+    const fade = smoothstep(-0.2, 0.6, Math.sin(g.phase * 0.35));
+    if (fade <= 0.01)
+      return;
+    const x = g.x * H;
+    const y = (g.y + Math.sin(g.phase * 1.3) * 0.012) * H;
+    const s = 0.06 * H;
+    const c = look.ghost;
+    const lean = -g.dir * 0.25;
+    const pts = [];
+    for (let i = 0;i <= 10; i++) {
+      const ang = Math.PI + i / 10 * Math.PI;
+      pts.push([x + Math.cos(ang) * s * 0.5, y - s * 0.5 + Math.sin(ang) * s * 0.5]);
+    }
+    for (let i = 0;i <= 8; i++) {
+      const t = i / 8;
+      pts.push([x + s * 0.5 - t * s + lean * s, y + s * (0.55 + 0.1 * Math.sin(t * TAU * 1.5 + g.phase * 6))]);
+    }
+    if (look.night)
+      lightPool(this.hdr, this.W, H, x, y, s * 1.6, s * 1.6, c, 0, 0.05 * fade);
+    this.polygon(pts, c, (look.night ? 0.55 : 0.45) * fade);
+    const e = look.night ? [0.01, 0.06, 0.06] : this.paint([0.05, 0.03, 0.08]);
+    for (const sx of [-1, 1])
+      this.ellipse(x + sx * s * 0.17, y - s * 0.5, Math.max(s * 0.07, 0.7), Math.max(s * 0.11, 0.9), e[0], e[1], e[2], fade * 0.9);
+    this.ellipse(x, y - s * 0.22, Math.max(s * 0.07, 0.6), Math.max(s * 0.09, 0.7), e[0], e[1], e[2], fade * 0.8);
+  }
+  drawBatAt(b) {
+    const t = this.creatureTime * b.w * 2.4 + b.phase;
+    this.drawBat(b.ax + b.rx * Math.sin(t), b.ay + b.ry * Math.sin(2 * t + b.phase), b.size, this.time * 22 + b.phase * 5, Math.cos(t) >= 0 ? 1 : -1);
+  }
+  drawBat(bx, by, size, phase, dir) {
+    const H = this.H;
+    const x = bx * H;
+    const y = by * H;
+    const s = size * H;
+    const flap = Math.sin(phase);
+    const color = this.paint([0.08, 0.05, 0.09]);
+    for (const side of [-1, 1]) {
+      const w = (u, v) => [x + side * u * s, y + (v - flap * u * 0.7) * s];
+      this.polygon([w(0.08, -0.1), w(0.5, -0.32), w(1, -0.22), w(0.82, 0.06), w(0.62, -0.02), w(0.42, 0.12), w(0.22, 0.04), w(0.08, 0.14)], color);
+    }
+    this.shape([ell(x, y, Math.max(s * 0.14, 0.8), Math.max(s * 0.2, 1), 0, color), ell(x + dir * s * 0.04, y - s * 0.2, Math.max(s * 0.1, 0.7), Math.max(s * 0.09, 0.7), 0, color)], this.lighting, 0.3);
+    for (const side of [-1, 1])
+      this.polygon([[x + side * s * 0.02 + dir * s * 0.04, y - s * 0.24], [x + side * s * 0.1 + dir * s * 0.04, y - s * 0.24], [x + side * s * 0.08 + dir * s * 0.04, y - s * 0.38]], color);
+  }
+  stepGhoul(dt) {
+    const g = this.ghoul;
+    if (g.t >= 0) {
+      g.t += dt;
+      if (g.t > g.dur)
+        g.t = -1;
+      return;
+    }
+    if (this.activity === "calm" || !this.stones.length)
+      return;
+    g.wait -= dt;
+    if (g.wait > 0)
+      return;
+    g.wait = rand(14, 30);
+    const sides = this.stones.map((s, i) => [s, i]).filter(([s]) => Math.abs(s.x - this.hx) > 0.2 * this.S && s.s > 0.03);
+    if (!sides.length)
+      return;
+    Object.assign(g, { stone: sides[Math.floor(Math.random() * sides.length)][1], t: 0, dur: 9 });
+  }
+  drawGhoul() {
+    const g = this.ghoul;
+    const s = this.stones[g.stone];
+    if (!s)
+      return;
+    const { H, look } = this;
+    const up = smoothstep(0, 1.2, g.t) * (1 - smoothstep(g.dur - 1.2, g.dur, g.t));
+    const x = (s.x + s.s * 0.3) * H;
+    const top = (s.y - s.s * 1.95) * H;
+    const size = s.s * H;
+    const y = top + size * (0.9 - 1.3 * up);
+    const skin = look.night ? [0.12, 0.3, 0.2] : this.paint([0.55, 0.62, 0.5]);
+    const turn = Math.sin(g.t * 1.3) * 0.25;
+    this.shape([ell(x + turn * size * 0.3, y, size * 0.48, size * 0.56, 0, skin), ell(x + turn * size * 0.3, y + size * 0.42, size * 0.26, size * 0.22, 0, skin)], this.lighting, 0.6);
+    const eye = look.style === "front" ? [0.6, 0.75, 0.1] : [1.3, 1.1, 0.15];
+    for (const e of [-1, 1])
+      this.disc(x + turn * size * 0.45 + e * size * 0.18, y - size * 0.04, Math.max(size * 0.09, 0.6), eye[0] * up, eye[1] * up, eye[2] * up, 1);
+    this.drawStone(s);
+    if (up < 0.5)
+      return;
+    const fx = s.x * H + s.tilt * 0.3 * s.s * 1.9 * H;
+    const fingers = [];
+    for (let i = 0;i < 3; i++)
+      fingers.push(cap(fx - size * 0.2 + i * size * 0.16, top - size * 0.02, fx - size * 0.18 + i * size * 0.16, top + size * 0.18, Math.max(size * 0.05, 0.5), Math.max(size * 0.04, 0.45), skin));
+    this.shape(fingers, this.lighting, 0.4);
+  }
+  stepHand(dt) {
+    const h = this.hand;
+    if (h.t >= 0) {
+      h.t += dt;
+      if (h.t > 12)
+        h.t = -1;
+      return;
+    }
+    if (this.activity !== "teeming")
+      return;
+    h.wait -= dt;
+    if (h.wait > 0)
+      return;
+    h.wait = rand(20, 40);
+    h.t = 0;
+  }
+  drawHand(gx, gy, t) {
+    const { H, look } = this;
+    const up = smoothstep(0, 2.5, t) * (1 - smoothstep(10, 12, t));
+    if (up <= 0.01)
+      return;
+    const skin = look.night ? [0.14, 0.32, 0.18] : this.paint(look.zombie);
+    const x = gx * H;
+    const y = gy * H;
+    const reach = 0.07 * up * H;
+    const wave2 = Math.sin(t * 2.2) * 0.2;
+    const wx = x + Math.sin(wave2) * reach * 0.3;
+    const wy = y - reach;
+    const claw = 0.5 + 0.5 * Math.sin(t * 3.1);
+    const s = 0.017 * H;
+    const parts = [cap(x, y, wx, wy, s * 0.55, s * 0.5, skin), ell(wx, wy - s * 0.4, s * 0.5, s * 0.55, wave2, skin)];
+    for (let i = 0;i < 4; i++) {
+      const a = -Math.PI / 2 + (i - 1.5) * 0.4 + wave2;
+      const bend = claw * 0.9 * (i - 1.5 > 0 ? 1 : -1) * 0.5;
+      const mx = wx + Math.cos(a) * s * 0.9;
+      const my = wy - s * 0.5 + Math.sin(a) * s * 0.9;
+      parts.push(cap(wx + Math.cos(a) * s * 0.3, wy - s * 0.6 + Math.sin(a) * s * 0.3, mx, my, s * 0.16, s * 0.13, skin), cap(mx, my, mx + Math.cos(a + bend) * s * 0.6, my + Math.sin(a + bend) * s * 0.6, s * 0.13, s * 0.1, skin));
+    }
+    parts.push(cap(wx - s * 0.4, wy - s * 0.2, wx - s * 1, wy - s * 0.6 + claw * s * 0.3, s * 0.16, s * 0.1, skin));
+    this.shape(parts, this.lighting, 0.5);
+    const mound = this.paint(look.dirt, 0.9);
+    this.ellipse(x, y + 0.003 * H, 0.022 * H, 0.007 * H, mound[0] * 1.1, mound[1] * 1.1, mound[2] * 1.1, 1);
+  }
+  stepZombie(cdt) {
+    if (this.activity !== "teeming")
+      return;
+    const z = this.zombie;
+    const lurch = 0.4 + 0.9 * Math.max(0, Math.sin(z.phase * TAU));
+    const d = 0.1 * lurch * cdt;
+    z.x += z.dir * d;
+    z.phase += d / ZOMBIE_STRIDE;
+    if (z.x > this.A - 0.15 * this.k)
+      z.dir = -1;
+    if (z.x < 0.12 * this.k)
+      z.dir = 1;
+  }
+  drawZombie(zx, zy, dir, phase, dance, rise) {
+    const { H, look } = this;
+    const S = ZOMBIE * H * (0.85 + 0.3 * smoothstep(WALK0, 0.98, zy));
+    const x = zx * H;
+    const y = zy * H;
+    const d = dir;
+    const [rl, ll] = stride(phase, 0, 0.7);
+    const [rr] = stride(phase, 0.5, 0.7);
+    const skin = look.night ? [0.14, 0.34, 0.2] : this.paint(look.zombie);
+    const rags = this.paint([0.24, 0.2, 0.26]);
+    const pants = this.paint([0.2, 0.22, 0.3]);
+    const sway2 = Math.sin(this.time * 4) * dance;
+    const sink = (1 - rise) * S;
+    const bob2 = Math.abs(Math.sin(phase * Math.PI)) * 0.025 * S * (1 - dance);
+    const hip = [x + sway2 * 0.08 * S, y - S * 0.42 - bob2 + sink];
+    const footA = [x + d * rl * 0.12 * S, y - ll * 0.04 * S + sink];
+    const footB = [x + d * rr * 0.06 * S - d * 0.03 * S, y + sink];
+    if (dance > 0) {
+      footA[0] = x - 0.06 * S + sway2 * 0.05 * S;
+      footB[0] = x + 0.06 * S + sway2 * 0.05 * S;
+    }
+    this.shape([cap(...hip, ...footA, 0.055 * S, 0.045 * S, pants), cap(...hip, ...footB, 0.055 * S, 0.045 * S, pants)], this.lighting, 0.6);
+    const neck = [hip[0] + d * 0.08 * S * (1 - dance), hip[1] - S * 0.34];
+    this.shape([cap(...hip, ...neck, 0.11 * S, 0.12 * S, rags), ell(hip[0], hip[1] - 0.02 * S, 0.11 * S, 0.06 * S, 0, rags)], this.lighting, 0.7);
+    for (let i = 0;i < 3; i++)
+      this.polygon([[hip[0] - 0.1 * S + i * 0.07 * S, hip[1]], [hip[0] - 0.04 * S + i * 0.07 * S, hip[1]], [hip[0] - 0.07 * S + i * 0.07 * S, hip[1] + 0.06 * S]], rags);
+    const shoulder = [neck[0], neck[1] + 0.05 * S];
+    const arms = [];
+    for (const [i, o] of [-0.02, 0.03].entries()) {
+      const lurch = Math.sin(phase * TAU + i) * 0.03 * S;
+      const out = [shoulder[0] + d * 0.3 * S, shoulder[1] + o * S + lurch];
+      const wave2 = Math.sin(this.time * 4 + i * Math.PI);
+      const upArm = [shoulder[0] + (i ? 1 : -1) * 0.15 * S + wave2 * 0.06 * S, shoulder[1] - 0.28 * S];
+      const hand = [lerp(out[0], upArm[0], dance), lerp(out[1], upArm[1], dance)];
+      arms.push(cap(...shoulder, ...hand, 0.04 * S, 0.034 * S, i ? skin : rags), ell(...hand, 0.04 * S, 0.035 * S, 0, skin));
+    }
+    this.shape(arms, this.lighting, 0.6);
+    const tilt = d * 0.25 + Math.sin(this.time * 1.3) * 0.1;
+    const head = [neck[0] + d * 0.05 * S + Math.sin(tilt) * 0.05 * S, neck[1] - 0.1 * S];
+    this.shape([ell(...head, 0.09 * S, 0.1 * S, tilt, skin)], this.lighting, 0.7);
+    this.shape([ell(head[0] - d * 0.02 * S, head[1] - 0.06 * S, 0.08 * S, 0.04 * S, tilt, this.paint([0.12, 0.1, 0.1]))], this.lighting, 0.3);
+    const eye = look.style === "front" ? [0.15, 0.12, 0.1] : [1.2, 0.9, 0.15];
+    this.disc(head[0] + d * 0.04 * S, head[1] - 0.005 * S, Math.max(0.018 * S, 0.5), eye[0], eye[1], eye[2], 1);
+  }
+  stepLightning(dt) {
+    const f = this.flash;
+    if (f.t >= 0) {
+      f.t += dt;
+      if (f.t > 0.8)
+        f.t = -1;
+      return;
+    }
+    if (this.gloom < 0.5)
+      return;
+    f.wait -= dt;
+    if (f.wait > 0)
+      return;
+    f.wait = rand(5, 12);
+    f.t = 0;
+    f.x = Math.random() < 0.5 ? rand(0.05, 0.35) * this.A : rand(0.65, 0.95) * this.A;
+  }
+  drawLightning() {
+    const { H, A } = this;
+    const f = this.flash;
+    const k = Math.exp(-(((f.t - 0.08) / 0.05) ** 2)) + 0.7 * Math.exp(-(((f.t - 0.35) / 0.08) ** 2));
+    if (k < 0.03)
+      return;
+    lightPool(this.hdr, this.W, H, f.x * H, 0.15 * H, 0.6 * H, 0.35 * H, BOLT, 1.5 * k, 0.05 * k);
+    const pts = [[f.x * H, 0]];
+    for (let i = 1;i <= 7; i++)
+      pts.push([(f.x + (hash(i * 3.7 + f.wait) - 0.5) * 0.05 * i * 0.4) * H, (HORIZON5 - 0.04) * i / 7 * H]);
+    const r = this.thick(0.0015, 0.6);
+    const parts = [];
+    for (let i = 0;i + 1 < pts.length; i++)
+      parts.push(cap(...pts[i], ...pts[i + 1], r, r, [BOLT[0] * 1.5 * k, BOLT[1] * 1.5 * k, BOLT[2] * 1.5 * k]));
+    const fork = pts[3];
+    parts.push(cap(...fork, fork[0] + (f.x < A / 2 ? 0.04 : -0.04) * H, fork[1] + 0.08 * H, r * 0.8, r * 0.6, [BOLT[0] * 1.5 * k, BOLT[1] * 1.5 * k, BOLT[2] * 1.5 * k]));
+    this.shape(parts, this.lighting, 0);
+  }
+  startWitch() {
+    const w = this.witch;
+    w.t = 0;
+    w.dir = Math.random() < 0.5 ? 1 : -1;
+    w.y = this.orb.y;
+  }
+  stepWitch(dt, cdt) {
+    const w = this.witch;
+    if (w.t < 0) {
+      if (this.activity !== "teeming")
+        return;
+      w.wait -= dt;
+      if (w.wait > 0)
+        return;
+      w.wait = rand(...WITCH_GAP);
+      this.startWitch();
+      return;
+    }
+    w.t += cdt * 0.32;
+    if (w.t > 1)
+      w.t = -1;
+  }
+  witchAt(t) {
+    const w = this.witch;
+    const A = this.A;
+    const mx = this.orb.x * A;
+    const x = w.dir > 0 ? lerp(-0.15, A + 0.15, t) : lerp(A + 0.15, -0.15, t);
+    const reach = Math.max(mx + 0.15, A - mx + 0.15);
+    return [x, w.y + 0.06 * ((x - mx) / reach) * w.dir - 0.05 * Math.exp(-(((x - mx) / 0.25) ** 2)) + 0.05 + Math.sin(t * 9) * 0.006];
+  }
+  drawWitch() {
+    const H = this.H;
+    const [wx, wy] = this.witchAt(this.witch.t);
+    const x = wx * H;
+    const y = wy * H;
+    const s = 0.075 * H;
+    const d = this.witch.dir;
+    const dark = this.paint([0.09, 0.06, 0.1]);
+    const flap = Math.sin(this.time * 7) * 0.12;
+    this.polygon([[x - d * s * 0.95, y + s * 0.1], [x - d * s * 1.55, y - s * 0.12], [x - d * s * 1.7, y + s * 0.2], [x - d * s * 1.5, y + s * 0.42]], this.paint([0.55, 0.4, 0.18]));
+    this.shape([cap(x - d * s * 1.05, y + s * 0.12, x + d * s * 1.05, y - s * 0.06, Math.max(s * 0.05, 0.6), Math.max(s * 0.04, 0.6), this.paint([0.3, 0.2, 0.1]))], this.lighting, 0.5);
+    this.polygon([[x - d * s * 0.05, y - s * 0.55], [x - d * s * 1.05, y - s * (0.2 + flap)], [x - d * s * 0.85, y + s * (0.05 - flap)], [x - d * s * 0.2, y + s * 0.02]], dark);
+    const cackle = Math.max(0, Math.sin(this.time * 10)) * 0.25;
+    this.shape([ell(x, y - s * 0.22, s * 0.2, s * 0.3, d * 0.3, dark), ell(x + d * s * 0.14, y - s * 0.62, s * 0.12, s * 0.12, 0, dark), cap(x + d * s * 0.2, y - s * 0.6, x + d * s * (0.36 + cackle * 0.2), y - s * (0.6 + cackle), s * 0.04, s * 0.02, dark), cap(x + d * s * 0.08, y - s * 0.42, x + d * s * 0.55, y - s * 0.02, s * 0.06, s * 0.05, dark), cap(x + d * s * 0.05, y - s * 0.05, x + d * s * 0.35, y + s * 0.32, s * 0.07, s * 0.05, dark)], this.lighting, 0.5);
+    this.ellipse(x + d * s * 0.14, y - s * 0.7, s * 0.3, Math.max(s * 0.05, 0.7), dark[0], dark[1], dark[2], 1);
+    this.polygon([[x, y - s * 0.72], [x + d * s * 0.3, y - s * 0.72], [x - d * s * 0.3, y - s * 1.25]], dark);
+  }
+  stepDance(dt) {
+    const e = this.dance;
+    if (e.t < 0) {
+      e.wait -= dt;
+      if (e.wait > 0)
+        return;
+      e.t = 0;
+      return;
+    }
+    e.t += dt;
+    if (e.t < DANCE)
+      return;
+    e.t = -1;
+    e.wait = eggWait(true) * TIME_SCALE6;
+  }
+  drawDance() {
+    const t = this.dance.t;
+    const rise = smoothstep(0, 4, t) * (1 - smoothstep(DANCE - 4, DANCE, t));
+    const dance = smoothstep(4, 6, t) * (1 - smoothstep(DANCE - 6, DANCE - 4, t));
+    const S = this.S;
+    for (const [i, x] of [this.hx - 0.2 * S, this.hx, this.hx + 0.2 * S].entries()) {
+      const step = Math.sin(this.time * 2 + i * 0.3) * 0.02 * dance;
+      this.drawZombie(x + step, 0.97, i === 1 ? -1 : 1, this.time * 2, dance, rise);
+    }
+  }
+  unsky(x0, y0, x1, y1) {
+    restoreFore(this.hdr, this.background, this.fore, this.W, x0, y0, x1, Math.min(this.H - 1, y1));
+  }
+  edge(a, b, radius, color) {
+    const r = this.thick(radius, 0.5);
+    this.shape([cap(a[0], a[1], b[0], b[1], r, r, color)], this.lighting, 0);
+  }
+  rimEdges(pts) {
+    const r = this.thick(0.0022, 0.75);
+    const lx = this.orb.x * this.W;
+    const k = this.look.night ? 0.35 : 0.4;
+    const c = [this.light[0] * k, this.light[1] * k, this.light[2] * k];
+    const parts = [];
+    for (let i = 0;i + 1 < pts.length; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[i + 1];
+      const facing = clamp((lx - (ax + bx) / 2) / this.H * 2, -1, 1);
+      if (facing <= 0.05 && Math.abs(ay - by) > Math.abs(ax - bx))
+        continue;
+      parts.push(cap(ax, ay, bx, by, r, r, c));
+    }
+    if (parts.length)
+      this.shape(parts, this.lighting, 0);
+  }
+}
+function makeFog(W, H, y0, rows) {
+  const tex = new Float32Array(W * rows);
+  for (let j = 0;j < rows; j++) {
+    const v = (y0 + j + 0.5) / H;
+    const band = smoothstep(0.6, 0.74, v) * (1 - smoothstep(0.9, 0.99, v));
+    for (let x = 0;x < W; x++) {
+      const n = (sx) => fbm2(sx / H * 2.2, v * 16, 3);
+      const t = x / W;
+      tex[j * W + x] = band * (n(x) * (1 - t) + n(x - W) * t);
+    }
+  }
+  return tex;
+}
+function creep(hdr, W, H, tex, y0, rows, off1, off2, color, alpha) {
+  const i1 = Math.floor(off1);
+  const f1 = off1 - i1;
+  const i2 = Math.floor(off2);
+  const f2 = off2 - i2;
+  for (let j = 0;j < rows; j++) {
+    const y = y0 + j;
+    if (y >= H)
+      break;
+    const row = j * W;
+    for (let x = 0;x < W; x++) {
+      const a0 = ((x + i1) % W + W) % W;
+      const a = tex[row + a0] * (1 - f1) + tex[row + (a0 + 1) % W] * f1;
+      const b0 = ((x - i2) % W + W) % W;
+      const b = tex[row + b0] * (1 - f2) + tex[row + (b0 + W - 1) % W] * f2;
+      const d = Math.min(0.9, alpha * smoothstep(0.25, 0.75, (a + b) * 0.5) * 2.2);
+      if (d <= 0.003)
+        continue;
+      const o = (y * W + x) * 3;
+      hdr[o] += (color[0] - hdr[o]) * d;
+      hdr[o + 1] += (color[1] - hdr[o + 1]) * d;
+      hdr[o + 2] += (color[2] - hdr[o + 2]) * d;
+    }
+  }
+}
+function restoreFore(hdr, background, fore, W, x0, y0, x1, y1) {
+  for (let y = y0;y <= y1; y++)
+    for (let x = x0;x <= x1; x++) {
+      const i = y * W + x;
+      if (!fore[i])
+        continue;
+      hdr[i * 3] = background[i * 3];
+      hdr[i * 3 + 1] = background[i * 3 + 1];
+      hdr[i * 3 + 2] = background[i * 3 + 2];
+    }
+}
+var hauntedHouse = {
+  id: "haunted-house",
+  name: "Haunted House",
+  description: "A crooked Victorian haunted house on a rise above a foggy graveyard under a huge moon, with a witch flying by now and then",
+  activity: {
+    calm: "The candle and jack-o'-lanterns flicker, fog creeps, a bat or two flits and the swing sways",
+    lively: "Adds bats pouring from the turret, ghosts drifting by and a ghoul peeking out from behind a gravestone",
+    teeming: "Adds a zombie shuffling through the graveyard, a hand clawing out of a grave, a witch crossing the moon and a light moving room to room"
+  },
+  scrim: {
+    day: [
+      [34, 40, 38],
+      [40, 44, 36],
+      [26, 30, 22]
+    ],
+    sunset: [
+      [22, 6, 26],
+      [44, 12, 18],
+      [12, 4, 10]
+    ],
+    night: [
+      [4, 2, 14],
+      [8, 4, 22],
+      [4, 3, 12]
+    ]
+  },
+  create: (settings) => new HauntedHouse(settings)
+};
+
+// wallpapers/jungle.ts
+var TIME_SCALE7 = 0.35;
+var CREATURE_SPEED7 = 0.25;
+var CHORUS = 3;
+var RAY_N2 = 1024;
+var SLOTH = 24;
+var MONKEY = 0.38;
+var LOOKS7 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.75],
+    mist: [
+      [0.6, 0.8, 0.6],
+      [0.22, 0.45, 0.28],
+      [0.04, 0.1, 0.04]
+    ],
+    far: [0.3, 0.52, 0.34],
+    water: [0.8, 0.92, 1],
+    shafts: 0.35,
+    tint: [1, 1, 1],
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.5, 0.22],
+    mist: [
+      [1, 0.62, 0.38],
+      [0.5, 0.24, 0.18],
+      [0.04, 0.025, 0.02]
+    ],
+    far: [0.45, 0.2, 0.16],
+    water: [1, 0.72, 0.55],
+    shafts: 0.5,
+    tint: [0.2, 0.13, 0.1],
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [0.14, 0.95, 0.85],
+    mist: [
+      [0.02, 0.085, 0.13],
+      [0.014, 0.065, 0.09],
+      [0.003, 0.012, 0.016]
+    ],
+    far: [0.015, 0.05, 0.06],
+    water: [0.04, 0.38, 0.5],
+    shafts: 0.12,
+    tint: [0.02, 0.05, 0.06],
+    night: true
+  }
+};
+var RAINY_MIST = { day: [0.36, 0.46, 0.42], sunset: [0.3, 0.16, 0.16], night: [0.01, 0.04, 0.07] };
+var TRUNK2 = [0.24, 0.17, 0.1];
+var CANOPY = [0.1, 0.28, 0.09];
+var LEAF = [0.12, 0.42, 0.08];
+var VINE = [0.14, 0.3, 0.08];
+var ROCK = [0.25, 0.27, 0.24];
+var FLOOR = [0.08, 0.12, 0.05];
+var BLACK2 = [0.03, 0.03, 0.03];
+var DAYLIGHT6 = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var RAYS_A = buildRays(3);
+var RAYS_B = buildRays(11);
+var MIST_A = buildRays(23);
+var MIST_B = buildRays(37);
+
+class Jungle extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  weather;
+  rainy;
+  lighting = { style: "front", dir: DAYLIGHT6 };
+  shade;
+  leaves = [];
+  groundPx = new Float32Array(0);
+  falls = { x: 0, top: 0, bottom: 0, half: 0 };
+  toucan = { x: -9, y: 0.25, dir: 1, next: 14, phase: 0 };
+  butterflies = [];
+  glowers = [];
+  chorus = 0;
+  pollen = Array.from({ length: 40 }, () => ({ x: Math.random() * 4, y: 0.1 + Math.random() * 0.7, s: Math.random() }));
+  monkey = { kick: 0, swing: 0 };
+  jaguarHead = { p: 0, v: 0 };
+  liana = { x: 0, length: 0, phase: 0 };
+  sloth = { wait: eggWait() * TIME_SCALE7, t: -1 };
+  vines = new SwayLayer;
+  mist = 0;
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    const rainy = settings.season === "summer" || settings.season === "autumn";
+    this.rainy = rainy;
+    const look = LOOKS7[settings.time];
+    this.shade = sunShade(settings.time, { x: 0.85, y: -0.15 }, true);
+    const wet = RAINY_MIST[settings.time];
+    this.look = rainy ? { ...look, mist: [mixRGB(look.mist[0], wet, 0.55), mixRGB(look.mist[1], wet, 0.4), look.mist[2]], far: mixRGB(look.far, wet, 0.4), shafts: look.shafts * 0.25 } : look;
+    if (settings.time === "day")
+      this.frame = 0.3;
+    this.weather = new WeatherLayer(settings.weather ?? (rainy ? "rain" : "clear"), settings.time, 0.66, !settings.weather);
+    const count = this.look.night ? 0 : { calm: 0, lively: 2, teeming: 4 }[settings.activity];
+    this.butterflies = Array.from({ length: count }, (_, i) => ({ x: 0.3 + i * 0.3, y: 0.5, wx: 0.3 + i * 0.3, wy: 0.5, wanderT: 0, phase: i * 2.3 }));
+    const flies = this.look.night ? { calm: 16, lively: 30, teeming: 48 }[settings.activity] : 0;
+    this.glowers = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.3 + Math.random() * 0.62, vx: 0, vy: 0, phase: Math.random() * TAU }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE7;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED7;
+    this.creatureTime += cdt;
+    this.mist += (0.02 + 0.1 * gust(0.5 * this.A, this.time)) * dt;
+    for (const p of this.pollen) {
+      p.x += (0.004 + p.s * 0.006 + gust(p.x, this.time) * 0.05) * dt;
+      p.y += Math.sin(this.time * 0.4 + p.s * 20) * 0.003 * dt;
+      if (p.x > this.A)
+        p.x -= this.A;
+    }
+    for (const f of this.glowers) {
+      f.vx += (Math.random() - 0.5) * 0.02 * dt;
+      f.vy += (Math.random() - 0.5) * 0.02 * dt;
+      f.vx *= Math.exp(-dt * 0.5);
+      f.vy *= Math.exp(-dt * 0.5);
+      f.x = (f.x + f.vx * dt + this.A) % this.A;
+      f.y = clamp(f.y + f.vy * dt, 0.25, 0.95);
+    }
+    this.stepToucan(dt);
+    this.weather.step(dt);
+    for (const b of this.butterflies)
+      this.stepButterfly(b, cdt);
+    this.stepGloom(dt);
+    this.chorus = Math.max(0, this.chorus - dt);
+    const m = this.monkey;
+    m.kick *= Math.exp(-cdt * 0.5);
+    m.swing += cdt * 6;
+    const j = this.jaguarHead;
+    j.v += ((Math.max(0, Math.sin(this.creatureTime * 0.35)) ** 12 - j.p) * 25 - j.v * 3) * cdt;
+    j.p += j.v * cdt;
+    const sl = this.sloth;
+    if (sl.t < 0) {
+      sl.wait -= dt;
+      if (sl.wait <= 0)
+        sl.t = 0;
+      return;
+    }
+    sl.t += cdt;
+    if (sl.t < SLOTH)
+      return;
+    sl.t = -1;
+    sl.wait = eggWait(true) * TIME_SCALE7;
+  }
+  visit() {
+    if (this.look.night)
+      this.chorus = CHORUS;
+    else if (this.toucan.x < -5)
+      this.toucan.next = 0;
+  }
+  poke(x) {
+    if (this.activity === "calm")
+      return;
+    const m = this.monkey;
+    if (m.kick < 0.05)
+      m.swing = x < this.A - MONKEY ? Math.PI : 0;
+    m.kick = 1;
+  }
+  render() {
+    this.restore();
+    this.vines.draw(this.hdr, this.W, this.H, this.time);
+    this.drawShafts();
+    this.drawFalls();
+    const mist = this.look.mist[1];
+    driftMist(this.hdr, this.W, this.H, this.mist, mist[0], mist[1], mist[2], this.rainy ? 0.3 : 0.22);
+    this.touch(0, Math.floor(0.5 * this.H), this.W - 1, Math.ceil(0.96 * this.H));
+    if (this.toucan.x > -5)
+      this.drawToucan(this.toucan);
+    if (this.sloth.t >= 0)
+      this.drawSloth();
+    if (this.activity !== "calm")
+      this.drawMonkey();
+    if (this.activity === "teeming") {
+      this.drawMacaw(this.A - 0.19, -1, 0);
+      this.drawMacaw(this.A - 0.24, 1, 1.7);
+      this.drawJaguar();
+      this.drawFrog();
+    }
+    for (const b of this.butterflies)
+      this.drawButterfly(b);
+    this.drawMotes();
+    for (const l of this.leaves)
+      this.drawLeaf(l);
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT6 } : { style: "rim", color: look.light, x: 0.85 * W, y: -0.15 * H };
+    this.drawMist();
+    const mist = this.hdr.slice();
+    for (let i = 0;i < Math.round(A * 7); i++) {
+      const x = (i + 0.2 + hash(i * 3.1) * 0.6) * (A / Math.round(A * 7)) * H;
+      const r = (0.007 + hash(i * 5.7) * 0.008) * H;
+      this.shape([cap(x, H * 0.9, x + (hash(i) - 0.5) * 0.04 * H, 0, r * 1.3, r, look.far)], this.lighting, 0.15);
+    }
+    this.shape(Array.from({ length: Math.round(A * 14) }, (_, i) => ell((hash(i * 1.3) * A + 0.02) * H, (0.06 + hash(i * 2.9) * 0.16) * H, (0.06 + hash(i * 4.1) * 0.06) * H, (0.04 + hash(i * 6.3) * 0.03) * H, 0, look.far)), this.lighting, 0.15);
+    if (look.style === "front")
+      haze(this.hdr, mist, W, H, 1, 1.01, 0.3);
+    const fx = 0.32;
+    this.falls = { x: fx * H, top: 0.27 * H, bottom: 0.66 * H, half: (this.rainy ? 0.026 : 0.018) * H };
+    const rock = mixRGB(this.paint(ROCK), look.far, 0.35);
+    const boulders = [
+      [0, 0.47, 0.085, 0.2],
+      [-0.075, 0.58, 0.07, 0.1],
+      [0.08, 0.56, 0.065, 0.12],
+      [-0.045, 0.37, 0.06, 0.09],
+      [0.05, 0.35, 0.05, 0.08],
+      [-0.1, 0.66, 0.06, 0.05],
+      [0.11, 0.65, 0.06, 0.05]
+    ];
+    for (const [dx, dy, rx, ry] of boulders)
+      this.shape([ell((fx + dx) * H, dy * H, rx * H, ry * H, dx * 2, rock, 2.5)], this.lighting, 0.8);
+    this.shape([ell(fx * H, 0.675 * H, 0.1 * H, 0.018 * H, 0, mixRGB(look.water, look.far, 0.6))], this.lighting, 0);
+    this.shape([-0.07, -0.03, 0.02, 0.06, 0.09].map((dx, i) => ell((fx + dx) * H, (0.27 + hash(i * 2.7) * 0.03) * H, 0.04 * H, 0.03 * H, 0, mixRGB(this.paint(CANOPY), look.far, 0.2))), this.lighting, 0.8);
+    this.shape(Array.from({ length: Math.round(A * 10) }, (_, i) => ell(hash(i * 7.7) * A * H, (-0.03 + hash(i * 8.3) * 0.13) * H, (0.07 + hash(i * 9.1) * 0.07) * H, (0.05 + hash(i * 3.3) * 0.04) * H, hash(i) - 0.5, this.paint(CANOPY))), this.lighting);
+    this.vines.begin(this.hdr);
+    for (let i = 0;i < 7; i++) {
+      const vine = { x: (0.06 + i / 6 * 0.88) * A, length: 0.25 + hash(i * 2.2) * 0.35, phase: hash(i * 4.4) * TAU };
+      if (Math.abs(vine.x - fx) < 0.06)
+        continue;
+      if (i === 0)
+        this.liana = vine;
+      this.drawVine(vine.x * H, vine.length * H, vine.phase);
+    }
+    this.vines.end(this.hdr, W, H, 0.014 * H, (_x, y) => clamp(y / (0.55 * H), 0, 1) ** 1.3);
+    this.drawTrunk(0.04 * H, 0.045 * H);
+    this.drawTrunk((A - 0.12) * H, 0.038 * H);
+    this.shape([cap(...this.lowBranch(A - 0.15), ...this.lowBranch(A - 0.5), 0.022 * H, 0.012 * H, this.paint(TRUNK2))], this.lighting);
+    this.shape([cap(...this.highBranch(A - 0.15), ...this.highBranch(A - 0.46), 0.018 * H, 0.01 * H, this.paint(TRUNK2))], this.lighting);
+    this.groundPx = new Float32Array(W);
+    const px = this.px;
+    for (let x = 0;x < W; x++)
+      this.groundPx[x] = (0.86 + 0.02 * Math.sin(x / H * 3.3) + (fbm1(x / px * 0.02, 4) - 0.5) * 0.03) * H;
+    for (let x = 0;x < W; x++)
+      for (let y = Math.floor(this.groundPx[x]);y < H; y++) {
+        const k = 0.8 + 0.25 * fbm1(x / px * 0.3 + y / px * 0.7, 6);
+        const c = this.paint(FLOOR);
+        this.blend((y * W + x) * 3, c[0] * k, c[1] * k, c[2] * k, clamp(y + 1 - this.groundPx[x], 0, 1));
+      }
+    if (look.style === "front")
+      mottle(this.hdr, W, H, 0.8, 1, 0.3, [1.5, 1.35, 0.8], [0.7, 0.8, 0.8]);
+    for (const [x, r] of [[0.04, 0.045], [A - 0.12, 0.038]])
+      groundShadow(this.hdr, W, H, this.shade, x * H, this.groundPx[clamp(Math.round(x * H), 0, W - 1)] + 0.03 * H, r * 6 * H, H);
+    for (let i = 0;i < Math.round(A * 6); i++) {
+      const x = hash(i * 3.9) * A * H;
+      groundShadow(this.hdr, W, H, this.shade, x, this.groundPx[clamp(Math.round(x), 0, W - 1)] + 2 * px, (0.1 + hash(i * 1.1) * 0.07) * H, 0.1 * H);
+      this.drawFern(x, this.groundPx[clamp(Math.round(x), 0, W - 1)] + 2 * px, (0.08 + hash(i * 1.1) * 0.06) * H, hash(i * 5.5) > 0.5 ? 1 : -1);
+    }
+    this.leaves = [
+      ...[-0.9, -0.55, -1.25].map((angle, i) => ({ x: -0.03, y: 1.06, angle, length: [0.42, 0.36, 0.3][i], phase: i * 1.9 })),
+      ...[-2.25, -2.6, -1.9].map((angle, i) => ({ x: A + 0.03, y: 1.06, angle, length: [0.4, 0.34, 0.3][i], phase: i * 2.3 + 1 })),
+      ...[0.6, 0.95].map((angle, i) => ({ x: -0.02, y: -0.04, angle, length: [0.3, 0.26][i], phase: i * 1.3 + 2 })),
+      ...[2.5, 2.2].map((angle, i) => ({ x: A + 0.02, y: -0.04, angle, length: [0.3, 0.25][i], phase: i * 1.7 + 3 }))
+    ];
+    this.vines.seal(this.hdr, W);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  lowBranch(x) {
+    return [x * this.H, lerp(0.69, 0.65, (this.A - 0.15 - x) / 0.35) * this.H];
+  }
+  highBranch(x) {
+    return [x * this.H, lerp(0.31, 0.29, (this.A - 0.15 - x) / 0.31) * this.H];
+  }
+  drawMist() {
+    const { W, H, hdr } = this;
+    const [top, middle, bottom] = this.look.mist;
+    for (let y = 0;y < H; y++) {
+      const v = y / H;
+      const c = v < 0.45 ? mixRGB(top, middle, smoothstep(0, 0.45, v)) : mixRGB(middle, bottom, smoothstep(0.45, 1, v));
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        hdr[o] = c[0];
+        hdr[o + 1] = c[1];
+        hdr[o + 2] = c[2];
+      }
+    }
+  }
+  drawVine(x, length, phase) {
+    const H = this.H;
+    const at = (t) => [x + Math.sin(t * Math.PI * 0.8 + phase) * 0.02 * H * t, t * length];
+    const parts = [];
+    for (let i = 0;i < 12; i++)
+      parts.push(cap(...at(i / 12), ...at((i + 1) / 12), 0.004 * H, 0.0035 * H, this.paint(VINE)));
+    for (let i = 1;i < 10; i++) {
+      const [lx, ly] = at(i / 10);
+      const side = i % 2 ? 1 : -1;
+      parts.push(ell(lx + side * 0.01 * H, ly, 0.011 * H, 0.005 * H, side * 0.5, this.paint(LEAF)));
+    }
+    this.shape(parts, this.lighting, 0.7);
+  }
+  drawTrunk(x, r) {
+    const H = this.H;
+    const c = this.paint(TRUNK2);
+    this.shape([
+      cap(x, H * 1.02, x + r * 0.2, -0.05 * H, r, r * 0.8, c, 3),
+      cap(x, H * 0.75, x - r * 2.6, H * 0.92, r * 0.7, r * 0.25, c),
+      cap(x, H * 0.75, x + r * 2.4, H * 0.93, r * 0.7, r * 0.25, c),
+      cap(x, H * 0.78, x - r * 1.2, H * 0.95, r * 0.6, r * 0.3, c)
+    ], this.lighting);
+  }
+  drawFern(x, gy, size, side) {
+    const at = (t) => [x + side * Math.sin(t * 1.4) * size * 0.8, gy - Math.sin(t * Math.PI * 0.6) * size];
+    const parts = [];
+    for (let i = 0;i < 10; i++) {
+      const [ax, ay] = at(i / 10);
+      const [bx, by] = at((i + 1) / 10);
+      parts.push(cap(ax, ay, bx, by, this.thick(size * 0.025 / this.H), this.thick(size * 0.02 / this.H, 0.8), this.paint(LEAF)));
+      const leaflet = size * 0.14 * (1 - i / 12);
+      if (!this.cells)
+        for (const s of [-1, 1])
+          parts.push(ell(ax + s * leaflet * 0.4, ay - leaflet * 0.5, leaflet * 0.6, leaflet * 0.18, s * 0.9 - 0.5 * side, this.paint(LEAF)));
+    }
+    if (this.cells)
+      parts.push(...blade(Array.from({ length: 11 }, (_, i) => at(i / 10)), Array.from({ length: 11 }, (_, i) => size * 0.1 * (1 - i / 12)), this.paint(LEAF)));
+    this.shape(parts, this.lighting, 0.6);
+  }
+  drawShafts() {
+    const { W, H, hdr, look } = this;
+    const t = this.time;
+    const [lr, lg, lb] = look.light;
+    const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.75;
+    this.touch(0, 0, W - 1, H * 0.85);
+    for (let y = 0;y < H * 0.85; y++) {
+      const fade = Math.pow(1 - y / (H * 0.85), 1.4) * look.shafts * overcast;
+      for (let x = 0;x < W; x++) {
+        const s = x + y * 0.55;
+        const ray = RAYS_A[(s * 0.9 + t * 3 | 0) & 1023] * (0.4 + 0.6 * RAYS_B[(s * 0.6 - t * 2 | 0) & 1023]) * fade;
+        const o = (y * W + x) * 3;
+        hdr[o] += ray * lr;
+        hdr[o + 1] += ray * lg;
+        hdr[o + 2] += ray * lb;
+      }
+    }
+  }
+  drawFalls() {
+    const { W, H, hdr, look } = this;
+    const f = this.falls;
+    const t = this.time;
+    const [wr, wg, wb] = look.water;
+    for (let y = Math.floor(f.top);y < Math.min(H, f.bottom); y++)
+      for (let x = Math.floor(f.x - f.half);x <= Math.ceil(f.x + f.half); x++) {
+        if (x < 0 || x >= W)
+          continue;
+        const across = Math.abs(x + 0.5 - f.x) / f.half;
+        if (across >= 1)
+          continue;
+        const edge = smoothstep(1, 0.55, across) * smoothstep(f.top, f.top + 3, y);
+        const n = 0.5 * Math.sin(y * 0.35 - t * 14 + hash(x) * 6) + 0.5 * Math.sin(y * 0.13 - t * 9 + hash(x + 50) * 4);
+        const k = 0.7 + 0.3 * n;
+        this.blend((y * W + x) * 3, wr * k, wg * k, wb * k, 0.85 * edge);
+      }
+    const rx = f.half * 3;
+    const ry = 0.03 * H;
+    this.touch(f.x - rx - 1, f.bottom - ry - 1, f.x + rx + 1, f.bottom + ry + 1);
+    for (let y = Math.max(0, Math.floor(f.bottom - ry));y < Math.min(H, f.bottom + ry); y++)
+      for (let x = Math.max(0, Math.floor(f.x - rx));x < Math.min(W, f.x + rx); x++) {
+        const q = ((x + 0.5 - f.x) / rx) ** 2 + ((y + 0.5 - f.bottom) / ry) ** 2;
+        if (q >= 1)
+          continue;
+        const a = (1 - q) * 0.45 * (0.8 + 0.2 * Math.sin(t * 3 + x * 0.3));
+        const o = (y * W + x) * 3;
+        hdr[o] += wr * a;
+        hdr[o + 1] += wg * a;
+        hdr[o + 2] += wb * a;
+      }
+  }
+  stepToucan(dt) {
+    const b = this.toucan;
+    b.phase += dt * 8;
+    if (this.look.night)
+      return;
+    if (b.x < -5) {
+      b.next -= dt;
+      if (b.next > 0)
+        return;
+      b.dir = Math.random() < 0.5 ? 1 : -1;
+      b.x = b.dir > 0 ? -0.15 : this.A + 0.15;
+      b.y = this.openRow(0.16, 0.32);
+      return;
+    }
+    b.x += b.dir * 0.08 * dt;
+    if (b.x < -0.3 || b.x > this.A + 0.3) {
+      b.x = -9;
+      b.next = rand(40, 75);
+    }
+  }
+  drawToucan(b) {
+    const H = this.H;
+    const S = 0.13 * H;
+    const face = b.dir;
+    const x = b.x * H;
+    const y = (b.y + Math.sin(b.phase * 0.3) * 0.01) * H;
+    const P = (u, v) => [x + u * face * S, y + v * S];
+    const flap = Math.sin(b.phase);
+    this.shape([
+      cap(...P(-0.25, 0), ...P(-0.55, 0.06), 0.07 * S, 0.05 * S, this.paint(BLACK2)),
+      ell(...P(0, 0), 0.28 * S, 0.14 * S, -0.1 * face, this.paint(BLACK2)),
+      ell(...P(-0.22, 0.07), 0.05 * S, 0.03 * S, 0, this.paint([0.8, 0.08, 0.06])),
+      ell(...P(0.18, 0.05), 0.12 * S, 0.09 * S, 0, this.paint([0.95, 0.85, 0.3])),
+      ell(...P(0.3, -0.04), 0.1 * S, 0.09 * S, 0, this.paint(BLACK2)),
+      cap(...P(0.38, -0.04), ...P(0.72, 0.01), 0.07 * S, 0.025 * S, this.paint([1, 0.55, 0.08])),
+      cap(...P(0.7, 0.01), ...P(0.8, 0.03), 0.026 * S, 0.012 * S, this.paint(BLACK2)),
+      ell(...P(0.33, -0.06), 0.03 * S, 0.03 * S, 0, this.paint([0.2, 0.55, 0.9])),
+      cap(...P(-0.02, -0.05), ...P(-0.12, -0.05 - 0.45 * flap), 0.1 * S, 0.04 * S, this.paint(BLACK2))
+    ], this.lighting, 0.6);
+  }
+  drawMonkey() {
+    const H = this.H;
+    const [ax, ay] = this.highBranch(this.A - MONKEY);
+    const m = this.monkey;
+    const night = this.look.night;
+    const swingAt = (t) => (night ? 0.05 : 0.35) * Math.sin(t * 1.2) + (night ? 0.2 : 0.4) * m.kick * Math.sin(m.swing - (this.creatureTime - t) * 6);
+    const swing = swingAt(this.creatureTime);
+    const trail = (swingAt(this.creatureTime - 0.3) - swing) * 1.4;
+    const cs = Math.cos(swing);
+    const sn = Math.sin(swing);
+    const P = (u, v) => [ax + (u * cs - v * sn) * H, ay + (u * sn + v * cs) * H];
+    const hang = (u0, v0, u, v) => [u0 + (u - u0) * Math.cos(trail) - (v - v0) * Math.sin(trail), v0 + (u - u0) * Math.sin(trail) + (v - v0) * Math.cos(trail)];
+    const fur = this.paint([0.3, 0.2, 0.12]);
+    const parts = [cap(ax - 0.008 * H, ay - 0.01 * H, ax + 0.008 * H, ay - 0.01 * H, 0.004 * H, 0.004 * H, fur)];
+    for (let i = 0;i < 4; i++)
+      parts.push(cap(...P(Math.sin(i * 0.8) * 0.006, i / 4 * 0.07), ...P(Math.sin((i + 1) * 0.8) * 0.006, (i + 1) / 4 * 0.07), 0.004 * H, 0.004 * H, fur));
+    parts.push(cap(...P(0, 0.07), ...P(0, 0.14), 0.018 * H, 0.02 * H, fur), ...[-1, 1].flatMap((s) => limb(P, s * 0.006, 0.078, ...hang(s * 0.006, 0.078, s * 0.035, 0.05), 0.03, 0.03, s, 0.007 * H, 0.005 * H, 0.004 * H, fur)), ...[-1, 1].flatMap((s) => limb(P, s * 0.008, 0.135, ...hang(s * 0.008, 0.135, s * 0.03, 0.225), 0.05, 0.05, -s, 0.006 * H, 0.005 * H, 0.004 * H, fur)), ell(...P(0, 0.165), 0.019 * H, 0.019 * H, swing, fur), ...[-1, 1].map((s) => ell(...P(s * 0.018, 0.16), 0.006 * H, 0.006 * H, 0, fur)), ell(...P(0, 0.172), 0.012 * H, 0.011 * H, swing, this.paint([0.65, 0.5, 0.38])));
+    this.shape(parts, this.lighting, 0.7);
+    for (const s of [-1, 1])
+      this.add(...P(s * 0.005, 0.169), 0.01, 0.01, 0.01);
+  }
+  drawSloth() {
+    const H = this.H;
+    const t = this.sloth.t;
+    const v = this.liana;
+    const s = lerp(0.2, 0.75, smoothstep(0, 10, t) * (1 - smoothstep(14, 24, t)));
+    const at = (q) => [(v.x + Math.sin(q * Math.PI * 0.8 + v.phase) * 0.02 * q) * H, q * v.length * H];
+    const [vx, gy] = at(s);
+    const gx = vx + this.vines.offset(vx, gy);
+    const S = 0.17 * H;
+    const climbing = (t < 10 || t > 14) && t < 24;
+    const reach = climbing ? Math.sin(t * 4) * 0.05 : 0;
+    const tilt = Math.sin(smoothstep(10, 11, t) * (1 - smoothstep(13, 14, t)) * Math.PI * 0.5) * 0.25;
+    const P = (u, w) => [gx + u * S, gy + w * S];
+    const fur = this.paint([0.42, 0.36, 0.27]);
+    const claw = this.paint([0.2, 0.16, 0.12]);
+    this.shape([
+      cap(...P(-0.11, 0.24), ...P(-0.02, -0.02 + reach), 0.045 * S, 0.035 * S, fur),
+      cap(...P(0.11, 0.24), ...P(0.02, 0.02 - reach), 0.045 * S, 0.035 * S, fur),
+      cap(...P(-0.09, 0.6), ...P(-0.04, 0.82), 0.05 * S, 0.035 * S, fur),
+      cap(...P(0.09, 0.6), ...P(0.04, 0.82), 0.05 * S, 0.035 * S, fur),
+      ell(...P(0, 0.44), 0.17 * S, 0.24 * S, 0, fur),
+      ell(...P(0, 0.22), 0.1 * S, 0.09 * S, tilt, fur),
+      ell(...P(-0.02, -0.02 + reach), 0.025 * S, 0.02 * S, 0, claw),
+      ell(...P(0.02, 0.02 - reach), 0.025 * S, 0.02 * S, 0, claw)
+    ], this.lighting, 0.6);
+    const ct = Math.cos(tilt);
+    const st = Math.sin(tilt);
+    const F = (u, w) => P(u * ct - (w - 0.22) * st, 0.22 + u * st + (w - 0.22) * ct);
+    this.shape([ell(...F(0, 0.225), 0.075 * S, 0.06 * S, tilt, this.paint([0.82, 0.74, 0.56]))], this.lighting, 0.4);
+    const dark = this.paint(BLACK2);
+    this.shape([ell(...F(-0.035, 0.215), 0.028 * S, 0.012 * S, tilt - 0.35, dark), ell(...F(0.035, 0.215), 0.028 * S, 0.012 * S, tilt + 0.35, dark), ell(...F(0, 0.245), 0.014 * S, 0.008 * S, tilt, dark)], this.lighting, 0);
+  }
+  drawMacaw(at, face, phase) {
+    const H = this.H;
+    const [x, y] = this.highBranch(at);
+    const S = 0.11 * H;
+    const bob2 = this.look.night ? 0 : Math.sin(this.creatureTime * 2 + phase) * 0.012;
+    const P = (u, v) => [x + u * face * S, y - 0.012 * H + v * S];
+    const red = this.paint([0.85, 0.08, 0.06]);
+    this.shape([
+      cap(...P(-0.02, -0.12), ...P(-0.08, 0.55), 0.07 * S, 0.02 * S, red),
+      cap(...P(-0.07, 0.4), ...P(-0.08, 0.55), 0.03 * S, 0.02 * S, this.paint([0.1, 0.3, 0.85])),
+      ell(...P(0, -0.33), 0.17 * S, 0.3 * S, 0, red),
+      ell(...P(0.04, -0.26), 0.11 * S, 0.2 * S, 0.15 * face, this.paint([0.1, 0.3, 0.85])),
+      ell(...P(0.03, -0.42), 0.1 * S, 0.09 * S, 0, this.paint([0.95, 0.8, 0.15])),
+      ell(...P(0.02, -0.68 + bob2), 0.12 * S, 0.11 * S, 0, red),
+      ell(...P(0.08, -0.68 + bob2), 0.06 * S, 0.055 * S, 0, this.paint([0.9, 0.88, 0.85])),
+      cap(...P(0.12, -0.7 + bob2), ...P(0.2, -0.6 + bob2), 0.06 * S, 0.015 * S, this.paint([0.85, 0.8, 0.7]))
+    ], this.lighting, 0.7);
+    this.add(...P(0.07, -0.7 + bob2), 0.01, 0.01, 0.01);
+  }
+  drawJaguar() {
+    const H = this.H;
+    const top = (x) => {
+      const [px, py] = this.lowBranch(this.A - 0.46 + x);
+      return [px, py - 0.035 * H];
+    };
+    const breathe = 1 + 0.03 * Math.sin(this.creatureTime * 1.5);
+    const coat = this.paint([0.85, 0.58, 0.22]);
+    const pale = this.paint([0.92, 0.82, 0.62]);
+    const lift2 = this.jaguarHead.p;
+    const [rx, ry] = top(0.015);
+    const [fx, fy] = top(0.167);
+    const [hx, hy] = [top(0.236)[0] - lift2 * 0.004 * H, top(0.236)[1] - lift2 * 0.022 * H];
+    const dangle = (t) => Math.sin(this.creatureTime * 0.6 - t) * 0.006 * H;
+    const parts = [
+      ell(rx, ry - 0.002 * H, 0.033 * H, 0.03 * H * breathe, -0.08, coat),
+      cap(...top(0.03), ...top(0.152), 0.025 * H * breathe, 0.027 * H * breathe, coat),
+      ell(fx, fy, 0.03 * H, 0.03 * H * breathe, 0, coat),
+      cap(fx + 0.012 * H, fy - 0.006 * H, hx - 0.012 * H, hy + 0.004 * H, 0.02 * H, 0.016 * H, coat),
+      cap(fx + 0.008 * H, fy + 0.012 * H, fx + 0.036 * H, fy + 0.03 * H, 0.011 * H, 0.009 * H, coat),
+      ell(fx + 0.042 * H, fy + 0.031 * H, 0.012 * H, 0.007 * H, 0, coat),
+      cap(fx - 0.012 * H, fy + 0.016 * H, fx - 0.008 * H + dangle(0), fy + 0.05 * H, 0.011 * H, 0.008 * H, coat),
+      cap(fx - 0.008 * H + dangle(0), fy + 0.05 * H, fx - 0.006 * H + dangle(0.6), fy + 0.08 * H, 0.008 * H, 0.007 * H, coat),
+      ell(fx - 0.004 * H + dangle(0.8), fy + 0.084 * H, 0.009 * H, 0.007 * H, 0, coat),
+      cap(rx + 0.006 * H, ry + 0.014 * H, rx + 0.016 * H + dangle(0.3), ry + 0.05 * H, 0.014 * H, 0.009 * H, coat),
+      cap(rx + 0.016 * H + dangle(0.3), ry + 0.05 * H, rx + 0.012 * H + dangle(0.9), ry + 0.08 * H, 0.008 * H, 0.007 * H, coat),
+      ell(rx + 0.015 * H + dangle(1.1), ry + 0.084 * H, 0.009 * H, 0.007 * H, 0, coat),
+      ell(hx, hy - 0.005 * H, 0.024 * H, 0.021 * H, 0, coat),
+      ell(hx + 0.017 * H, hy + 0.003 * H, 0.012 * H, 0.009 * H, 0.2, pale),
+      ...[-0.012, 0.004].map((dx) => ell(hx + dx * H - lift2 * 0.002 * H, hy - (0.024 + lift2 * 0.004) * H, 0.006 * H, 0.006 * H, 0, coat))
+    ];
+    let [tx, ty] = [rx - 0.026 * H, ry];
+    let angle = Math.PI / 2 + 0.25 * Math.sin(this.creatureTime * 0.8);
+    for (let i = 0;i < 6; i++) {
+      const nx = tx + Math.cos(angle) * 0.022 * H;
+      const ny = ty + Math.sin(angle) * 0.022 * H;
+      parts.push(cap(tx, ty, nx, ny, lerp(0.009, 0.006, i / 6) * H, lerp(0.009, 0.006, (i + 1) / 6) * H, i === 5 ? this.paint(BLACK2) : coat));
+      angle += 0.12 * Math.sin(this.creatureTime * 0.8 - i * 0.5);
+      [tx, ty] = [nx, ny];
+    }
+    this.shape(parts, this.lighting, 0.7);
+    for (let i = 0;i < 14; i++) {
+      const [sx, sy] = top(lerp(0.008, 0.174, hash(i * 3.3)));
+      this.shape([ell(sx, sy + (hash(i * 7.1) - 0.5) * 0.035 * H, 0.0045 * H, 0.0035 * H, 0, this.paint([0.12, 0.07, 0.03]))], this.lighting, 0);
+    }
+    const glow = this.look.night ? 1.5 : 0;
+    this.add(hx + 0.012 * H, hy - 0.008 * H, 0.8 * glow + 0.01, 1 * glow + 0.01, 0.3 * glow + 0.01);
+  }
+  drawFrog() {
+    const H = this.H;
+    const [x, y] = this.highBranch(this.A - 0.3);
+    const cy = y - 0.026 * H;
+    const green = this.paint([0.25, 0.7, 0.15]);
+    const blink = this.time % 7 < 0.15;
+    this.shape([
+      ell(x, cy, 0.016 * H, 0.01 * H, 0, green),
+      ell(x + 0.012 * H, cy - 0.004 * H, 0.009 * H, 0.008 * H, 0, green),
+      ell(x - 0.012 * H, cy + 0.008 * H, 0.006 * H, 0.003 * H, 0, this.paint([1, 0.5, 0.1])),
+      ell(x + 0.01 * H, cy + 0.009 * H, 0.006 * H, 0.003 * H, 0, this.paint([1, 0.5, 0.1]))
+    ], this.lighting, 0.7);
+    if (!blink)
+      for (const s of [-1, 1])
+        this.shape([ell(x + 0.012 * H + s * 0.005 * H, cy - 0.01 * H, 0.004 * H, 0.004 * H, 0, this.paint([0.95, 0.1, 0.05]))], this.lighting, 0.3);
+  }
+  stepButterfly(b, dt) {
+    const { A } = this;
+    b.wanderT -= dt;
+    if (b.wanderT <= 0 || Math.hypot(b.wx - b.x, b.wy - b.y) < 0.03) {
+      b.wanderT = rand(4, 9);
+      [b.wx, b.wy] = this.openSpot(0.1 * A, 0.9 * A, 0.3, 0.75);
+    }
+    const dx = b.wx - b.x;
+    const dy = b.wy - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    b.x += dx / d * 0.12 * Math.min(1, d / 0.05) * dt;
+    b.y += dy / d * 0.12 * Math.min(1, d / 0.05) * dt;
+  }
+  drawButterfly(b) {
+    const H = this.H;
+    const S = 0.045 * H;
+    const x = b.x * H;
+    const y = (b.y + Math.sin(this.time * 5 + b.phase) * 0.01) * H;
+    const open = 0.25 + 0.75 * Math.abs(Math.sin(this.time * 7 + b.phase));
+    const P = (u, v) => [x + u * S, y + v * S];
+    for (const [scale2, color] of [[1.15, this.paint([0.03, 0.04, 0.08])], [1, this.paint([0.15, 0.45, 1.2])]]) {
+      const parts = [];
+      for (const side of [-1, 1]) {
+        parts.push(ell(...P(side * 0.32 * open, -0.12), 0.32 * open * scale2 * S, 0.22 * scale2 * S, side * 0.3, color));
+        parts.push(ell(...P(side * 0.24 * open, 0.14), 0.22 * open * scale2 * S, 0.18 * scale2 * S, -side * 0.3, color));
+      }
+      this.shape(parts, this.lighting, 0.4);
+    }
+    this.shape([cap(...P(0, -0.2), ...P(0, 0.25), 0.05 * S, 0.04 * S, this.paint(BLACK2))], this.lighting, 0);
+  }
+  drawMotes() {
+    const H = this.H;
+    if (this.look.night) {
+      const together = this.chorus > 0 ? Math.pow(Math.max(0, Math.sin((CHORUS - this.chorus) * TAU)), 3) : 0;
+      for (const f of this.glowers) {
+        const k = Math.max(together, Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6));
+        if (k < 0.02)
+          continue;
+        fireflyLight(this.hdr, this.W, H, f.x * H, f.y * H, k);
+        this.disc(f.x * H, f.y * H, 1.3, 0.9 * k * 2, 1.2 * k * 2, 0.3 * k * 2, 0.6);
+        this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k);
+      }
+      return;
+    }
+    const [lr, lg, lb] = this.look.light;
+    for (const p of this.pollen) {
+      const k = (0.05 + p.s * 0.08) * (1 - p.y);
+      this.splat(p.x * H, p.y * H, lr * k, lg * k, lb * k * 0.8);
+    }
+  }
+  drawLeaf(l) {
+    const H = this.H;
+    const angle = l.angle + sway(l.x, this.time, l.phase, 0.5) * 0.035 * (Math.sin(l.angle) > 0 ? -1 : 1);
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const x = l.x * H;
+    const y = l.y * H;
+    const len = l.length * H;
+    const leaf = this.paint(LEAF);
+    this.shape([cap(x, y, x + dx * len * 0.2, y + dy * len * 0.2, 0.012 * H, 0.009 * H, leaf), ell(x + dx * len * 0.58, y + dy * len * 0.58, len * 0.42, len * 0.13, angle, leaf)], this.lighting);
+    this.shape([cap(x + dx * len * 0.18, y + dy * len * 0.18, x + dx * len * 0.97, y + dy * len * 0.97, 0.004 * H, 0.0015 * H, this.paint([0.3, 0.55, 0.2]))], this.lighting, 0);
+  }
+}
+function mixRGB(a, b, t) {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+function driftMist(hdr, W, H, drift, r, g, b, strength) {
+  for (let y = Math.floor(0.5 * H);y < Math.min(H, Math.ceil(0.96 * H)); y++) {
+    const v = y / H;
+    const band = Math.exp(-(((v - 0.8) / 0.12) ** 2)) * strength;
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const a = band * (0.45 + 0.55 * smoothstep(0.1, 0.3, Math.abs(x / W - 0.5))) * MIST_A[(u - drift) * 90 + v * 40 & RAY_N2 - 1] * (0.3 + 0.7 * MIST_B[(u - drift * 0.6) * 55 - v * 25 + 300 & RAY_N2 - 1]);
+      const o = (y * W + x) * 3;
+      hdr[o] += (r - hdr[o]) * a;
+      hdr[o + 1] += (g - hdr[o + 1]) * a;
+      hdr[o + 2] += (b - hdr[o + 2]) * a;
+    }
+  }
+}
+function buildRays(seed) {
+  const tex = new Float32Array(RAY_N2);
+  for (let k = 0;k < 12; k++) {
+    const c = hash(seed + k * 3.1) * RAY_N2;
+    const w = 8 + hash(seed + k * 7.7) * 40;
+    const amp = 0.35 + hash(seed + k * 1.3) * 0.65;
+    for (let i = 0;i < RAY_N2; i++) {
+      let d = Math.abs(i - c);
+      if (d > RAY_N2 / 2)
+        d = RAY_N2 - d;
+      tex[i] += amp * Math.exp(-(d * d) / (w * w));
+    }
+  }
+  const max = tex.reduce((m, v) => Math.max(m, v), 0);
+  return tex.map((v) => Math.min(1, v / max));
+}
+var jungle = {
+  id: "jungle",
+  name: "Jungle",
+  description: "A misty rainforest with a waterfall, light through the canopy, and a toucan flying by now and then",
+  activity: {
+    calm: "Trees, vines, a waterfall and swaying leaves",
+    lively: "Adds a swinging spider monkey and blue morpho butterflies",
+    teeming: "Adds a jaguar, scarlet macaws, a tree frog and more butterflies"
+  },
+  scrim: {
+    day: [
+      [18, 40, 30],
+      [14, 32, 22],
+      [8, 18, 10]
+    ],
+    sunset: [
+      [40, 22, 22],
+      [24, 14, 16],
+      [8, 6, 6]
+    ],
+    night: [
+      [4, 8, 10],
+      [3, 6, 8],
+      [2, 4, 4]
+    ]
+  },
+  create: (settings) => new Jungle(settings)
+};
+
+// wallpapers/megacity.ts
+var TIME_SCALE8 = 0.35;
+var CREATURE_SPEED8 = 0.25;
+var HORIZON6 = 0.6;
+var CAM = 0.1;
+var ROAD2 = 0.22;
+var LAMPS = 0.26;
+var END = 9;
+var FAR = 16;
+var LAMP_STEP = 0.3;
+var BIKE2 = 0.065;
+var TAIL = 0.36 * BIKE2;
+var FADE2 = 0.4;
+var DOME_Z = 13;
+var DOME = 40;
+var LOOKS8 = {
+  day: {
+    style: "front",
+    light: [1, 0.96, 0.88],
+    sky: [
+      [0, [0.26, 0.44, 0.66]],
+      [0.32, [0.48, 0.6, 0.72]],
+      [HORIZON6, [0.78, 0.77, 0.68]]
+    ],
+    orb: { x: 0.56, y: 0.07, r: 0.028, core: [3, 2.9, 2.5], glow: [1, 0.95, 0.8], near: 0.3, wide: 0.2 },
+    facades: [
+      [0.3, 0.42, 0.56],
+      [0.5, 0.47, 0.42],
+      [0.24, 0.4, 0.46],
+      [0.38, 0.46, 0.6],
+      [0.55, 0.5, 0.42]
+    ],
+    sides: [
+      [0.8, 0.82, 0.86],
+      [0.5, 0.56, 0.7]
+    ],
+    glass: [0.1, 0.16, 0.27],
+    windows: [[0.5, 0.62, 0.72]],
+    lit: 0.03,
+    haze: [
+      [0.66, 0.68, 0.64],
+      [0.46, 0.58, 0.74]
+    ],
+    fog: 5.5,
+    glare: 0.1,
+    edge: [0.3, 0.3, 0.26],
+    uplight: [0, 0, 0],
+    shops: [
+      [0.5, 0.36, 0.26],
+      [0.28, 0.4, 0.44]
+    ],
+    road: [0.2, 0.22, 0.27],
+    walk: [0.38, 0.38, 0.38],
+    paint: [0.8, 0.75, 0.5],
+    lamp: [0, 0, 0],
+    trail: 0.55,
+    beam: [0, 0, 0],
+    tint: [1, 1, 1],
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1.2, 0.5, 0.16],
+    sky: [
+      [0, [0.1, 0.025, 0.11]],
+      [0.22, [0.3, 0.06, 0.2]],
+      [0.42, [0.75, 0.22, 0.24]],
+      [HORIZON6, [1.2, 0.55, 0.18]]
+    ],
+    orb: { x: 0.5, y: 0.45, r: 0.042, core: [2.2, 1, 0.3], glow: [1, 0.4, 0.14], near: 0.4, wide: 0.32 },
+    facades: [
+      [0.09, 0.04, 0.12],
+      [0.07, 0.04, 0.1],
+      [0.12, 0.05, 0.1],
+      [0.06, 0.04, 0.12]
+    ],
+    sides: [
+      [0.8, 0.8, 0.85],
+      [0.8, 0.8, 0.85]
+    ],
+    glass: [0.05, 0.025, 0.06],
+    windows: [
+      [1, 0.58, 0.18],
+      [1, 0.78, 0.32],
+      [0.9, 0.32, 0.45]
+    ],
+    lit: 0.14,
+    haze: [
+      [1, 0.4, 0.14],
+      [0.5, 0.1, 0.28]
+    ],
+    fog: 2.6,
+    glare: 0.9,
+    edge: [0.9, 0.38, 0.12],
+    uplight: [0.08, 0.03, 0.03],
+    shops: [
+      [0.9, 0.45, 0.15],
+      [0.8, 0.2, 0.4]
+    ],
+    road: [0.07, 0.035, 0.06],
+    walk: [0.1, 0.05, 0.08],
+    paint: [0.5, 0.3, 0.2],
+    lamp: [1.1, 0.6, 0.2],
+    trail: 0.9,
+    beam: [0.12, 0.07, 0.05],
+    tint: [0.2, 0.09, 0.12],
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [0.25, 0.9, 0.8],
+    sky: [
+      [0, [0.008, 0.016, 0.05]],
+      [0.28, [0.02, 0.05, 0.11]],
+      [0.48, [0.04, 0.13, 0.15]],
+      [HORIZON6, [0.08, 0.27, 0.21]]
+    ],
+    orb: { x: -2, y: -2, r: 0.01, core: [0, 0, 0], glow: [0, 0, 0], near: 0, wide: 0 },
+    facades: [
+      [0.035, 0.06, 0.14],
+      [0.02, 0.07, 0.11],
+      [0.05, 0.05, 0.14],
+      [0.03, 0.08, 0.16]
+    ],
+    sides: [
+      [0.7, 0.85, 0.85],
+      [0.7, 0.85, 0.85]
+    ],
+    glass: [0.012, 0.025, 0.06],
+    windows: [
+      [0.2, 0.72, 0.95],
+      [1, 0.74, 0.3],
+      [0.25, 0.9, 0.7],
+      [0.42, 0.55, 1]
+    ],
+    lit: 0.42,
+    haze: [
+      [0.07, 0.26, 0.19],
+      [0.025, 0.07, 0.16]
+    ],
+    fog: 3.2,
+    glare: 0.45,
+    edge: [0.05, 0.22, 0.32],
+    uplight: [0.02, 0.08, 0.06],
+    shops: [
+      [1, 0.25, 0.45],
+      [0.2, 0.85, 0.85],
+      [1, 0.55, 0.15]
+    ],
+    road: [0.015, 0.025, 0.05],
+    walk: [0.03, 0.045, 0.08],
+    paint: [0.16, 0.22, 0.2],
+    lamp: [0.3, 1, 0.8],
+    trail: 1.2,
+    beam: [0.05, 0.13, 0.13],
+    tint: [0.14, 0.16, 0.26],
+    night: true
+  }
+};
+var DAYLIGHT7 = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [-0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var TRAIL_EDGE = [1.1, 0.1, 0.04];
+var TRAIL_CORE = [0.8, 0.42, 0.06];
+var TAILLIGHT2 = [1.5, 0.1, 0.05];
+var AMBER2 = [1.5, 0.85, 0.15];
+var GOLD2 = [1.4, 1, 0.4];
+var BEACON = [1.4, 0.08, 0.06];
+var BIKES = [
+  [0.85, 0.07, 0.05],
+  [0.12, 0.14, 0.22],
+  [0.6, 0.58, 0.55],
+  [0.18, 0.32, 0.6],
+  [0.75, 0.42, 0.08],
+  [0.08, 0.08, 0.09]
+];
+var JACKETS = [
+  [0.62, 0.55, 0.42],
+  [0.1, 0.1, 0.12],
+  [0.35, 0.22, 0.12],
+  [0.15, 0.2, 0.32],
+  [0.55, 0.12, 0.1]
+];
+var TRAFFIC2 = { calm: [40, 90], lively: [9, 20], teeming: [2, 5] };
+
+class Megacity extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT7 };
+  weather;
+  city = buildCity();
+  storm = makeStorm();
+  depth = new Float32Array(0);
+  win = new Float32Array(0);
+  fineDepth;
+  flickers = [];
+  beacons = [];
+  searchlights = [];
+  heat = new Float32Array(0);
+  bikes = [];
+  gap = 0;
+  slideWait = rand(60, 120);
+  warm = false;
+  bursts = [];
+  craft = { x: -9, dir: 1, next: rand(10, 30), y: 1.6 };
+  dome = { wait: eggWait() * TIME_SCALE8, t: -1 };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS8[settings.time];
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON6);
+    this.gap = rand(...TRAFFIC2[this.activity]) * 0.3;
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE8;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED8;
+    this.creatureTime += cdt;
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepBikes(dt, cdt);
+    this.bursts = this.bursts.filter((b) => this.time - b.t < 5);
+    if (this.activity === "teeming")
+      this.stepCraft(dt);
+    this.stepDome(dt);
+  }
+  render() {
+    const { W, H, look } = this;
+    this.restore();
+    this.drawWindows();
+    paintStorm(this.hdr, W, H, this.storm, [0.1, 0.12, 0.16], [0.03, 0.04, 0.06], this.gloom);
+    if (this.gloom > 0)
+      this.occlude(0, 0, W - 1, Math.ceil(0.4 * H), Infinity);
+    if (this.dome.t >= 0)
+      this.drawDome();
+    if (this.craft.x > -5)
+      this.drawCraft();
+    if (this.activity !== "calm" && look.beam[0] + look.beam[1] > 0)
+      for (const s of this.searchlights)
+        this.drawSearchlight(s);
+    this.drawBeacons();
+    this.drawTrails();
+    for (const b of [...this.bikes].sort((a, c) => c.z - a.z))
+      this.drawBike(b);
+    this.weather.draw(this.hdr, W, H);
+    this.finish();
+  }
+  visit() {
+    const lanes = [-0.15, -0.06, 0.05, 0.14, -0.1];
+    lanes.forEach((lane, i) => this.bikes.push(this.bike(lane, 0.12 - i * 0.06, i === 0 ? 0 : 1 + i)));
+  }
+  poke(x, y) {
+    if (y > HORIZON6 + 0.03) {
+      this.bikes.push(this.bike(clamp((x - this.A / 2) * (y - HORIZON6) * 0.8, -0.17, 0.17), 0.12, Math.floor(Math.random() * BIKES.length)));
+      return;
+    }
+    this.bursts.push({ x: x * this.H, y: y * this.H, t: this.time });
+  }
+  layout() {
+    const { W, H, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT7 } : { style: "rim", color: look.light, x: this.A / 2 * H, y: (HORIZON6 - 0.15) * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px);
+    this.weather.cover(this.hdr, W, H);
+    const real = this.px === 1;
+    const depth2 = new Float32Array(W * H);
+    const win = new Float32Array(real ? W * H : 0);
+    paintCity(this.hdr, W, H, this.px, this.city, look, depth2, win);
+    this.paintLamps();
+    if (!real) {
+      this.fineDepth = this.shrinkDepth(depth2);
+      return;
+    }
+    this.depth = this.fineDepth ?? depth2;
+    this.fineDepth = undefined;
+    this.win = win;
+    this.heat = new Float32Array(W * H);
+    this.findFlickers();
+    this.findBeacons();
+    this.findSearchlights();
+    if (this.warm)
+      return;
+    this.warm = true;
+    for (let i = 0;i < 300; i++) {
+      this.creatureTime += 0.2 * CREATURE_SPEED8;
+      this.stepBikes(0.2, 0.2 * CREATURE_SPEED8);
+    }
+  }
+  shrinkDepth(depth2) {
+    const S = this.px;
+    const W = this.W / S;
+    const H = this.H / S;
+    const out = new Float32Array(W * H);
+    for (let y = 0;y < H; y++)
+      for (let x = 0;x < W; x++) {
+        let z = Infinity;
+        for (let j = 0;j < S; j++)
+          for (let i = 0;i < S; i++)
+            z = Math.min(z, depth2[(y * S + j) * this.W + x * S + i]);
+        out[y * W + x] = z;
+      }
+    return out;
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  project(X, Y, Z) {
+    return [(this.A / 2 + X / Z) * this.H, (HORIZON6 + (CAM - Y) / Z) * this.H];
+  }
+  paintLamps() {
+    const { H, look } = this;
+    const k = look.lamp[0] + look.lamp[1] + look.lamp[2];
+    if (k <= 0)
+      return;
+    for (let z = LAMP_STEP;z < END; z += LAMP_STEP)
+      for (const side of [-1, 1]) {
+        const [x, y] = this.project(side * (LAMPS - 0.02), 0.11, z);
+        const r = 0.006 / z * H;
+        glow(this.hdr, this.W, this.H, x, y, Math.max(r * 6, 2 * this.px), Math.max(r * 4, 1.5 * this.px), look.lamp, 0.35);
+        glow(this.hdr, this.W, this.H, x, y, Math.max(r * 1.5, 0.8 * this.px), Math.max(r, 0.6 * this.px), look.lamp, 1.6);
+      }
+  }
+  findFlickers() {
+    const { W, H, look } = this;
+    this.flickers = [];
+    if (look.lit < 0.1)
+      return;
+    for (let tries = 0;tries < 400 && this.flickers.length < 10; tries++) {
+      const left = hash(tries * 3.7) < 0.5;
+      const x = Math.floor((left ? hash(tries * 1.3) * 0.3 : 1 - hash(tries * 1.3) * 0.3) * W);
+      const y = Math.floor((0.05 + hash(tries * 2.9) * 0.5) * H);
+      const h = this.win[y * W + x];
+      if (h <= 0 || h < look.lit || this.flickers.some((f) => Math.abs(f.box[0] - x) < 6 && Math.abs(f.box[1] - y) < 6))
+        continue;
+      const pixels = [];
+      const box = [W, H, -1, -1];
+      for (let j = Math.max(0, y - 10);j < Math.min(H, y + 10); j++)
+        for (let i = Math.max(0, x - 10);i < Math.min(W, x + 10); i++) {
+          if (this.win[j * W + i] !== h)
+            continue;
+          pixels.push(j * W + i);
+          box[0] = Math.min(box[0], i);
+          box[1] = Math.min(box[1], j);
+          box[2] = Math.max(box[2], i);
+          box[3] = Math.max(box[3], j);
+        }
+      if (pixels.length < 2 || pixels.length > 40)
+        continue;
+      const c = look.windows[Math.floor(hash(h * 51.3) * look.windows.length)];
+      const k = 0.55 + 0.3 * hash(h * 7.1);
+      this.flickers.push({ pixels: Int32Array.from(pixels), color: [c[0] * k, c[1] * k, c[2] * k], box, phase: hash(tries * 9.1) * 100 });
+    }
+  }
+  findBeacons() {
+    const { W, H } = this;
+    this.beacons = [];
+    for (const m of this.city.beacons) {
+      const [x, y] = this.project(m.x, m.y1, m.z);
+      const i = Math.floor(y) * W + Math.floor(x);
+      if (x < 0 || y < 0 || x >= W || y >= H || this.depth[Math.max(0, i - W)] < m.z - 0.01)
+        continue;
+      this.beacons.push([x, y]);
+    }
+  }
+  findSearchlights() {
+    const { W, H, A } = this;
+    this.searchlights = [];
+    for (const [side, f] of [
+      [-1, 0.28],
+      [1, 0.24]
+    ]) {
+      const x = Math.floor((A / 2 + side * f * Math.min(A / 2, 1.1)) * H);
+      if (x < 0 || x >= W)
+        continue;
+      let y = 0;
+      while (y < H * HORIZON6 && this.depth[y * W + x] === Infinity)
+        y++;
+      if (y >= H * HORIZON6 || y < 2)
+        continue;
+      this.searchlights.push({ x, y, z: this.depth[y * W + x], phase: side > 0 ? 2 : 0 });
+    }
+  }
+  occlude(x0, y0, x1, y1, z) {
+    const { W, H, hdr, background, depth: depth2 } = this;
+    for (let y = Math.max(0, Math.floor(y0));y <= Math.min(H - 1, Math.ceil(y1)); y++)
+      for (let x = Math.max(0, Math.floor(x0));x <= Math.min(W - 1, Math.ceil(x1)); x++) {
+        const i = y * W + x;
+        if (depth2[i] >= z)
+          continue;
+        hdr[i * 3] = background[i * 3];
+        hdr[i * 3 + 1] = background[i * 3 + 1];
+        hdr[i * 3 + 2] = background[i * 3 + 2];
+      }
+  }
+  drawWindows() {
+    const { W, H, hdr, look } = this;
+    for (const f of this.flickers) {
+      if (hash(Math.floor(this.time / 14 + f.phase)) < 0.5)
+        continue;
+      for (const i of f.pixels) {
+        hdr[i * 3] = f.color[0];
+        hdr[i * 3 + 1] = f.color[1];
+        hdr[i * 3 + 2] = f.color[2];
+      }
+      this.touch(...f.box);
+    }
+    const colors = [GOLD2, [1.3, 0.62, 0.2], [0.35, 1.1, 1.3]];
+    for (const b of this.bursts) {
+      const age = this.time - b.t;
+      const R = 0.16 * H;
+      const reach = smoothstep(0, 1.2, age) * R;
+      const fade = 1 - smoothstep(2.5, 5, age);
+      const x0 = Math.max(0, Math.floor(b.x - R));
+      const x1 = Math.min(W - 1, Math.ceil(b.x + R));
+      const y0 = Math.max(0, Math.floor(b.y - R));
+      const y1 = Math.min(H - 1, Math.ceil(b.y + R));
+      this.touch(x0, y0, x1, y1);
+      for (let y = y0;y <= y1; y++)
+        for (let x = x0;x <= x1; x++) {
+          const i = y * W + x;
+          const h = this.win[i];
+          if (h <= 0)
+            continue;
+          const d = Math.hypot(x - b.x, y - b.y);
+          if (d > reach * (0.7 + 0.3 * hash(h * 17.3)) || hash(h * 3.3) > 0.9)
+            continue;
+          const c = colors[hash(h * 51.3) < 0.75 ? 0 : hash(h * 51.3) < 0.9 ? 1 : 2];
+          const k = fade * Math.min(1, 1.6 * (1 - (d / R) ** 2));
+          hdr[i * 3] += (c[0] - hdr[i * 3]) * k;
+          hdr[i * 3 + 1] += (c[1] - hdr[i * 3 + 1]) * k;
+          hdr[i * 3 + 2] += (c[2] - hdr[i * 3 + 2]) * k;
+        }
+    }
+  }
+  drawBeacons() {
+    const { H, look } = this;
+    for (const [i, [x, y]] of this.beacons.entries()) {
+      const k = Math.max(0, Math.sin(this.time * 1.6 + i * 2.3)) ** 6 * (look.night ? 1 : 0.7);
+      if (k < 0.03)
+        continue;
+      glow(this.hdr, this.W, H, x, y, Math.max(1.2, 0.005 * H), Math.max(1.2, 0.005 * H), BEACON, 1.4 * k);
+      glow(this.hdr, this.W, H, x, y, 0.016 * H, 0.016 * H, BEACON, 0.25 * k);
+      this.touch(x - 0.016 * H - 1, y - 0.016 * H - 1, x + 0.016 * H + 1, y + 0.016 * H + 1);
+    }
+  }
+  drawSearchlight(s) {
+    const { W, H, hdr, depth: depth2, look } = this;
+    const angle = -Math.PI / 2 + Math.sin(this.time * 0.07 + s.phase) * 0.55 + (s.x < W / 2 ? 0.2 : -0.2);
+    const ax = Math.cos(angle);
+    const ay = Math.sin(angle);
+    const length = 0.9 * H;
+    const x1 = s.x + ax * length;
+    const y1 = s.y + ay * length;
+    const spread = 0.12;
+    const bx0 = Math.max(0, Math.floor(Math.min(s.x, x1) - length * spread - 2));
+    const bx1 = Math.min(W - 1, Math.ceil(Math.max(s.x, x1) + length * spread + 2));
+    const by0 = Math.max(0, Math.floor(Math.min(s.y, y1)));
+    const by1 = Math.min(H - 1, Math.ceil(s.y));
+    for (let y = by0;y <= by1; y++) {
+      let lo = W;
+      let hi = -1;
+      for (let x = bx0;x <= bx1; x++) {
+        const i = y * W + x;
+        if (depth2[i] <= s.z)
+          continue;
+        const dx = x + 0.5 - s.x;
+        const dy = y + 0.5 - s.y;
+        const along2 = dx * ax + dy * ay;
+        if (along2 <= 0)
+          continue;
+        const across = Math.abs(dx * ay - dy * ax) / (along2 * spread + 1.5);
+        if (across >= 1)
+          continue;
+        const k = (1 - across * across) ** 2 * (1 - along2 / length) * (1 - this.gloom * 0.7);
+        hdr[i * 3] += look.beam[0] * k;
+        hdr[i * 3 + 1] += look.beam[1] * k;
+        hdr[i * 3 + 2] += look.beam[2] * k;
+        lo = Math.min(lo, x);
+        hi = Math.max(hi, x);
+      }
+      if (hi >= lo)
+        this.touch(lo, y, hi, y);
+    }
+  }
+  stepBikes(dt, cdt) {
+    this.gap -= dt;
+    if (this.gap <= 0) {
+      this.gap = rand(...TRAFFIC2[this.activity]);
+      const group = this.activity === "teeming" && Math.random() < 0.4 ? 2 + Math.floor(Math.random() * 3) : 1;
+      for (let i = 0;i < group; i++) {
+        const lane = (Math.random() < 0.5 ? -1 : 1) * rand(0.05, 0.17);
+        const b = this.bike(lane, this.activity === "calm" ? 1.1 : 0.12 - i * 0.05, Math.floor(Math.random() * BIKES.length));
+        this.bikes.push(b);
+      }
+    }
+    if (this.activity === "teeming") {
+      this.slideWait -= dt;
+      const rider = this.bikes.find((b) => b.slide < 0 && b.dir === 0 && b.z < 0.25 && Math.abs(b.lane) > 0.1);
+      if (this.slideWait <= 0 && rider) {
+        this.slideWait = rand(70, 140);
+        rider.dir = -Math.sign(rider.lane);
+        rider.color = BIKES[0];
+        rider.jacket = JACKETS[0];
+      }
+    }
+    for (const b of this.bikes) {
+      if (b.dir !== 0 && b.z >= 0.36 && b.slide < 0)
+        b.slide = 0;
+      if (b.slide >= 0)
+        this.stepSlide(b, cdt);
+      if (b.slide < 0) {
+        b.z += b.speed * (0.2 + b.z) * cdt;
+        b.x = b.lane + b.weave * Math.sin(b.z * 5 + b.phase);
+        b.yaw = Math.atan(b.weave * 5 * Math.cos(b.z * 5 + b.phase));
+        b.lean = -b.yaw * 0.6;
+      }
+      this.recordTrail(b);
+    }
+    this.bikes = this.bikes.filter((b) => b.z < 6.5 || b.trail.length > 0 && this.creatureTime - b.trail[b.trail.length - 1] < FADE2 * 4);
+  }
+  bike(lane, z, i) {
+    return { x: lane, z, lane, weave: this.activity === "calm" ? 0 : rand(0.01, this.activity === "teeming" ? 0.05 : 0.03), phase: rand(0, 6), speed: rand(0.5, 0.7), yaw: 0, lean: 0, color: BIKES[i % BIKES.length], jacket: JACKETS[i % JACKETS.length], trail: [], slide: -1, dir: 0 };
+  }
+  stepSlide(b, cdt) {
+    b.slide += cdt;
+    const s = b.slide;
+    const turn = smoothstep(0, 0.35, s) * (1 - smoothstep(1.35, 1.9, s));
+    const heading = b.dir * 1.35 * turn;
+    const speed = b.speed * lerp(1, 0.08, smoothstep(0.2, 1.1, s)) * (s > 1.35 ? smoothstep(1.35, 2.2, s) * 0.92 + 0.08 : 1);
+    b.x = clamp(b.x + Math.sin(heading) * speed * cdt, -0.19, 0.19);
+    b.z += Math.cos(heading) * speed * cdt;
+    b.yaw = heading * 1.08;
+    b.lean = -b.dir * 0.55 * turn;
+    if (s < 2.3)
+      return;
+    b.slide = -1;
+    b.dir = 0;
+    b.weave = 0;
+    b.lane = b.x;
+  }
+  recordTrail(b) {
+    const H = Math.max(36, this.H);
+    const tx = b.x - Math.sin(b.yaw) * 0.5 * BIKE2;
+    const tz = b.z - Math.cos(b.yaw) * 0.5 * BIKE2;
+    if (tz < 0.08)
+      return;
+    const t = b.trail;
+    const n = t.length;
+    const sx = tx / tz;
+    const sy = -TAIL / tz;
+    if (n && Math.hypot(sx - t[n - 4] / t[n - 2], sy + TAIL / t[n - 2]) * H < 3)
+      return;
+    t.push(tx, TAIL, tz, this.creatureTime);
+    let drop = 0;
+    while (drop < t.length && this.creatureTime - t[drop + 3] > FADE2 * 4)
+      drop += 4;
+    if (drop)
+      t.splice(0, drop);
+  }
+  drawTrails() {
+    const { W, H, hdr, heat, look } = this;
+    const fade = FADE2 * (look.night ? 1 : 0.6);
+    for (const b of this.bikes) {
+      const t = b.trail;
+      if (t.length < 8)
+        continue;
+      const head = [b.x - Math.sin(b.yaw) * 0.5 * BIKE2, TAIL, b.z - Math.cos(b.yaw) * 0.5 * BIKE2, this.creatureTime];
+      const pts = [...t, ...head];
+      const box = [W, H, -1, -1];
+      for (let i = pts.length - 8;i >= 0; i -= 4) {
+        const za = pts[i + 2];
+        const zb = pts[i + 6];
+        if (za < 0.08 || zb < 0.08)
+          continue;
+        const ia = Math.exp(-(this.creatureTime - pts[i + 3]) / fade) * look.trail;
+        const ib = Math.exp(-(this.creatureTime - pts[i + 7]) / fade) * look.trail;
+        if (ia < 0.02 && ib < 0.02)
+          break;
+        const [ax, ay] = this.project(pts[i], pts[i + 1], za);
+        const [bx, by] = this.project(pts[i + 4], pts[i + 5], zb);
+        const ra = this.thick(0.009 / za, 1.2);
+        const rb = this.thick(0.009 / zb, 1.2);
+        const r = Math.max(ra, rb) + 1;
+        const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - r));
+        const y0 = Math.max(0, Math.floor(Math.min(ay, by) - r));
+        const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx) + r));
+        const y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by) + r));
+        if (x1 < x0 || y1 < y0)
+          continue;
+        burn(heat, W, ax, ay, bx, by, ra, rb, ia, ib, x0, y0, x1, y1);
+        this.touch(x0, y0, x1, y1);
+        box[0] = Math.min(box[0], x0);
+        box[1] = Math.min(box[1], y0);
+        box[2] = Math.max(box[2], x1);
+        box[3] = Math.max(box[3], y1);
+      }
+      if (box[2] >= box[0])
+        glowHeat(hdr, heat, W, box[0], box[1], box[2], box[3]);
+    }
+  }
+  drawBike(b) {
+    const { H, look } = this;
+    if (b.z < 0.08 || b.z > 7)
+      return;
+    const cy = Math.cos(b.yaw);
+    const sy = Math.sin(b.yaw);
+    const cl = Math.cos(b.lean);
+    const sl = Math.sin(b.lean);
+    const P = (f, l, u) => {
+      const across = l * cl - u * sl;
+      const up = l * sl + u * cl;
+      return this.project(b.x + (f * sy + across * cy) * BIKE2, up * BIKE2, b.z + (f * cy - across * sy) * BIKE2);
+    };
+    const S = BIKE2 / b.z * H;
+    const r = (k2) => Math.max(k2 * S, this.cells ? 0.6 : 0.3);
+    const body2 = this.paint(b.color);
+    const jacket = this.paint(b.jacket);
+    const tire = this.paint([0.05, 0.05, 0.06]);
+    const side = Math.abs(sy);
+    const wheel = (f) => {
+      const [x, y] = P(f, 0, 0.15);
+      return ell(x, y, Math.max(r(0.055), r(0.15) * side), r(0.15), 0, tire);
+    };
+    const shell = [cap(...P(-0.46, 0, 0.29), ...P(0.22, 0, 0.28), r(0.11), r(0.11), body2), ell(...P(0.32, 0, 0.35), r(0.19) * Math.max(side, 0.6), r(0.12), 0, body2), cap(...P(-0.5, 0, 0.35), ...P(-0.3, 0, 0.39), r(0.07), r(0.08), body2)];
+    const knee = 0.12;
+    const rider = [
+      cap(...P(-0.16, 0, 0.45), ...P(0.16, 0, 0.6), r(0.085), r(0.095), jacket),
+      cap(...P(-0.14, -knee, 0.46), ...P(0.06, -knee, 0.36), r(0.06), r(0.05), jacket),
+      cap(...P(-0.14, knee, 0.46), ...P(0.06, knee, 0.36), r(0.06), r(0.05), jacket),
+      cap(...P(0.16, -0.1, 0.58), ...P(0.36, -0.13, 0.46), r(0.038), r(0.032), jacket),
+      cap(...P(0.16, 0.1, 0.58), ...P(0.36, 0.13, 0.46), r(0.038), r(0.032), jacket),
+      ell(...P(0.28, 0, 0.7), r(0.075), r(0.072), 0, this.paint([0.1, 0.1, 0.12]))
+    ];
+    if (side > 0.5) {
+      this.shape([wheel(-0.36), wheel(0.36)], this.lighting, 0.6);
+      this.shape(shell, this.lighting, 0.8);
+      this.shape(rider, this.lighting, 0.7);
+    }
+    if (side <= 0.5) {
+      this.shape([wheel(0.36)], this.lighting, 0.6);
+      this.shape(shell, this.lighting, 0.8);
+      this.shape(rider, this.lighting, 0.7);
+      this.shape([wheel(-0.36)], this.lighting, 0.6);
+    }
+    const k = Math.max(0.35, look.trail);
+    const [tx, ty] = P(-0.56, 0, 0.36);
+    glow(this.hdr, this.W, H, tx, ty, Math.max(r(0.09), 1.2), Math.max(r(0.04), 1), TAILLIGHT2, 1.6 * k);
+    glow(this.hdr, this.W, H, tx, ty, r(0.35), r(0.2), TAILLIGHT2, 0.25 * k);
+    for (const l of [-0.1, 0.1]) {
+      const [lx, ly] = P(-0.52, l, 0.26);
+      this.disc(lx, ly, Math.max(r(0.035), 0.7), AMBER2[0] * k, AMBER2[1] * k, AMBER2[2] * k, 1);
+    }
+    this.touch(tx - r(0.4) - 2, ty - r(0.3) - 2, tx + r(0.4) + 2, ty + r(0.3) + 2);
+  }
+  stepCraft(dt) {
+    const c = this.craft;
+    if (c.x < -5) {
+      c.next -= dt;
+      if (c.next > 0)
+        return;
+      c.dir = Math.random() < 0.5 ? 1 : -1;
+      c.x = -c.dir * 1.6;
+      c.y = rand(1.45, 1.65);
+      return;
+    }
+    c.x += c.dir * 0.03 * dt;
+    if (Math.abs(c.x) < 1.7)
+      return;
+    c.x = -9;
+    c.next = rand(50, 110);
+  }
+  drawCraft() {
+    const { H, look } = this;
+    const c = this.craft;
+    const Z = 3.2;
+    const [x, y] = this.project(c.x, c.y + Math.sin(this.time * 0.4) * 0.01, Z);
+    const s = 0.2 / Z * H;
+    if (x < -s * 1.2 || x > this.W + s * 1.2)
+      return;
+    const hull = this.paint([0.55, 0.56, 0.6]);
+    const d = c.dir;
+    this.polygon([[x - d * s * 0.85, y], [x - d * s * 1.1, y - s * 0.28], [x - d * s * 1.02, y]], this.paint([0.3, 0.15, 0.15]));
+    this.shape([ell(x, y, s, s * 0.22, 0, hull), ell(x + d * s * 0.15, y + s * 0.24, s * 0.22, s * 0.07, 0, this.paint([0.25, 0.25, 0.3]))], this.lighting, 0.7);
+    const lit = look.night || look.lit > 0.1;
+    const band = lit ? [look.windows[0][0] * 0.8, look.windows[0][1] * 0.8, look.windows[0][2] * 0.8] : this.paint([0.2, 0.25, 0.35]);
+    this.ellipse(x + d * s * 0.1, y + s * 0.02, s * 0.55, Math.max(0.6, s * 0.035), band[0], band[1], band[2], 1);
+    const blink = Math.max(0, Math.sin(this.time * 2.4)) ** 6;
+    if (blink > 0.03) {
+      glow(this.hdr, this.W, H, x - d * s * 1.05, y - s * 0.26, 3, 3, BEACON, 1.5 * blink);
+      glow(this.hdr, this.W, H, x + d * s, y, 3, 3, [0.2, 1.2, 0.4], 1.2 * blink);
+    }
+    this.touch(x - s * 1.2 - 4, y - s * 0.4 - 4, x + s * 1.2 + 4, y + s * 0.4 + 4);
+    this.occlude(x - s * 1.2 - 4, y - s * 0.4 - 4, x + s * 1.2 + 4, y + s * 0.4 + 4, Z);
+  }
+  stepDome(dt) {
+    const d = this.dome;
+    if (d.t < 0) {
+      d.wait -= dt;
+      if (d.wait > 0)
+        return;
+      d.t = 0;
+      return;
+    }
+    d.t += dt;
+    if (d.t < DOME)
+      return;
+    d.t = -1;
+    d.wait = eggWait(true) * TIME_SCALE8;
+  }
+  drawDome() {
+    const { W, H, hdr, depth: depth2, look } = this;
+    const p = this.dome.t / DOME;
+    const R = 3.2 * smoothstep(0, 0.25, p) ** 0.6 / DOME_Z;
+    const fade = smoothstep(0, 0.05, p) * (1 - smoothstep(0.55, 1, p));
+    if (R <= 0 || fade <= 0)
+      return;
+    const [cx, cy] = this.project(0, 0, DOME_Z);
+    const r = R * H;
+    const color = look.night ? [0.35, 0.8, 1.3] : [1.1, 0.95, 0.85];
+    const x0 = Math.max(0, Math.floor(cx - r * 2));
+    const x1 = Math.min(W - 1, Math.ceil(cx + r * 2));
+    const y0 = Math.max(0, Math.floor(cy - r * 2));
+    const y1 = Math.min(H - 1, Math.ceil(cy));
+    this.touch(x0, y0, x1, y1);
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        const i = y * W + x;
+        if (depth2[i] < DOME_Z)
+          continue;
+        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / r;
+        const k = (d < 1 ? 0.45 + 0.4 * d ** 4 : 0.5 * (1 - smoothstep(1, 2, d)) ** 3) * fade;
+        hdr[i * 3] += color[0] * k;
+        hdr[i * 3 + 1] += color[1] * k;
+        hdr[i * 3 + 2] += color[2] * k;
+      }
+  }
+}
+function buildCity() {
+  const blocks = [];
+  const masts = [];
+  const beacons = [];
+  const rows = [
+    { xi: [0.31, 0.4], deep: [0.25, 0.7], gap: [0.03, 0.12], h: [0.4, 1.2], z: 0.12, back: 0.3 },
+    { xi: [0.7, 0.85], deep: [0.3, 0.8], gap: [0.04, 0.14], h: [0.9, 2.1], z: 0.3, back: 0.6 },
+    { xi: [1.4, 1.7], deep: [0.5, 1.1], gap: [0.02, 0.08], h: [1.8, 3.4], z: 0.2, back: 40 }
+  ];
+  let seed = 1;
+  for (const side of [-1, 1])
+    rows.forEach((row, k) => {
+      for (let z = row.z;z < END; seed++) {
+        const r = (n) => hash(seed * 7.13 + n * 1.97 + side * 0.31);
+        const deep = lerp(row.deep[0], row.deep[1], r(1));
+        const low2 = k === 0 && (side < 0 && z > 0.55 && z < 1.1 || side > 0 && z > 0.9 && z < 1.7);
+        const plaza = k === 0 && (side < 0 && z > 1.1 && z < 1.48 || side > 0 && z > 1.7 && z < 2.05) || k === 1 && (side < 0 && z > 0.9 && z < 1.6 || side > 0 && z > 1.3 && z < 2.1);
+        const h = low2 ? 0.28 + r(2) * 0.12 : lerp(row.h[0], row.h[1], r(2) ** 1.4);
+        const xi = lerp(row.xi[0], row.xi[1], r(3));
+        const block = { side, xi, xo: xi + row.back, z0: z, z1: z + deep, y0: 0, y1: h, color: Math.floor(r(4) * 97), seed, pu: lerp(0.014, 0.026, r(5)), pv: lerp(0.016, 0.028, r(6)), du: [0.55, 1, 0.4, 0.6][Math.floor(r(7) * 4)], dv: [0.55, 0.5, 1, 0.6][Math.floor(r(7) * 4)], shop: k === 0 ? Math.floor(r(8) * 7) : -1 };
+        if (!plaza)
+          blocks.push(block);
+        if (!plaza && !low2 && r(9) < 0.45) {
+          const inset = Math.min(0.06, deep * 0.15);
+          const top = h + lerp(0.06, 0.25, r(10));
+          blocks.push({ ...block, xi: xi + inset, xo: block.xo - inset, z0: z + inset, z1: z + deep - inset, y0: h, y1: top, seed: seed + 0.5 });
+          if (r(11) < 0.6) {
+            const mast = { x: side * (xi + inset + 0.03), z: z + deep * 0.5, r: 0.004, y0: top, y1: top + lerp(0.1, 0.35, r(12)) };
+            masts.push(mast);
+            if (r(13) < 0.7)
+              beacons.push(mast);
+          }
+        }
+        z += deep + lerp(row.gap[0], row.gap[1], r(14)) * (k === 0 && r(15) < 0.2 ? 2.5 : 1);
+      }
+    });
+  for (let z = LAMP_STEP;z < END; z += LAMP_STEP)
+    for (const side of [-1, 1])
+      masts.push({ x: side * LAMPS, z, r: 0.0025, y0: 0, y1: 0.11 });
+  const towers = [
+    {
+      x: -0.52,
+      z: 1.3,
+      tiers: [
+        [0.15, 0, 0.5],
+        [0.13, 0.5, 0.64],
+        [0.105, 0.64, 0.75],
+        [0.08, 0.75, 0.83],
+        [0.05, 0.83, 0.88]
+      ],
+      color: 2,
+      seed: 900
+    },
+    {
+      x: 0.48,
+      z: 1.9,
+      tiers: [
+        [0.11, 0, 1.05],
+        [0.08, 1.05, 1.16],
+        [0.045, 1.16, 1.24]
+      ],
+      color: 0,
+      seed: 901
+    }
+  ];
+  const spire = { x: 0.48, z: 1.9, r: 0.008, y0: 1.24, y1: 1.65 };
+  const crown = { x: -0.52, z: 1.3, r: 0.006, y0: 0.88, y1: 1.02 };
+  masts.push(spire, crown, { x: -0.55, z: 1.27, r: 0.004, y0: 0.83, y1: 0.94 }, { x: -0.49, z: 1.27, r: 0.004, y0: 0.83, y1: 0.94 });
+  beacons.push(spire, crown);
+  return { blocks, towers, masts, beacons };
+}
+var MAX_HITS = 256;
+var hitZ = new Float64Array(MAX_HITS);
+var hitY0 = new Float64Array(MAX_HITS);
+var hitY1 = new Float64Array(MAX_HITS);
+var hitKind = new Int32Array(MAX_HITS);
+var hitRef = new Int32Array(MAX_HITS);
+var hitU = new Float64Array(MAX_HITS);
+var hitDu = new Float64Array(MAX_HITS);
+var hitCover = new Float64Array(MAX_HITS);
+var hitN = new Float64Array(MAX_HITS);
+var order = new Int32Array(MAX_HITS);
+var shade = new Float64Array(3);
+function paintCity(hdr, W, H, px, city2, look, depth2, win) {
+  const cx = W / H / 2;
+  for (let x = 0;x < W; x++) {
+    const dx = (x + 0.5) / H - cx;
+    const n = columnHits(city2, dx, H, px);
+    for (let y = 0;y < H; y++) {
+      const sy = (y + 0.5) / H;
+      const up = HORIZON6 - sy;
+      const ground = up < 0 ? CAM / -up : Infinity;
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let rest = 1;
+      let z = Infinity;
+      let window = 0;
+      for (let k = 0;k < n && rest > 0.004; k++) {
+        const j = order[k];
+        const Z = hitZ[j];
+        if (Z > ground)
+          break;
+        const Y = CAM + up * Z;
+        const dv = Z / H;
+        const cover = clamp((hitY1[j] - Y) / dv + 0.5, 0, 1) * clamp((Y - hitY0[j]) / dv + 0.5, 0, 1) * hitCover[j];
+        if (cover <= 0)
+          continue;
+        const w = surface(city2, look, j, Y, Z, dv, dx, sy);
+        r += rest * cover * shade[0];
+        g += rest * cover * shade[1];
+        b += rest * cover * shade[2];
+        if (rest > 0.5 && rest * (1 - cover) <= 0.5) {
+          z = Z;
+          window = cover > 0.9 ? w : 0;
+        }
+        rest *= 1 - cover;
+      }
+      const o = (y * W + x) * 3;
+      if (rest > 0.004 && up < 0) {
+        road(look, dx * ground, ground, H, sy, dx);
+        hdr[o] = shade[0];
+        hdr[o + 1] = shade[1];
+        hdr[o + 2] = shade[2];
+        if (rest > 0.5)
+          z = ground;
+      }
+      hdr[o] = r + rest * hdr[o];
+      hdr[o + 1] = g + rest * hdr[o + 1];
+      hdr[o + 2] = b + rest * hdr[o + 2];
+      depth2[y * W + x] = z;
+      if (win.length)
+        win[y * W + x] = window;
+    }
+  }
+}
+function columnHits(city2, dx, H, px) {
+  let n = 0;
+  const add = (Z, y0, y1, kind, ref, u, du, cover, nrm) => {
+    if (n >= MAX_HITS || Z <= 0.02)
+      return;
+    hitZ[n] = Z;
+    hitY0[n] = y0;
+    hitY1[n] = y1;
+    hitKind[n] = kind;
+    hitRef[n] = ref;
+    hitU[n] = u;
+    hitDu[n] = du;
+    hitCover[n] = cover;
+    hitN[n] = nrm;
+    n++;
+  };
+  const side = Math.sign(dx);
+  const ax = Math.abs(dx);
+  const blocks = city2.blocks;
+  for (let i = 0;i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.side !== side)
+      continue;
+    const X = ax * b.z0;
+    if (X >= b.xi && X <= b.xo)
+      add(b.z0, b.y0, b.y1, 0, i, X - b.xi, b.z0 / H, 1, 0);
+    if (X >= b.xi)
+      continue;
+    const Z = b.xi / ax;
+    if (Z <= b.z1)
+      add(Z, b.y0, b.y1, 1, i, Z - b.z0, Z * Z / (b.xi * H), 1, 0);
+  }
+  const towers = city2.towers;
+  for (let i = 0;i < towers.length; i++) {
+    const t = towers[i];
+    for (const [r, y0, y1] of t.tiers) {
+      const a = dx * dx + 1;
+      const bq = -2 * (dx * t.x + t.z);
+      const c = t.x * t.x + t.z * t.z - r * r;
+      const disc = bq * bq - 4 * a * c;
+      const pass = (t.x - dx * t.z) / Math.sqrt(a);
+      const edge = clamp((r - Math.abs(pass)) / (t.z / H) + 0.5, 0, 1);
+      if (edge <= 0)
+        continue;
+      const Z = disc > 0 ? (-bq - Math.sqrt(disc)) / (2 * a) : (dx * t.x + t.z) / a;
+      const across = clamp(-pass / r, -1, 1);
+      add(Z, y0, y1, 2, i, across, Z / H, edge, Math.asin(across) * r);
+    }
+  }
+  const masts = city2.masts;
+  for (let i = 0;i < masts.length; i++) {
+    const m = masts[i];
+    const d = Math.abs(dx * m.z - m.x) / m.z;
+    const radius = Math.max(m.r / m.z, 0.6 * px / H);
+    const cover = clamp((radius - d) * H + 0.5, 0, 1) * Math.min(1, m.r / m.z / radius + 0.3);
+    if (cover > 0)
+      add(m.z, m.y0, m.y1, 3, i, 0, 0, cover, 0);
+  }
+  add(END, 0, farHeight(dx * END, 0.16, 0.3, 0.75, 3), 4, 0, dx * END, END / H, 1, 0);
+  add(FAR, 0, farHeight(dx * FAR, 0.3, 0.8, 1.6, 11), 5, 0, dx * FAR, FAR / H, 1, 0);
+  for (let k = 0;k < n; k++) {
+    let m = k;
+    order[k] = k;
+    while (m > 0 && hitZ[order[m - 1]] > hitZ[k]) {
+      order[m] = order[m - 1];
+      m--;
+    }
+    order[m] = k;
+  }
+  return n;
+}
+function farHeight(X, width, low2, span, seed) {
+  const i = Math.floor(X / width);
+  return low2 + hash(i * 1.37 + seed) ** 1.5 * span;
+}
+function surface(city2, look, j, Y, Z, dv, dx, sy) {
+  const kind = hitKind[j];
+  if (kind === 3) {
+    const c2 = look.facades[0];
+    shade[0] = c2[0] * 0.5;
+    shade[1] = c2[1] * 0.5;
+    shade[2] = c2[2] * 0.6;
+    return fog(look, Y, Z, dx, sy, 0);
+  }
+  if (kind >= 4) {
+    const k = kind === 4 ? 0 : 1;
+    const c2 = look.facades[k];
+    const u2 = hitU[j];
+    const w2 = windows(look, u2, Y - 0.03, hitDu[j], dv, 0.03, 0.025, 0.5, 0.5, 300 + k * 50 + Math.floor(u2 / 0.16) * 3, 1, 0.75);
+    shade[0] = lerp(c2[0], shade[0], w2);
+    shade[1] = lerp(c2[1], shade[1], w2);
+    shade[2] = lerp(c2[2], shade[2], w2);
+    return fog(look, Y, Z, dx, sy, 0);
+  }
+  if (kind === 2) {
+    const t = city2.towers[hitRef[j]];
+    const across = hitU[j];
+    const facing = Math.sqrt(Math.max(0, 1 - across * across));
+    const c2 = look.facades[t.color % look.facades.length];
+    const du2 = hitDu[j] / Math.max(0.25, facing);
+    const tier = t.tiers.find(([, y0, y1]) => Y >= y0 - dv && Y <= y1 + dv) ?? t.tiers[0];
+    const w2 = windows(look, hitN[j] + 1, Y - tier[1] - 0.012, du2, dv, 0.016, 0.02, 0.5, 0.6, t.seed + tier[1] * 100, tier[2] - tier[1] - 0.03, 1);
+    const lit2 = look.style === "front" ? 0.75 + 0.35 * clamp(-across * 0.8 + 0.4, 0, 1) : 0.75 + 0.25 * facing;
+    const k = lit2 * (1 - w2);
+    shade[0] = c2[0] * k + shade[0] * w2;
+    shade[1] = c2[1] * k + shade[1] * w2;
+    shade[2] = c2[2] * k + shade[2] * w2;
+    const ring = smoothstep(0.016, 0.008, tier[2] - Y) * (look.night ? 1 : look.lit > 0.1 ? 0.6 : 0.15);
+    const rim = smoothstep(0.65, 0.95, Math.abs(across));
+    const ringColor = look.windows[t.seed % look.windows.length];
+    for (let i = 0;i < 3; i++)
+      shade[i] += ringColor[i] * ring * 0.9 + look.edge[i] * rim * 0.8 + look.uplight[i] * Math.exp(-Y / 0.3);
+    return fog(look, Y, Z, dx, sy, 0);
+  }
+  const b = city2.blocks[hitRef[j]];
+  const front = kind === 0;
+  const u = hitU[j];
+  const du = hitDu[j];
+  const c = look.facades[b.color % look.facades.length];
+  const lit = front ? [1, 1, 1] : look.sides[b.side < 0 ? 0 : 1];
+  const extent = front ? b.xo - b.xi : b.z1 - b.z0;
+  const v = Y - b.y0;
+  const height = b.y1 - b.y0;
+  const zone = smoothstep(0.004, 0.01, u) * smoothstep(0.004, 0.01, extent - u) * (b.y0 > 0 ? 1 : smoothstep(0.035, 0.045, v));
+  const w = windows(look, u - 0.008, v - 0.045, du, dv, b.pu, b.pv, b.du, b.dv, b.seed * 3 + (front ? 0 : 1), height - 0.065, zone);
+  const grade2 = look.style === "front" ? 0.9 + 0.15 * smoothstep(0, 1.5, Y) : 1;
+  for (let i = 0;i < 3; i++)
+    shade[i] = c[i] * lit[i] * grade2 * (1 - w) + shade[i] * w;
+  if (b.shop >= 0 && b.y0 === 0 && !front) {
+    const s = look.shops[b.shop % look.shops.length];
+    const k = smoothstep(0.034, 0.028, v) * smoothstep(0.004, 0.008, v) * (0.5 + 0.5 * hash(Math.floor(u / 0.05) + b.seed)) * (b.shop < 4 ? 1 : 0.3);
+    for (let i = 0;i < 3; i++)
+      shade[i] = lerp(shade[i], s[i], k);
+  }
+  const corner = Math.max(smoothstep(1.6, 0.4, u / du), smoothstep(1.6, 0.4, (b.y1 - Y) / dv) * 0.7);
+  for (let i = 0;i < 3; i++)
+    shade[i] += look.edge[i] * corner + look.uplight[i] * Math.exp(-Y / 0.3);
+  return fog(look, Y, Z, dx, sy, window.lit);
+}
+var window = { lit: 0 };
+function windows(look, u, v, du, dv, pu, pv, duty, dutyV, seed, top, zone) {
+  window.lit = 0;
+  const cover = zone * pulse(u, du, pu, duty) * pulse(v, dv, pv, dutyV) * smoothstep(0, dv, top - v);
+  if (cover <= 0)
+    return 0;
+  const iu = Math.floor(u / pu);
+  const iv = Math.floor(v / pv);
+  const h = hash2(seed * 0.731 + iu * 1.31, iv * 2.17 + seed * 0.11);
+  const share = look.lit * (0.35 + 1.3 * hash2(Math.floor(iv / 4) + seed * 0.37, Math.floor(iu / 5) * 0.7));
+  const lit = h < share;
+  const pick = look.windows[Math.floor(hash(h * 91.7 + seed) * look.windows.length)];
+  const glow = 0.5 + 0.45 * hash(h * 37.1);
+  const near2 = lit ? [pick[0] * glow, pick[1] * glow, pick[2] * glow] : look.glass;
+  const avg = look.windows[Math.floor(hash(seed * 3.3) * look.windows.length)];
+  const m = smoothstep(0.45, 1.3, Math.max(du / pu, dv / pv));
+  const a = Math.min(1, look.lit * 1.1) * 0.7;
+  for (let i = 0;i < 3; i++)
+    shade[i] = lerp(near2[i], lerp(look.glass[i], avg[i] * 0.7, a), m);
+  if (m < 0.3 && cover > 0.5)
+    window.lit = h || 0.000001;
+  return cover;
+}
+function pulse(x, w, p, duty) {
+  if (duty >= 1)
+    return 1;
+  const a = (x - w / 2) / p;
+  const b = (x + w / 2) / p;
+  const F = (s) => Math.floor(s) * duty + Math.min(s - Math.floor(s), duty);
+  return b - a < 0.000001 ? a - Math.floor(a) < duty ? 1 : 0 : (F(b) - F(a)) / (b - a);
+}
+function fog(look, Y, Z, dx, sy, id) {
+  const k = 1 - Math.exp(-Z / look.fog);
+  const t = smoothstep(0.1, 1.6, Y);
+  const g = 1 + look.glare * Math.exp(-(dx * dx) / 0.05 - (sy - HORIZON6 + 0.08) ** 2 / 0.03);
+  for (let i = 0;i < 3; i++)
+    shade[i] = lerp(shade[i], lerp(look.haze[0][i], look.haze[1][i], t) * g, k * 0.92);
+  return id;
+}
+function road(look, X, Z, H, sy, dx) {
+  const ax = Math.abs(X);
+  const onRoad = ax < ROAD2;
+  const c = onRoad ? look.road : look.walk;
+  for (let i = 0;i < 3; i++)
+    shade[i] = c[i];
+  const fx = Z / H;
+  const fz = Z * Z / (CAM * H);
+  const line = (at, width) => clamp((width / 2 - Math.abs(ax - at)) / fx + 0.5, 0, 1);
+  const dash = pulse(Z, fz, 0.16, 0.45);
+  const paint = Math.min(1, line(0.11, 0.005) * dash + line(ROAD2 - 0.012, 0.006) + line(0.005, 0.003));
+  const p = paint * smoothstep(4.5, 1.5, Z);
+  for (let i = 0;i < 3; i++)
+    shade[i] = lerp(shade[i], look.paint[i], p);
+  const curb = clamp((0.006 - Math.abs(ax - ROAD2)) / fx + 0.5, 0, 1);
+  for (let i = 0;i < 3; i++)
+    shade[i] = lerp(shade[i], look.walk[i] * 1.3, curb);
+  const k = Math.round(Z / LAMP_STEP);
+  let pool = 0;
+  for (let n = Math.max(1, k - 1);n <= k + 1; n++) {
+    const dz = Z - n * LAMP_STEP;
+    const dl = ax - LAMPS + 0.04;
+    pool += Math.exp(-(dz * dz) / 0.006 - dl * dl / 0.012);
+  }
+  const sheen = smoothstep(1.2, 6, Z) * (1 - smoothstep(0, 0.3, Math.abs(dx)));
+  for (let i = 0;i < 3; i++)
+    shade[i] += look.lamp[i] * pool * 0.12 + look.haze[0][i] * sheen * 0.25;
+  fog(look, 0, Z, dx, sy, 0);
+}
+function glow(hdr, W, H, cx, cy, rx, ry, c, k) {
+  for (let y = Math.max(0, Math.floor(cy - ry));y < Math.min(H, Math.ceil(cy + ry)); y++)
+    for (let x = Math.max(0, Math.floor(cx - rx));x < Math.min(W, Math.ceil(cx + rx)); x++) {
+      const d = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry);
+      if (d >= 1)
+        continue;
+      const a = (1 - d) ** 2 * k;
+      const o = (y * W + x) * 3;
+      hdr[o] += c[0] * a;
+      hdr[o + 1] += c[1] * a;
+      hdr[o + 2] += c[2] * a;
+    }
+}
+function burn(heat, W, ax, ay, bx, by, ra, rb, ia, ib, x0, y0, x1, y1) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy || 0.000001;
+  for (let y = y0;y <= y1; y++)
+    for (let x = x0;x <= x1; x++) {
+      const px = x + 0.5 - ax;
+      const py = y + 0.5 - ay;
+      const t = clamp((px * dx + py * dy) / len2, 0, 1);
+      const d = Math.hypot(px - dx * t, py - dy * t);
+      const r = ra + (rb - ra) * t;
+      if (d >= r)
+        continue;
+      const q = 1 - d / r;
+      const h = (ia + (ib - ia) * t) * q * q * (3 - 2 * q);
+      const i = y * W + x;
+      if (h > heat[i])
+        heat[i] = h;
+    }
+}
+function glowHeat(hdr, heat, W, x0, y0, x1, y1) {
+  for (let y = y0;y <= y1; y++)
+    for (let x = x0;x <= x1; x++) {
+      const i = y * W + x;
+      const h = heat[i];
+      if (h <= 0)
+        continue;
+      heat[i] = 0;
+      const o = i * 3;
+      hdr[o] += TRAIL_EDGE[0] * h + TRAIL_CORE[0] * h * h;
+      hdr[o + 1] += TRAIL_EDGE[1] * h + TRAIL_CORE[1] * h * h;
+      hdr[o + 2] += TRAIL_EDGE[2] * h + TRAIL_CORE[2] * h * h;
+    }
+}
+var megacity = {
+  id: "megacity",
+  name: "Megacity",
+  description: "A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light",
+  activity: {
+    calm: "The glowing city, windows coming and going, and a distant bike now and then",
+    lively: "Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky",
+    teeming: "Adds a biker gang streaming through, a sideways slide now and then, and an airship overhead"
+  },
+  scrim: {
+    day: [
+      [24, 34, 46],
+      [28, 36, 42],
+      [22, 24, 30]
+    ],
+    sunset: [
+      [26, 8, 26],
+      [40, 14, 18],
+      [16, 6, 12]
+    ],
+    night: [
+      [2, 6, 16],
+      [3, 12, 16],
+      [3, 5, 12]
+    ]
+  },
+  create: (settings) => new Megacity(settings)
+};
+
+// wallpapers/ocean.ts
+var SURFACE = 0.065;
+var TIME_SCALE9 = 0.35;
+var CREATURE_SCALE = 0.7;
+var CREATURE_SPEED9 = 0.25;
+var CAUS_N = 128;
+var RAY_N3 = 1024;
+var SUNLIGHT = { style: "front", dir: [0.25, -0.85, 0.46] };
+var CAUSTICS = buildCaustics();
+var RAYS_A2 = buildRays2(1);
+var RAYS_B2 = buildRays2(9);
+
+class Ocean extends Canvas {
+  supersample = 1;
+  time = 0;
+  rowCol = new Float32Array(0);
+  rayFade = new Float32Array(0);
+  floorPx = new Float32Array(0);
+  farPx = new Float32Array(0);
+  midPx = new Float32Array(0);
+  midTone = new Float32Array(0);
+  pad = 0;
+  lastA = 1;
+  fish = [];
+  turtle;
+  diver;
+  octopus;
+  kelp = [];
+  particles = [];
+  water = new Float32Array(0);
+  mask = new Float32Array(0);
+  nightRow = new Float32Array(0);
+  snow = [];
+  whale = { x: -9, dir: 1, next: 14, y: 0.4 };
+  sub = { x: -9, y: 0.4, dir: 1, wait: eggWait() * TIME_SCALE9, spin: 0 };
+  activity;
+  timeOfDay;
+  constructor(settings) {
+    super();
+    const activity = settings.activity;
+    this.activity = activity;
+    this.timeOfDay = settings.time;
+    if (activity === "teeming")
+      this.fish.push(this.makeFish("ambient:shark", "shark", [0.3, 1, 0.17, 0.33], { len: 0.64, z: 0.55 }));
+    if (activity !== "calm") {
+      this.fish.push(this.makeFish("ambient:fish", "fish", [0, 0.36, 0.5, 0.76], { len: 0.19, z: 0.35, hue: 0.07, sat: 0.85 }));
+      const zone = [0.74, 1, 0.54, 0.76];
+      const ox = (zone[0] + zone[1]) / 2 * this.A;
+      this.octopus = { x: ox, y: 0.64, z: 0.4, vx: 0, vy: 0, size: 0.1, hue: 0.02, phase: 0, pulse: 0, next: 2, dir: -Math.PI / 2, wx: ox, wy: 0.64, zone };
+    }
+    if (activity === "teeming") {
+      this.turtle = { x: 0.5 * this.A, y: 0.84, z: 0.4, vx: 0, vy: 0, face: -1, turn: -1, heading: -1, phase: 0, wx: 0.5 * this.A, wy: 0.84, wanderT: 0, zone: [0.22, 0.8, 0.78, 0.9] };
+      this.diver = { x: 0.16 * this.A, y: 0.3, z: 0.45, vx: 0, vy: 0, face: 1, turn: 1, heading: 1, phase: 0, breath: 1.5, wx: 0.16 * this.A, wy: 0.3, wanderT: 0, zone: [0.02, 0.3, 0.2, 0.42] };
+    }
+    for (let i = 0;i < 70; i++)
+      this.snow.push({ x: Math.random() * 4, y: Math.random(), z: Math.random(), s: Math.random() });
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE9;
+    this.time += dt;
+    for (const s of this.snow) {
+      s.x += (0.006 + s.z * 0.012) * dt;
+      s.y += (0.004 + s.s * 0.008) * dt + Math.sin(this.time * 0.7 + s.s * 20) * 0.002 * dt;
+      if (s.x > this.A)
+        s.x -= this.A;
+      if (s.y > 1)
+        s.y -= 0.95;
+    }
+    this.stepCreatures(dt * CREATURE_SPEED9);
+    this.stepWhale(dt);
+    this.stepSub(dt, dt * CREATURE_SPEED9);
+    this.stepParticles(dt);
+    this.stepGloom(dt);
+  }
+  visit() {
+    if (this.whale.x < -5)
+      this.whale.next = 0;
+  }
+  poke(x, y) {
+    if (y < SURFACE + 0.02)
+      return;
+    for (let i = 0;i < 6; i++)
+      this.spawn("bubble", x + rand(-0.01, 0.01), y + rand(-0.01, 0.01), rand(-0.02, 0.02), rand(-0.06, -0.02), 6, rand(0.003, 0.007), true);
+    for (const f of this.fish) {
+      const dx2 = f.x - x;
+      const dy2 = f.y - y;
+      const d2 = Math.hypot(dx2, dy2) || 1;
+      if (d2 > 0.45)
+        continue;
+      f.vx += dx2 / d2 * 0.25;
+      f.vy += dy2 / d2 * 0.15;
+      f.wx = clamp(f.x + dx2 / d2 * 0.4, 0.1, this.A - 0.1);
+      f.wy = clamp(f.y + dy2 / d2 * 0.15, f.zone[2], f.zone[3]);
+      f.wanderT = rand(3, 5);
+    }
+    const o = this.octopus;
+    if (!o)
+      return;
+    const dx = o.x - x;
+    const dy = o.y - y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d > 0.45)
+      return;
+    o.vx += dx / d * 0.15;
+    o.vy += dy / d * 0.1;
+    o.pulse = 1;
+    o.next = rand(2.5, 4.5);
+  }
+  stepCreatures(dt) {
+    for (const f of this.fish)
+      this.stepFish(f, dt);
+    const tu = this.turtle;
+    if (tu) {
+      const zx0 = tu.zone[0] * this.A + 0.15;
+      const zx1 = Math.max(zx0, tu.zone[1] * this.A - 0.15);
+      tu.wanderT -= dt;
+      if (tu.wanderT <= 0 || Math.hypot(tu.wx - tu.x, tu.wy - tu.y) < 0.04) {
+        tu.wanderT = rand(8, 14);
+        [tu.wx, tu.wy] = this.openSpot(zx0, zx1, tu.zone[2], tu.zone[3]);
+      }
+      tu.phase += dt * 1.5;
+      const dx = tu.wx - tu.x;
+      const dy = tu.wy - tu.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = 0.03 * (0.5 + 0.9 * Math.max(0, Math.sin(tu.phase))) * Math.min(1, d / 0.1);
+      tu.vx += (dx / d * speed - tu.vx) * Math.min(1, dt * 1.5);
+      tu.vy += (dy / d * speed * 0.5 - tu.vy) * Math.min(1, dt * 1.5);
+      tu.x = clamp(tu.x + tu.vx * dt, zx0, zx1);
+      tu.y = clamp(tu.y + tu.vy * dt, tu.zone[2], tu.zone[3]);
+      steerTurn(tu, dx, 0.03, 1.2, dt);
+    }
+    const dv = this.diver;
+    if (dv) {
+      const zx0 = dv.zone[0] * this.A + 0.12;
+      const zx1 = Math.max(zx0, dv.zone[1] * this.A - 0.12);
+      dv.wanderT -= dt;
+      if (dv.wanderT <= 0 || Math.hypot(dv.wx - dv.x, dv.wy - dv.y) < 0.03) {
+        dv.wanderT = rand(5, 10);
+        [dv.wx, dv.wy] = this.openSpot(zx0, zx1, dv.zone[2], dv.zone[3]);
+      }
+      const dx = dv.wx - dv.x;
+      const dy = dv.wy - dv.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = 0.045 * Math.min(1, d / 0.1);
+      dv.vx += (dx / d * speed - dv.vx) * Math.min(1, dt * 1.2);
+      dv.vy += (dy / d * speed * 0.6 - dv.vy) * Math.min(1, dt * 1.2);
+      dv.x = clamp(dv.x + dv.vx * dt, zx0, zx1);
+      dv.y = clamp(dv.y + dv.vy * dt, dv.zone[2], dv.zone[3]);
+      steerTurn(dv, dx, 0.03, 1.6, dt);
+      dv.phase += dt * (2.2 + Math.hypot(dv.vx, dv.vy) * 40);
+      dv.breath -= dt;
+      if (dv.breath <= 0) {
+        dv.breath = rand(2.4, 3.6);
+        const [mx, my] = this.diverPoint(dv, 0.25, 0.02);
+        for (let i = 0;i < 7; i++)
+          this.spawn("bubble", mx / this.H + rand(-0.004, 0.004), my / this.H, rand(-0.01, 0.01), rand(-0.09, -0.04), 6, rand(0.003, 0.008), true);
+      }
+    }
+    const o = this.octopus;
+    if (o) {
+      o.phase += dt;
+      o.next -= dt;
+      if (o.next <= 0) {
+        if (Math.hypot(o.wx - o.x, o.wy - o.y) < 0.12 || Math.random() < 0.3) {
+          [o.wx, o.wy] = this.openSpot(o.zone[0] * this.A + 0.12, o.zone[1] * this.A - 0.12, o.zone[2] + 0.04, o.zone[3] - 0.04);
+        }
+        const dx = o.wx - o.x;
+        const dy = o.wy - o.y;
+        const d = Math.hypot(dx, dy) || 1;
+        o.vx += dx / d * 0.11;
+        o.vy += dy / d * 0.11 - 0.02;
+        o.pulse = 1;
+        o.next = rand(2.5, 4.5);
+      }
+      o.pulse *= Math.exp(-dt * 2.2);
+      o.vx *= Math.exp(-dt * 0.9);
+      o.vy *= Math.exp(-dt * 0.9);
+      o.vy += 0.006 * dt;
+      o.x = clamp(o.x + o.vx * dt, o.zone[0] * this.A + 0.1, o.zone[1] * this.A - 0.1);
+      o.y = clamp(o.y + o.vy * dt, o.zone[2], Math.min(o.zone[3], this.floorAt(o.x) - 0.12));
+      const speed = Math.hypot(o.vx, o.vy);
+      const want = speed > 0.02 ? Math.atan2(o.vy, o.vx) : -Math.PI / 2;
+      let delta = want - o.dir;
+      while (delta > Math.PI)
+        delta -= TAU;
+      while (delta < -Math.PI)
+        delta += TAU;
+      o.dir += delta * Math.min(1, dt * (speed > 0.02 ? 2.5 : 0.6));
+    }
+  }
+  render() {
+    const night = this.timeOfDay === "night";
+    this.restore();
+    this.drawWater();
+    if (night)
+      this.water.set(this.hdr);
+    this.drawWhale();
+    this.drawSub();
+    if (!night)
+      this.drawSnow(true);
+    const fish = this.fish.toSorted((a, b) => b.z - a.z);
+    for (const f of fish)
+      if (f.z >= 0.5)
+        this.drawCreature(f);
+    for (const k of this.kelp)
+      this.drawKelp(k);
+    if (this.octopus)
+      this.drawOctopus(this.octopus);
+    if (this.diver)
+      this.drawDiver(this.diver);
+    if (this.turtle)
+      this.drawTurtle(this.turtle);
+    for (const f of fish)
+      if (f.z < 0.5)
+        this.drawCreature(f);
+    this.drawParticles();
+    if (!night)
+      this.drawSnow(false);
+    if (this.timeOfDay === "sunset")
+      this.gradeSunset();
+    if (night)
+      this.gradeNight();
+    if (night && this.sub.x > -5)
+      for (const u of [-0.16, 0.02, 0.2]) {
+        const [px, py] = this.subPoint(u, 0);
+        this.disc(px, py, 0.0135 * this.H, 1.4, 0.75, 0.18, 0.85);
+      }
+    this.finish();
+  }
+  gradeSunset() {
+    const { W, H, hdr } = this;
+    for (let y = 0;y < H; y++) {
+      const glow2 = Math.exp(-y / (0.22 * H));
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        hdr[o] = hdr[o] * 1.3 + glow2 * 0.45;
+        hdr[o + 1] = hdr[o + 1] * 0.78 + glow2 * 0.16;
+        hdr[o + 2] = hdr[o + 2] * 0.5 + glow2 * 0.04;
+      }
+    }
+  }
+  gradeNight() {
+    const { W, H, hdr } = this;
+    const mx = 0.3 * this.A * H;
+    const my = SURFACE * H;
+    gradeNightWater(hdr, this.water, this.mask, this.rowCol, this.nightRow, W, H, mx, my);
+    for (const [i, u, v] of [[0, 0.09, 0.74], [1, 0.9, 0.84]]) {
+      const cx = (u + Math.sin(this.time * 0.05 + i * 2) * 0.02) * this.A * H;
+      const cy = (v + Math.sin(this.time * 0.07 + i) * 0.015) * H;
+      const breathe = 0.85 + 0.15 * Math.sin(this.time * 0.4 + i * 3);
+      lightPool(hdr, W, H, cx, cy, 0.26 * H, 0.12 * H, [0.12, 1, 0.75], 1.4 * breathe, 0.11 * breathe);
+      for (let j = 0;j < 16; j++) {
+        const a = hash2(i, j) * TAU;
+        const r = Math.sqrt(hash2(j, i + 7));
+        const px = cx + Math.cos(a + this.time * 0.03) * r * 0.24 * H;
+        const py = cy + Math.sin(a + this.time * 0.03) * r * 0.12 * H;
+        const k = 0.35 * Math.pow(0.5 + 0.5 * Math.sin(this.time * 1.2 + j * 2.3 + i), 2) * (1 - r * 0.6);
+        this.add(px, py, 0.1 * k, 0.95 * k, 0.65 * k);
+      }
+    }
+    for (const p of this.snow) {
+      const pulse2 = Math.pow(0.5 + 0.5 * Math.sin(this.time * 1.5 + p.s * 50), 3);
+      const k = (0.12 + p.s * 0.45) * pulse2;
+      const green = p.s > 0.5;
+      if (p.s > 0.75)
+        this.disc(p.x * H, p.y * H, 1.2, 0.1 * k * 4, (green ? 0.9 : 0.6) * k * 4, (green ? 0.6 : 1) * k * 4, 0.5);
+      this.splat(p.x * H, p.y * H, 0.1 * k, (green ? 0.9 : 0.6) * k, (green ? 0.6 : 1) * k);
+    }
+    if (this.diver)
+      this.drawTorch(this.diver, 4, [1, 0.55, 0.15]);
+  }
+  layout() {
+    const { W, H, A } = this;
+    this.rowCol = new Float32Array(H * 3);
+    this.rayFade = new Float32Array(H);
+    const top = [0.1, 0.5, 0.58];
+    const mid = [0.018, 0.17, 0.27];
+    const deep = [0.004, 0.028, 0.07];
+    for (let y = 0;y < H; y++) {
+      const v = y / H;
+      const upper = v < 0.42;
+      const k = upper ? Math.pow(smoothstep(0, 0.42, v), 0.7) : smoothstep(0.42, 1, v);
+      const from = upper ? top : mid;
+      const to = upper ? mid : deep;
+      for (let c = 0;c < 3; c++)
+        this.rowCol[y * 3 + c] = lerp(from[c], to[c], k);
+      this.rayFade[y] = Math.pow(1 - smoothstep(0.02, 0.92, v), 1.6) * 0.42;
+    }
+    if (this.timeOfDay === "night") {
+      this.water = new Float32Array(W * H * 3);
+      this.mask = new Float32Array(W * H);
+      this.nightRow = new Float32Array(H * 3);
+      const surface2 = [0.01, 0.13, 0.32];
+      const mid2 = [0.004, 0.045, 0.13];
+      const deep2 = [0.003, 0.022, 0.075];
+      for (let y = 0;y < H; y++) {
+        const v = y / H;
+        const upper = v < 0.45;
+        const k = upper ? Math.pow(smoothstep(0.03, 0.45, v), 0.8) : smoothstep(0.45, 1, v);
+        for (let c = 0;c < 3; c++)
+          this.nightRow[y * 3 + c] = lerp(upper ? surface2[c] : mid2[c], upper ? mid2[c] : deep2[c], k);
+      }
+    }
+    this.floorPx = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      this.floorPx[x] = (0.86 + (fbm1(u * 2.1, 3) - 0.5) * 0.08 + Math.sin(u * 6.3) * 0.006) * H;
+    }
+    this.pad = Math.ceil(H * 0.2);
+    this.farPx = new Float32Array(W + this.pad * 2);
+    this.midPx = new Float32Array(W + this.pad * 2);
+    this.midTone = new Float32Array(W + this.pad * 2);
+    for (let x = 0;x < W + this.pad * 2; x++) {
+      const u = (x - this.pad) / H;
+      const spires = Math.pow(noise1(u * 4.2, 9), 5) * 0.32;
+      this.farPx[x] = (0.56 - (fbm1(u * 1.4, 7) - 0.5) * 0.3 - spires) * H;
+      const arches = Math.pow(noise1(u * 6.5, 12), 7) * 0.25;
+      this.midPx[x] = (0.72 - (fbm1(u * 2.3, 11) - 0.5) * 0.2 - arches) * H;
+      this.midTone[x] = this.timeOfDay === "day" ? 0.6 + 0.55 * smoothstep(0.3, 0.7, fbm1(u * 3.1, 17)) : 1;
+    }
+    this.kelp = this.activity === "teeming" ? [[0.05, 0.28], [0.5, 0.21], [0.96, 0.3]].map(([x, height]) => ({ x: x * A, height, phase: x * 9 })) : [];
+    for (const f of this.fish)
+      f.x = clamp(f.x * (A / this.lastA), 0.1, A - 0.1);
+    this.lastA = A;
+  }
+  makeFish(id, species, zone, look) {
+    const h = hashString(id);
+    const side = h > 0.5 ? 1 : -1;
+    const x = (zone[0] + zone[1]) / 2 * this.A;
+    const y = (zone[2] + zone[3]) / 2;
+    return { species, x, y, vx: 0, vy: 0, face: side, turn: side, heading: side, pitch: 0, hue: 0, sat: 0, ...look, phase: h * 10, wx: x, wy: y, wanderT: 0, zone };
+  }
+  zScale(f) {
+    return (1.12 - 0.45 * f.z) * CREATURE_SCALE;
+  }
+  fogAt(py) {
+    const y = clamp(py | 0, 0, this.H - 1) * 3;
+    return [this.rowCol[y], this.rowCol[y + 1], this.rowCol[y + 2]];
+  }
+  floorAt(xu) {
+    const px = clamp(Math.round(xu * this.H), 0, this.W - 1);
+    return this.floorPx[px] / this.H;
+  }
+  stepFish(f, dt) {
+    const L = f.len * this.zScale(f);
+    const tx = f.wx;
+    const ty = f.wy;
+    const speed = 0.07;
+    f.wanderT -= dt;
+    if (f.wanderT <= 0 || Math.hypot(f.wx - f.x, f.wy - f.y) < 0.05) {
+      f.wanderT = rand(3, 8);
+      const m2 = f.len * this.zScale(f) * 0.5;
+      [f.wx, f.wy] = this.openSpot(f.zone[0] * this.A + m2, Math.max(f.zone[0] * this.A + m2, f.zone[1] * this.A - m2), f.zone[2], f.zone[3]);
+    }
+    const dx = tx - f.x;
+    const dy = ty - f.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const arrive = Math.min(1, d / 0.15);
+    let dvx = dx / d * speed * arrive;
+    let dvy = dy / d * speed * arrive * 0.7;
+    for (const o of this.fish) {
+      if (o === f)
+        continue;
+      const ox = f.x - o.x;
+      const oy = f.y - o.y;
+      const od = Math.hypot(ox, oy);
+      const min = (L + o.len * this.zScale(o)) * 0.55;
+      if (od < min && od > 0.0001) {
+        dvx += ox / od * (min - od) * 2.5;
+        dvy += oy / od * (min - od) * 2.5;
+      }
+    }
+    const top = SURFACE + 0.08;
+    const bottom = this.floorAt(f.x) - 0.07;
+    if (f.y < top)
+      dvy += (top - f.y) * 4;
+    if (f.y > bottom)
+      dvy -= (f.y - bottom) * 4;
+    if (f.x < 0.08)
+      dvx += (0.08 - f.x) * 4;
+    if (f.x > this.A - 0.08)
+      dvx -= (f.x - this.A + 0.08) * 4;
+    const m = L * 0.5;
+    const zx0 = f.zone[0] * this.A + m;
+    const zx1 = f.zone[1] * this.A - m;
+    if (f.x < zx0)
+      dvx += (zx0 - f.x) * 3;
+    if (f.x > zx1)
+      dvx -= (f.x - zx1) * 3;
+    if (f.y < f.zone[2])
+      dvy += (f.zone[2] - f.y) * 3;
+    if (f.y > f.zone[3])
+      dvy -= (f.y - f.zone[3]) * 3;
+    f.vx += (dvx - f.vx) * Math.min(1, dt * 1.6);
+    f.vy += (dvy - f.vy) * Math.min(1, dt * 1.6);
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    steerTurn(f, dvx, 0.015, f.species === "shark" ? 1.9 : 2.2, dt);
+    const pitch = clamp(Math.atan2(f.vy, Math.abs(f.vx) + 0.02), -0.5, 0.5);
+    f.pitch = lerp(f.pitch, pitch, 1 - Math.exp(-dt * 4));
+    f.phase += dt * (3 + Math.hypot(f.vx, f.vy) / L * 4.5) * 0.6;
+  }
+  stepWhale(dt) {
+    const w = this.whale;
+    if (w.x < -5) {
+      w.next -= dt;
+      if (w.next > 0)
+        return;
+      w.dir = Math.random() < 0.5 ? 1 : -1;
+      w.x = w.dir > 0 ? -0.9 : this.A + 0.9;
+      w.y = this.openRow(0.22, 0.48);
+      return;
+    }
+    w.x += w.dir * 0.055 * dt;
+    if (w.x < -1 || w.x > this.A + 1) {
+      w.x = -9;
+      w.next = rand(40, 75);
+    }
+  }
+  stepSub(dt, cdt) {
+    const s = this.sub;
+    if (s.x < -5) {
+      s.wait -= dt;
+      if (s.wait > 0)
+        return;
+      s.dir = Math.random() < 0.5 ? 1 : -1;
+      s.x = s.dir > 0 ? -0.3 : this.A + 0.3;
+      s.y = this.openRow(0.28, 0.44);
+      return;
+    }
+    s.x += s.dir * 0.1 * cdt;
+    s.spin += cdt * 25;
+    if (Math.random() < cdt * 6) {
+      const [bx, by] = this.subPoint(-0.62, 0);
+      this.spawn("bubble", bx / this.H, by / this.H, -s.dir * 0.02, rand(-0.04, -0.02), 5, rand(0.003, 0.006), true);
+    }
+    if (s.x > -0.4 && s.x < this.A + 0.4)
+      return;
+    s.x = -9;
+    s.wait = eggWait(true) * TIME_SCALE9;
+  }
+  subPoint(u, v) {
+    const s = this.sub;
+    const L = 0.3 * this.H;
+    return [s.x * this.H + u * s.dir * L, (s.y + Math.sin(this.time * 0.8) * 0.004) * this.H + v * L];
+  }
+  drawSub() {
+    const s = this.sub;
+    if (s.x < -5)
+      return;
+    const L = 0.3 * this.H;
+    const fog2 = this.fogAt(this.subPoint(0, 0)[1]);
+    const tint = (c) => [lerp(c[0], fog2[0], 0.3), lerp(c[1], fog2[1], 0.3), lerp(c[2], fog2[2], 0.3)];
+    const P = (u, v) => this.subPoint(u, v);
+    const yellow = tint([0.95, 0.72, 0.12]);
+    const dark = tint([0.12, 0.12, 0.14]);
+    this.shape([
+      cap(...P(-0.5, 0), ...P(-0.64, -0.13), 0.025 * L, 0.012 * L, yellow),
+      cap(...P(-0.5, 0), ...P(-0.64, 0.13), 0.025 * L, 0.012 * L, yellow),
+      cap(...P(0.08, -0.13), ...P(0.08, -0.3), 0.012 * L, 0.012 * L, dark),
+      cap(...P(0.08, -0.3), ...P(0.15, -0.3), 0.012 * L, 0.01 * L, dark),
+      cap(...P(-0.12, -0.13), ...P(0.12, -0.13), 0.07 * L, 0.06 * L, yellow),
+      cap(...P(-0.4, 0), ...P(0.35, 0), 0.15 * L, 0.15 * L, yellow)
+    ], SUNLIGHT, 0.8);
+    const glass = tint([0.15, 0.4, 0.5]);
+    this.shape([-0.16, 0.02, 0.2].map((u) => ell(...P(u, 0), 0.045 * L, 0.045 * L, 0, glass)), SUNLIGHT, 0.6);
+    this.shape([ell(...P(-0.58, 0), 0.015 * L, 0.11 * L * Math.abs(Math.cos(s.spin)) + 0.01 * L, 0, dark)], SUNLIGHT, 0.3);
+  }
+  spawn(kind, x, y, vx, vy, life, size = 0.005, keep = false) {
+    if (this.particles.length > 4000)
+      return;
+    if (!keep && Math.random() < 0.65)
+      return;
+    this.particles.push({ kind, x, y, vx, vy, life, max: life, size, seed: Math.random() * 100 });
+  }
+  stepParticles(dt) {
+    const ps = this.particles;
+    let w = 0;
+    for (let i = 0;i < ps.length; i++) {
+      const p = ps[i];
+      p.life -= dt;
+      if (p.kind === "bubble") {
+        const rise = 0.06 + p.size * 9;
+        p.vy += (-rise - p.vy) * Math.min(1, dt * 2);
+        p.vx *= Math.exp(-dt * 1.5);
+        p.x += (p.vx + Math.sin(this.time * 4 + p.seed) * 0.01) * dt;
+        p.y += p.vy * dt;
+        if (p.y < SURFACE + 0.005) {
+          p.life = 0;
+          if (p.size > 0.006)
+            for (let j = 0;j < 3; j++)
+              this.spawn("spark", p.x, SURFACE, rand(-0.05, 0.05), rand(-0.03, 0.02), 0.4);
+        }
+      }
+      if (p.kind === "spark") {
+        p.vx *= Math.exp(-dt * 2.2);
+        p.vy *= Math.exp(-dt * 2.2);
+        p.vy += 0.03 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+      if (p.life > 0 && p.x > -0.5 && p.x < this.A + 0.5)
+        ps[w++] = p;
+    }
+    ps.length = w;
+  }
+  drawParticles() {
+    const H = this.H;
+    for (const p of this.particles) {
+      const x = p.x * H;
+      const y = p.y * H;
+      if (p.kind === "spark") {
+        const k = p.life / p.max;
+        const i = k * k * 2.2;
+        this.splat(x, y, 0.8 * i, i, i);
+        continue;
+      }
+      const R = Math.max(0.8, p.size * H);
+      const fade = Math.min(1, (p.max - p.life) * 4);
+      if (R < 1.3) {
+        this.splat(x, y, 0.25 * fade, 0.4 * fade, 0.45 * fade);
+        continue;
+      }
+      for (let yy = Math.floor(y - R - 1);yy <= y + R + 1; yy++)
+        for (let xx = Math.floor(x - R - 1);xx <= x + R + 1; xx++) {
+          if (xx < 0 || yy < 0 || xx >= this.W || yy >= this.H)
+            continue;
+          const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y);
+          if (d > R + 0.7)
+            continue;
+          const ring = clamp(1 - Math.abs(d - R + 0.4) * 1.1, 0, 1);
+          const i = (yy * this.W + xx) * 3;
+          const a = (0.07 + ring * 0.55) * fade;
+          this.hdr[i] += (0.55 - this.hdr[i]) * a * 0.6 + ring * 0.05;
+          this.hdr[i + 1] += (0.9 - this.hdr[i + 1]) * a * 0.6 + ring * 0.08;
+          this.hdr[i + 2] += (1 - this.hdr[i + 2]) * a * 0.6 + ring * 0.1;
+        }
+      this.add(x - R * 0.35, y - R * 0.35, 1.3 * fade, 1.4 * fade, 1.4 * fade);
+    }
+  }
+  drawWater() {
+    const { W, H, hdr, rowCol, rayFade, farPx, midPx, midTone } = this;
+    const t = this.time;
+    const surf = SURFACE * H;
+    const camFar = Math.round(Math.sin(t * 0.09) * H * 0.04) + this.pad;
+    const camMid = Math.round(Math.sin(t * 0.09) * H * 0.08) + this.pad;
+    const cs = 128 / (H * 0.55);
+    const squash = this.cells ? 2 : 4;
+    const overcast = 1 - smoothstep(0, 1, this.gloom) * 0.7;
+    this.touch(0, 0, W - 1, H - 1);
+    for (let y = 0;y < H; y++) {
+      const rf = rayFade[y] * overcast;
+      const ry1 = y * 0.42 + t * 7;
+      const ry2 = y * 0.6 - t * 4.3;
+      const flick = 0.75 + 0.25 * Math.sin(t * 0.8 + y * 0.01);
+      for (let x = 0;x < W; x++) {
+        const i = (y * W + x) * 3;
+        const sl = surf + Math.sin(x * 0.045 + t * 1.3) * 1.4 + Math.sin(x * 0.13 - t * 2.1) * 0.7;
+        if (y < sl) {
+          const cu = (x * 0.6 * cs + t * 9 | 0) & 127;
+          const cv = (y * squash * cs + x * 0.2 * cs - t * 6 | 0) & 127;
+          const c = CAUSTICS[cv * CAUS_N + cu];
+          const win = Math.exp(-Math.pow((x / W - 0.5) * 2.2, 2)) * 0.6;
+          const edge = smoothstep(sl - 3, sl, y);
+          hdr[i] = 0.2 + c * 0.45 + win * 0.5 + edge * 0.4;
+          hdr[i + 1] = 0.55 + c * 0.6 + win * 0.7 + edge * 0.6;
+          hdr[i + 2] = 0.62 + c * 0.6 + win * 0.6 + edge * 0.6;
+          continue;
+        }
+        let r = rowCol[y * 3];
+        let g = rowCol[y * 3 + 1];
+        let b = rowCol[y * 3 + 2];
+        const far = farPx[x + camFar];
+        if (y > far) {
+          const k = smoothstep(far, far + 3, y);
+          r = lerp(r, r * 0.55 + 0.004, k);
+          g = lerp(g, g * 0.62 + 0.016, k);
+          b = lerp(b, b * 0.7 + 0.03, k);
+        }
+        const near2 = midPx[x + camMid];
+        if (y > near2) {
+          const k = smoothstep(near2, near2 + 2, y);
+          const tone = midTone[x + camMid];
+          r = lerp(r, r * 0.35 * tone, k);
+          g = lerp(g, g * 0.42 * tone, k);
+          b = lerp(b, b * 0.5 * tone, k);
+        }
+        const ray = RAYS_A2[(x + ry1 | 0) & 1023] * (0.45 + 0.55 * RAYS_B2[(x * 0.7 + ry2 | 0) & 1023]) * rf * flick;
+        hdr[i] = r + ray * 0.5;
+        hdr[i + 1] = g + ray * 0.85;
+        hdr[i + 2] = b + ray * 0.85;
+      }
+    }
+  }
+  drawWhale() {
+    const w = this.whale;
+    if (w.x < -5)
+      return;
+    const { W, H, hdr } = this;
+    const t = this.time;
+    const L = 1.15 * H;
+    const px = w.x * H;
+    const py = w.y * H + Math.sin(t * 0.3) * H * 0.01;
+    const face = w.dir;
+    const fog2 = this.fogAt(py);
+    const x0 = Math.max(0, Math.floor(px - L * 0.65));
+    const x1 = Math.min(W - 1, Math.ceil(px + L * 0.65));
+    const y0 = Math.max(0, Math.floor(py - L * 0.2));
+    const y1 = Math.min(H - 1, Math.ceil(py + L * 0.3));
+    const phase = t * 0.9;
+    for (let y = y0;y <= y1; y++) {
+      const dy = y + 0.5 - py;
+      for (let x = x0;x <= x1; x++) {
+        const along2 = (x + 0.5 - px) * face;
+        const u = 0.45 - along2 / L;
+        if (u < -0.02 || u > 1.02)
+          continue;
+        const bend = Math.sin(phase - u * 3) * 0.035 * u * u;
+        const v = dy / L - bend;
+        const bu = clamp((u + 0.02) / 0.86, 0, 1);
+        const hb = 0.105 * Math.pow(Math.sin(Math.PI * bu), 0.5) * (1 - u * 0.35);
+        let cov = 0;
+        let shade2 = 0;
+        if (u < 0.86) {
+          const d = (Math.abs(v - hb * 0.15) - hb) * L;
+          cov = clamp(0.5 - d, 0, 1);
+          const n = clamp((v - hb * 0.15) / hb, -1, 1);
+          shade2 = 0.55 + 0.45 * (n > 0.3 ? 1 : 0) * 0.5 + (n > 0.35 && Math.sin(u * 140) > 0.4 ? -0.08 : 0);
+        }
+        if (u > 0.8) {
+          const tt = (u - 0.8) / 0.2;
+          const half = 0.012 + 0.09 * Math.pow(tt, 1.6);
+          const center = Math.sin(phase - 2.4) * 0.03;
+          const d = (Math.abs(v - center) - half) * L;
+          const c2 = clamp(0.5 - d, 0, 1) * (u < 1 ? 1 : 0);
+          if (c2 > cov) {
+            cov = c2;
+            shade2 = 0.6;
+          }
+        }
+        const fu = (u - 0.33) / 0.22;
+        const fv = v - 0.07 - fu * 0.12 - Math.sin(phase * 0.8) * 0.01;
+        if (fu > 0 && fu < 1 && Math.abs(fv) < 0.025 * Math.sin(Math.PI * Math.pow(fu, 0.6))) {
+          cov = Math.max(cov, 0.95);
+          shade2 = 0.5;
+        }
+        if (cov <= 0)
+          continue;
+        const i = (y * W + x) * 3;
+        const a = cov * 0.62;
+        hdr[i] += (fog2[0] * 0.42 * shade2 - hdr[i]) * a;
+        hdr[i + 1] += (fog2[1] * 0.5 * shade2 - hdr[i + 1]) * a;
+        hdr[i + 2] += (fog2[2] * 0.6 * shade2 - hdr[i + 2]) * a;
+      }
+    }
+  }
+  drawSnow(back) {
+    const { H, rayFade } = this;
+    const t = this.time;
+    for (const s of this.snow) {
+      if (back !== s.z > 0.35)
+        continue;
+      const tw = 0.6 + 0.4 * Math.sin(t * 2 + s.s * 40);
+      const x = s.x * H;
+      const y = clamp(Math.floor(s.y * H), 0, H - 1);
+      const ray = RAYS_A2[(x + y * 0.42 + t * 7 | 0) & 1023] * (0.45 + 0.55 * RAYS_B2[(x * 0.7 + y * 0.6 - t * 4.3 | 0) & 1023]) * rayFade[y];
+      const k = (back ? 0.08 + (1 - s.z) * 0.1 : 0.25) * tw + ray * 1.5;
+      if (!back && s.s > 0.7)
+        this.disc(s.x * H, s.y * H, 1.1, 0.6 + k, 0.75 + k, 0.8 + k, 0.35);
+      else
+        this.splat(s.x * H, s.y * H, k * 0.8, k, k);
+    }
+  }
+  drawKelp(k) {
+    const H = this.H;
+    const t = this.time;
+    const segs = 16;
+    const width = 0.006;
+    const baseY = H * 1.04;
+    const fog2 = this.fogAt(baseY - k.height * H * 0.5);
+    let px = k.x * H;
+    let py = baseY;
+    for (let s = 1;s <= segs; s++) {
+      const tt = s / segs;
+      const sway2 = (Math.sin(t * 0.9 + k.phase + tt * 2.4) * 0.04 + Math.sin(t * 0.37 + k.phase * 2 + tt) * 0.025 + Math.sin(t * 1.7 + tt * 6) * 0.006) * Math.pow(tt, 1.3);
+      const nx = (k.x + sway2) * H;
+      const ny = baseY - tt * k.height * H;
+      const w = width * H * (1 - tt * 0.55);
+      let [r, g, b] = hsv(0.24, 0.62, 0.1 + tt * 0.26);
+      r = lerp(r, fog2[0], 0.3);
+      g = lerp(g, fog2[1], 0.3);
+      b = lerp(b, fog2[2], 0.3);
+      const least = this.cells ? 1.1 : 0.6;
+      const stem = Math.max(least, w * 0.55);
+      const steps = Math.max(1, Math.ceil(Math.hypot(nx - px, ny - py) / Math.max(0.5, stem * 0.6)));
+      for (let j = 0;j < steps; j++) {
+        const u = j / steps;
+        this.disc(lerp(px, nx, u), lerp(py, ny, u), stem, r, g, b, 1);
+      }
+      if (s % 2 === 0 && s < segs) {
+        const side = s % 4 === 0 ? 1 : -1;
+        const dirA = side * (0.75 - tt * 0.3) + Math.sin(t * 1.1 + k.phase + s * 0.7) * 0.25;
+        const bladeL = w * 7 * (1 - tt * 0.3);
+        const n = Math.max(3, Math.ceil(bladeL / Math.max(0.6, w * 0.35)));
+        const lr = r * 1.25 + 0.02;
+        const lg = g * 1.3 + 0.03;
+        const lb = b * 1.1;
+        for (let j = 0;j <= n; j++) {
+          const q = j / n;
+          const bend = dirA * (1 + q * 0.6);
+          const lx = nx + Math.sin(bend) * bladeL * q;
+          const ly = ny - Math.cos(bend) * bladeL * q;
+          const rad = Math.max(least - 0.1, w * 0.95 * Math.sin(Math.PI * Math.min(0.98, q * 0.9 + 0.08)));
+          this.disc(lx, ly, rad, lr * (0.85 + q * 0.3), lg * (0.85 + q * 0.3), lb * (0.85 + q * 0.3), 0.88);
+        }
+      }
+      px = nx;
+      py = ny;
+    }
+  }
+  drawCreature(f) {
+    if (f.species === "shark")
+      this.drawShark(f);
+    else
+      this.drawFish(f);
+  }
+  drawFish(f) {
+    const { W, H, hdr } = this;
+    const Lp = f.len * this.zScale(f) * H;
+    if (Lp < 3)
+      return;
+    const px = f.x * H;
+    const py = f.y * H;
+    const sgn = f.face < 0 ? -1 : 1;
+    const face = Math.abs(f.face) < 0.14 ? 0.14 * sgn : f.face;
+    const ang = f.pitch * sgn * Math.min(1, Math.abs(f.face) * 1.5);
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const fog2 = this.fogAt(py);
+    const fogK = 0.08 + f.z * 0.42;
+    const bodyH = 0.21;
+    const bendAmp = 0.05 * 0.5;
+    const tailEnd = 1.22;
+    const tailBase = 0.74;
+    const back = hsv(f.hue - 0.02, Math.min(1, f.sat * 1.1), 0.5);
+    const belly = hsv(f.hue + 0.07, f.sat * 0.55, 0.95);
+    const fin = hsv(f.hue + 0.05, Math.min(1, f.sat * 1.05), 0.85);
+    const neon = hsv(f.hue, 0.7, 1);
+    const x0 = Math.max(0, Math.floor(px - Lp));
+    const x1 = Math.min(W - 1, Math.ceil(px + Lp));
+    const y0 = Math.max(0, Math.floor(py - Lp * 0.75));
+    const y1 = Math.min(H - 1, Math.ceil(py + Lp * 0.75));
+    const invL = 1 / Lp;
+    const invLF = 1 / (Lp * face);
+    const flap = Math.sin(f.phase * 1.7) * 0.02;
+    for (let y = y0;y <= y1; y++) {
+      const dy = y + 0.5 - py;
+      for (let x = x0;x <= x1; x++) {
+        const dx = x + 0.5 - px;
+        const along2 = dx * ca + dy * sa;
+        const perp = -dx * sa + dy * ca;
+        const u = 0.42 - along2 * invLF;
+        if (u < -0.06 || u > tailEnd + 0.02)
+          continue;
+        const vb = perp * invL - bendAmp * Math.sin(f.phase - u * 5) * u * u;
+        const avb = Math.abs(vb);
+        let pr = 0;
+        let pg = 0;
+        let pb = 0;
+        let pa = 0;
+        let er = 0;
+        let eg = 0;
+        let eb = 0;
+        if (u > tailBase) {
+          const tt = (u - tailBase) / (tailEnd - tailBase);
+          const maxHalf = 0.28;
+          let half = 0.035 + maxHalf * Math.pow(tt, 0.85);
+          half += Math.sin(tt * 7 - f.phase * 1.3) * 0.018 * tt;
+          let d = (avb - half) * Lp;
+          const notch = 0.2 * (1 - Math.min(1, avb / maxHalf) ** 2);
+          d = Math.max(d, (u - (tailEnd - notch)) * Lp * Math.abs(face));
+          const cov = clamp(0.5 - d, 0, 1);
+          if (cov > 0) {
+            const fa = cov * (0.62 + 0.3 * (1 - tt));
+            pr = fin[0] * 0.85 * fa;
+            pg = fin[1] * 0.85 * fa;
+            pb = fin[2] * 0.85 * fa;
+            pa = fa;
+            const edge = clamp(1 - Math.abs(d + 1.2) / 1.3, 0, 1) * cov;
+            er += neon[0] * edge * 0.9;
+            eg += neon[1] * edge * 0.9;
+            eb += neon[2] * edge * 0.9;
+          }
+        }
+        const bu = clamp((u + 0.03) / 0.83, 0, 1);
+        const hb = bodyH * Math.pow(Math.sin(Math.PI * bu), 0.62);
+        if (u > 0.2 && u < 0.64 && vb < 0) {
+          const fk = (u - 0.2) / 0.44;
+          const fh = 0.17 * Math.pow(Math.sin(Math.PI * fk), 0.8) * (1 - fk * 0.3);
+          const d = (-vb - hb - fh) * Lp;
+          const cov = clamp(0.5 - d, 0, 1);
+          if (cov > 0 && -vb > hb - 0.02) {
+            const fa = cov * 0.7;
+            pr = fin[0] * 0.85 * fa + pr * (1 - fa);
+            pg = fin[1] * 0.85 * fa + pg * (1 - fa);
+            pb = fin[2] * 0.85 * fa + pb * (1 - fa);
+            pa = fa + pa * (1 - fa);
+            const edge = clamp(1 - Math.abs(d + 1) / 1.2, 0, 1) * cov;
+            er += neon[0] * edge * 0.7;
+            eg += neon[1] * edge * 0.7;
+            eb += neon[2] * edge * 0.7;
+          }
+        }
+        if (u > 0.5 && u < 0.72 && vb > 0) {
+          const fk = (u - 0.5) / 0.22;
+          const d = (vb - hb - 0.065 * Math.sin(Math.PI * fk)) * Lp;
+          const cov = clamp(0.5 - d, 0, 1);
+          if (cov > 0 && vb > hb - 0.02) {
+            const fa = cov * 0.65;
+            pr = fin[0] * fa + pr * (1 - fa);
+            pg = fin[1] * fa + pg * (1 - fa);
+            pb = fin[2] * fa + pb * (1 - fa);
+            pa = fa + pa * (1 - fa);
+          }
+        }
+        if (u < 0.82) {
+          const d = (avb - hb) * Lp;
+          const cov = clamp(0.5 - d, 0, 1);
+          if (cov > 0) {
+            const n = hb > 0 ? clamp(vb / hb, -1, 1) : 0;
+            const k = smoothstep(-0.55, 0.65, n);
+            let r = back[0] + (belly[0] - back[0]) * k;
+            let g = back[1] + (belly[1] - back[1]) * k;
+            let b = back[2] + (belly[2] - back[2]) * k;
+            const band = Math.abs(Math.sin(u * Math.PI * 3.2 + 0.4));
+            const m = smoothstep(0.82, 0.9, band);
+            const bandEdge = smoothstep(0.75, 0.82, band) - m;
+            r = r * (1 - m) + m - bandEdge * 0.5 * r;
+            g = g * (1 - m) + m - bandEdge * 0.5 * g;
+            b = b * (1 - m) + m - bandEdge * 0.5 * b;
+            const cyl = Math.sqrt(1 - n * n);
+            const light = 0.42 + 0.78 * cyl * (0.75 + 0.25 * (1 - n) * 0.5);
+            r *= light;
+            g *= light;
+            b *= light;
+            const spec = Math.pow(Math.max(0, 1 - Math.abs(n + 0.5) * 2.8), 4) * 0.4;
+            r += spec;
+            g += spec;
+            b += spec;
+            const rim = Math.pow(Math.abs(n), 8) * 0.4;
+            r += rim * 0.3;
+            g += rim * 0.75;
+            b += rim * 0.85;
+            if (Math.abs(u - 0.22 - 0.05 * n * n) < 0.011 && Math.abs(n) < 0.8) {
+              r *= 0.55;
+              g *= 0.55;
+              b *= 0.55;
+            }
+            if (u < 0.035 && Math.abs(vb - 0.035) < 0.008) {
+              r *= 0.3;
+              g *= 0.3;
+              b *= 0.3;
+            }
+            const eu = (u - 0.1) * Math.abs(face);
+            const ev = vb + 0.035;
+            const ed = Math.sqrt(eu * eu + ev * ev);
+            const er0 = 0.034;
+            if (ed < er0) {
+              if (ed < er0 * 0.55) {
+                r = 0.02;
+                g = 0.02;
+                b = 0.04;
+                const gx = eu + 0.006 * Math.sign(face);
+                const gy = ev + 0.008;
+                if (gx * gx + gy * gy < 0.00006) {
+                  er += 2.5;
+                  eg += 2.5;
+                  eb += 2.5;
+                }
+              } else if (ed < er0 * 0.78) {
+                r = neon[0] * 0.9;
+                g = neon[1] * 0.9;
+                b = neon[2] * 0.9;
+              } else {
+                r = 0.92;
+                g = 0.94;
+                b = 0.9;
+              }
+            }
+            const outline = 1 - clamp(1.6 + d, 0, 1) * 0.55;
+            r *= outline;
+            g *= outline;
+            b *= outline;
+            pr = r * cov + pr * (1 - cov);
+            pg = g * cov + pg * (1 - cov);
+            pb = b * cov + pb * (1 - cov);
+            pa = cov + pa * (1 - cov);
+          }
+        }
+        {
+          const cu = (u - 0.3) * Math.abs(face);
+          const cv = vb - 0.05 - flap;
+          const ru = cu * 0.92 + cv * 0.4;
+          const rv = -cu * 0.4 + cv * 0.92;
+          const e = ru * ru / 0.0049 + rv * rv / 0.0005;
+          if (e < 1) {
+            const fa = clamp((1 - e) * 4, 0, 1) * 0.55;
+            pr = fin[0] * 1.1 * fa + pr * (1 - fa);
+            pg = fin[1] * 1.1 * fa + pg * (1 - fa);
+            pb = fin[2] * 1.1 * fa + pb * (1 - fa);
+            pa = fa + pa * (1 - fa);
+          }
+        }
+        if (pa <= 0.001 && er + eg + eb <= 0)
+          continue;
+        pr += (fog2[0] * pa - pr) * fogK;
+        pg += (fog2[1] * pa - pg) * fogK;
+        pb += (fog2[2] * pa - pb) * fogK;
+        const i = (y * W + x) * 3;
+        hdr[i] = hdr[i] * (1 - pa) + pr + er;
+        hdr[i + 1] = hdr[i + 1] * (1 - pa) + pg + eg;
+        hdr[i + 2] = hdr[i + 2] * (1 - pa) + pb + eb;
+      }
+    }
+  }
+  drawShark(f) {
+    const { W, H, hdr } = this;
+    const Lp = f.len * this.zScale(f) * H;
+    if (Lp < 2)
+      return;
+    const px = f.x * H;
+    const py = f.y * H;
+    const sgn = f.face < 0 ? -1 : 1;
+    const face = Math.abs(f.face) < 0.14 ? 0.14 * sgn : f.face;
+    const ang = f.pitch * sgn * Math.min(1, Math.abs(f.face) * 1.5);
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const fog2 = this.fogAt(py);
+    const fogK = 0.08 + f.z * 0.42;
+    const back = [0.27, 0.35, 0.43];
+    const belly = [0.86, 0.88, 0.87];
+    const x0 = Math.max(0, Math.floor(px - Lp * 0.8));
+    const x1 = Math.min(W - 1, Math.ceil(px + Lp * 0.8));
+    const y0 = Math.max(0, Math.floor(py - Lp * 0.5));
+    const y1 = Math.min(H - 1, Math.ceil(py + Lp * 0.5));
+    const invL = 1 / Lp;
+    const invLF = 1 / (Lp * face);
+    const af = Math.abs(face);
+    for (let y = y0;y <= y1; y++) {
+      const dy = y + 0.5 - py;
+      for (let x = x0;x <= x1; x++) {
+        const dx = x + 0.5 - px;
+        const along2 = dx * ca + dy * sa;
+        const perp = -dx * sa + dy * ca;
+        const u = 0.4 - along2 * invLF;
+        if (u < -0.04 || u > 1.12)
+          continue;
+        const vb = perp * invL - 0.045 * Math.sin(f.phase - u * 4.5) * u * u;
+        const bu = clamp((u + 0.02) / 0.84, 0, 1);
+        const hb = 0.105 * Math.pow(Math.sin(Math.PI * bu), 0.85);
+        let cov = 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        const fin = (c, tone) => {
+          if (c <= cov)
+            return;
+          cov = c;
+          r = back[0] * tone;
+          g = back[1] * tone;
+          b = back[2] * tone;
+        };
+        if (u > 0.78) {
+          const tt = (u - 0.78) / 0.32;
+          const c0 = -0.07 * tt;
+          const v = vb - c0;
+          const upper = 0.02 + 0.21 * Math.pow(tt, 1.1);
+          const lower = 0.02 + 0.11 * Math.pow(tt, 1.3);
+          let d2 = (v < 0 ? -v - upper : v - lower) * Lp;
+          const reach = v < 0 ? upper : lower;
+          d2 = Math.max(d2, (u - (1.1 - 0.13 * (1 - Math.min(1, Math.abs(v) / reach) ** 2))) * Lp * af);
+          fin(clamp(0.5 - d2, 0, 1), 0.92);
+        }
+        if (u > 0.3 && u < 0.56 && vb < 0) {
+          const k = (u - 0.3) / 0.26;
+          const fh = 0.2 * (k < 0.4 ? k / 0.4 : Math.pow(1 - (k - 0.4) / 0.6, 1.7));
+          if (-vb > hb - 0.02)
+            fin(clamp(0.5 - (-vb - hb - fh) * Lp, 0, 1), 0.9);
+        }
+        if (u > 0.7 && u < 0.79 && vb < 0 && -vb > hb - 0.01)
+          fin(clamp(0.5 - (-vb - hb - 0.045 * Math.sin((u - 0.7) / 0.09 * Math.PI)) * Lp, 0, 1), 0.9);
+        if (u > 0.68 && u < 0.77 && vb > 0 && vb > hb - 0.01)
+          fin(clamp(0.5 - (vb - hb - 0.035 * Math.sin((u - 0.68) / 0.09 * Math.PI)) * Lp, 0, 1), 0.8);
+        {
+          const cu = (u - 0.36) * af;
+          const cv = vb - 0.1;
+          const ru = cu * 0.7 - cv * 0.71;
+          const rv = cu * 0.71 + cv * 0.7;
+          const e = ru * ru / 0.012 + rv * rv / 0.0011;
+          if (e < 1.2)
+            fin(clamp((1.2 - e) * 4, 0, 1), 0.78);
+        }
+        const d = (Math.abs(vb) - hb) * Lp;
+        const bc = clamp(0.5 - d, 0, 1);
+        if (bc > 0) {
+          const n = hb > 0 ? clamp(vb / hb, -1, 1) : 0;
+          const k = smoothstep(0.08, 0.32, n);
+          let br = back[0] + (belly[0] - back[0]) * k;
+          let bg = back[1] + (belly[1] - back[1]) * k;
+          let bb = back[2] + (belly[2] - back[2]) * k;
+          const light = 0.5 + 0.7 * Math.sqrt(1 - n * n) * (0.8 + 0.2 * (1 - n) * 0.5);
+          br *= light;
+          bg *= light;
+          bb *= light;
+          const spec = Math.pow(Math.max(0, 1 - Math.abs(n + 0.55) * 3), 4) * 0.35;
+          br += spec;
+          bg += spec;
+          bb += spec;
+          for (let j = 0;j < 5; j++)
+            if (Math.abs(u - 0.21 - j * 0.019 - n * 0.01) < 0.0035 && n > -0.55 && n < 0.4) {
+              br *= 0.55;
+              bg *= 0.55;
+              bb *= 0.55;
+            }
+          const eu = (u - 0.1) * af;
+          const ev = vb + 0.025;
+          if (eu * eu + ev * ev < 0.00022) {
+            br = 0.03;
+            bg = 0.03;
+            bb = 0.04;
+            if ((eu + 0.004 * sgn) ** 2 + (ev + 0.005) ** 2 < 0.00002)
+              br = bg = bb = 1.4;
+          }
+          if (u > 0.03 && u < 0.13 && Math.abs(n - 0.62 - (u - 0.08) * 1.5) < 0.07) {
+            br *= 0.5;
+            bg *= 0.5;
+            bb *= 0.5;
+          }
+          const outline = 1 - clamp(1.6 + d, 0, 1) * 0.5;
+          if (bc >= cov || bc > 0.5) {
+            r = br * outline;
+            g = bg * outline;
+            b = bb * outline;
+            cov = Math.max(cov, bc);
+          }
+        }
+        if (cov <= 0)
+          continue;
+        r += (fog2[0] - r) * fogK;
+        g += (fog2[1] - g) * fogK;
+        b += (fog2[2] - b) * fogK;
+        const i = (y * W + x) * 3;
+        hdr[i] += (r - hdr[i]) * cov;
+        hdr[i + 1] += (g - hdr[i + 1]) * cov;
+        hdr[i + 2] += (b - hdr[i + 2]) * cov;
+      }
+    }
+  }
+  turtleLength() {
+    return 0.36 * this.H * CREATURE_SCALE * (1.12 - 0.45 * (this.turtle?.z ?? 0.4));
+  }
+  turtlePoint(tu, u, v) {
+    const L = this.turtleLength();
+    const face = Math.abs(tu.face) < 0.15 ? 0.15 * (tu.face < 0 ? -1 : 1) : tu.face;
+    const tilt = clamp(tu.vy * 5, -0.2, 0.2) * Math.sign(face) * Math.min(1, Math.abs(face) * 1.5);
+    const ax = u * L * face;
+    const ay = v * L;
+    return [tu.x * this.H + ax * Math.cos(tilt) - ay * Math.sin(tilt), tu.y * this.H + ax * Math.sin(tilt) + ay * Math.cos(tilt)];
+  }
+  drawTurtle(tu) {
+    const L = this.turtleLength();
+    if (L < 3)
+      return;
+    const squash = Math.max(0.3, Math.abs(tu.face));
+    const blob = (x, y, rad, r, g, b) => this.ellipse(x, y, rad * squash, rad, r, g, b, 1);
+    const H = this.H;
+    const fog2 = this.fogAt(tu.y * H);
+    const fogK = 0.08 + tu.z * 0.42;
+    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const skin = [0.42, 0.48, 0.32];
+    const skinFar = [0.26, 0.3, 0.2];
+    const stroke = Math.sin(tu.phase);
+    const whip = Math.cos(tu.phase) * 0.05;
+    const flipper = (u0, v0, length, angle, width, color) => {
+      const [r, g, b] = tint(color);
+      let u = u0;
+      let v = v0;
+      let a = angle;
+      const n = 14;
+      for (let s = 0;s <= n; s++) {
+        const q = s / n;
+        const w = width * Math.sin(Math.PI * Math.min(0.97, 0.12 + q * 0.88)) * (1 - q * 0.35);
+        const [x, y] = this.turtlePoint(tu, u, v);
+        blob(x, y, Math.max(0.6, w * L), r, g, b);
+        u += Math.cos(a) * (length / n);
+        v += Math.sin(a) * (length / n);
+        a += 0.04 + whip * q;
+      }
+    };
+    const front = Math.PI - 0.55 - stroke * 0.6;
+    const back = Math.PI - 0.25 - stroke * 0.25;
+    flipper(0.14, 0.03, 0.4, front - 0.25, 0.055, skinFar);
+    flipper(-0.2, 0.03, 0.17, back - 0.2, 0.04, skinFar);
+    {
+      const a = 0.33 * L;
+      const top = 0.17 * L;
+      const bottom = 0.07 * L;
+      const [cx, cy] = this.turtlePoint(tu, 0, 0);
+      const R = Math.ceil(a + 2);
+      const face = Math.abs(tu.face) < 0.15 ? 0.15 * (tu.face < 0 ? -1 : 1) : tu.face;
+      const tilt = clamp(tu.vy * 5, -0.2, 0.2) * Math.sign(face) * Math.min(1, Math.abs(face) * 1.5);
+      const ct = Math.cos(tilt);
+      const st = Math.sin(tilt);
+      for (let y = Math.max(0, Math.floor(cy - R));y <= Math.min(H - 1, cy + R); y++)
+        for (let x = Math.max(0, Math.floor(cx - R));x <= Math.min(this.W - 1, cx + R); x++) {
+          const dx = x + 0.5 - cx;
+          const dy = y + 0.5 - cy;
+          const su = (dx * ct + dy * st) / (a * face);
+          const vv = -dx * st + dy * ct;
+          const sv = vv < 0 ? vv / top : vv / bottom;
+          const e = su * su + sv * sv;
+          if (e > 1.1)
+            continue;
+          const cov = clamp((1 - e) * a * 0.35 + 0.5, 0, 1);
+          let c;
+          if (vv < 0) {
+            const plate = Math.floor(su * 2.5 + 3) + (sv < -0.55 + 0.1 * su * su ? 10 : 0);
+            const seam = Math.abs(Math.sin(su * Math.PI * 1.25 + sv * 0.6)) < 0.16 || Math.abs(sv + 0.55 - 0.1 * su * su) < 0.08 || e > 0.8 && Math.abs(Math.sin(Math.atan2(sv, su) * 9)) < 0.25;
+            const lightness = (0.75 + hash(plate * 3.7) * 0.35) * (0.7 + 0.45 * -sv);
+            c = seam ? [0.16, 0.12, 0.06] : [0.44 * lightness, 0.36 * lightness, 0.17 * lightness];
+          } else
+            c = Math.abs(Math.sin(su * Math.PI * 1.5)) < 0.12 ? [0.5, 0.44, 0.28] : [0.78, 0.7, 0.45];
+          const [r, g, b] = tint(c);
+          this.blend((y * this.W + x) * 3, r, g, b, cov);
+        }
+    }
+    flipper(-0.2, 0.05, 0.18, back, 0.045, skin);
+    {
+      const [r, g, b] = tint(skin);
+      for (let s = 0;s <= 8; s++) {
+        const k = s / 8;
+        const [x, y] = this.turtlePoint(tu, 0.28 + k * 0.12, -0.01 - k * 0.01);
+        blob(x, y, Math.max(0.6, (0.05 - k * 0.008) * L), r, g, b);
+      }
+      const [hx, hy] = this.turtlePoint(tu, 0.44, -0.025);
+      blob(hx, hy, Math.max(1, 0.062 * L), r, g, b);
+      const [bx, by] = this.turtlePoint(tu, 0.5, -0.01);
+      const [br, bg2, bb] = tint([0.3, 0.32, 0.22]);
+      blob(bx, by, Math.max(0.7, 0.03 * L), br, bg2, bb);
+      const [ex, ey] = this.turtlePoint(tu, 0.465, -0.045);
+      blob(ex, ey, Math.max(0.7, 0.014 * L), 0.03, 0.03, 0.03);
+    }
+    flipper(0.14, 0.05, 0.42, front, 0.06, skin);
+  }
+  diverPoint(dv, u, v) {
+    const L = this.diverLength(dv);
+    const face = Math.abs(dv.face) < 0.15 ? 0.15 * (dv.face < 0 ? -1 : 1) : dv.face;
+    const tilt = clamp(dv.vy * 4, -0.25, 0.25) * Math.sign(face) * Math.min(1, Math.abs(face) * 1.5);
+    const ax = u * L * face;
+    const ay = v * L;
+    return [dv.x * this.H + ax * Math.cos(tilt) - ay * Math.sin(tilt), dv.y * this.H + ax * Math.sin(tilt) + ay * Math.cos(tilt)];
+  }
+  diverLength(dv) {
+    return 0.46 * this.H * CREATURE_SCALE * (1.12 - 0.45 * dv.z);
+  }
+  drawTorch(dv, strength, color = [1, 0.95, 0.75]) {
+    const beam = Math.pow(Math.abs(dv.face), 2);
+    if (beam <= 0.02)
+      return;
+    const [hx, hy] = this.diverPoint(dv, 0.3, 0.07);
+    const [tx, ty] = this.diverPoint(dv, 1.3, 0.2);
+    const len = Math.hypot(tx - hx, ty - hy);
+    const ux = (tx - hx) / len;
+    const uy = (ty - hy) / len;
+    const x0 = Math.max(0, Math.floor(Math.min(hx, tx) - len * 0.35));
+    const x1 = Math.min(this.W - 1, Math.ceil(Math.max(hx, tx) + len * 0.35));
+    const y0 = Math.max(0, Math.floor(Math.min(hy, ty) - len * 0.35));
+    const y1 = Math.min(this.H - 1, Math.ceil(Math.max(hy, ty) + len * 0.35));
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        const dx = x + 0.5 - hx;
+        const dy = y + 0.5 - hy;
+        const along2 = dx * ux + dy * uy;
+        if (along2 <= 0 || along2 > len)
+          continue;
+        const across = Math.abs(-dx * uy + dy * ux);
+        const width = along2 * 0.3 + 1;
+        if (across > width)
+          continue;
+        const k = (1 - along2 / len) * Math.pow(1 - across / width, 2) * 0.14 * beam * strength;
+        this.add(x, y, k * color[0], k * color[1], k * color[2]);
+      }
+  }
+  drawDiver(dv) {
+    const L = this.diverLength(dv);
+    if (L < 3)
+      return;
+    const squash = Math.max(0.3, Math.abs(dv.face));
+    const fog2 = this.fogAt(dv.y * this.H);
+    const fogK = 0.08 + dv.z * 0.42;
+    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const limb2 = (u0, v0, u1, v1, r0, r1, color) => {
+      const [x0, y0] = this.diverPoint(dv, u0, v0);
+      const [x1, y1] = this.diverPoint(dv, u1, v1);
+      const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 0.6));
+      const [r, g, b] = tint(color);
+      for (let j = 0;j <= steps; j++) {
+        const k = j / steps;
+        const rad = Math.max(0.6, lerp(r0, r1, k) * L);
+        this.ellipse(lerp(x0, x1, k), lerp(y0, y1, k), rad * squash, rad, r, g, b, 1);
+      }
+    };
+    const suit = [0.07, 0.08, 0.11];
+    const suitFar = [0.04, 0.05, 0.07];
+    const accent = [0.95, 0.45, 0.12];
+    const finColor = [0.1, 0.75, 0.85];
+    const kick = Math.sin(dv.phase) * 0.05;
+    this.drawTorch(dv, 1);
+    limb2(-0.12, 0.02, -0.33, 0.04 - kick, 0.045, 0.035, suitFar);
+    limb2(-0.33, 0.04 - kick, -0.52, 0.05 - kick * 1.6, 0.035, 0.028, suitFar);
+    limb2(-0.52, 0.05 - kick * 1.6, -0.72, 0.06 - kick * 2.6, 0.03, 0.05, [finColor[0] * 0.6, finColor[1] * 0.6, finColor[2] * 0.6]);
+    limb2(-0.08, -0.075, 0.13, -0.08, 0.045, 0.045, [0.95, 0.72, 0.12]);
+    limb2(0.13, -0.08, 0.16, -0.085, 0.02, 0.015, [0.35, 0.35, 0.38]);
+    limb2(-0.14, 0, 0.13, -0.01, 0.06, 0.065, suit);
+    limb2(-0.12, 0.01, 0.11, 0, 0.012, 0.012, accent);
+    limb2(-0.12, 0.02, -0.33, 0.03 + kick, 0.05, 0.04, suit);
+    limb2(-0.33, 0.03 + kick, -0.52, 0.04 + kick * 1.6, 0.04, 0.03, suit);
+    limb2(-0.52, 0.04 + kick * 1.6, -0.74, 0.05 + kick * 2.6, 0.03, 0.055, finColor);
+    limb2(0.2, -0.015, 0.2, -0.015, 0.05, 0.05, suit);
+    limb2(0.235, -0.025, 0.235, -0.025, 0.024, 0.024, [0.35, 0.65, 0.8]);
+    {
+      const [gx, gy] = this.diverPoint(dv, 0.24, -0.032);
+      this.add(gx, gy, 0.5, 0.6, 0.6);
+    }
+    limb2(0.245, 0.02, 0.245, 0.02, 0.016, 0.016, [0.15, 0.15, 0.17]);
+    limb2(0.1, 0.03, 0.2, 0.08, 0.025, 0.022, suit);
+    limb2(0.2, 0.08, 0.29, 0.07, 0.022, 0.02, suit);
+    limb2(0.28, 0.07, 0.33, 0.065, 0.018, 0.022, [0.75, 0.75, 0.78]);
+  }
+  drawOctopus(o) {
+    const H = this.H;
+    const S = o.size * H * CREATURE_SCALE * (1.12 - 0.45 * o.z);
+    if (S < 1.5)
+      return;
+    const cx = o.x * H;
+    const cy = o.y * H;
+    const hx = Math.cos(o.dir);
+    const hy = Math.sin(o.dir);
+    const nx = -hy;
+    const ny = hx;
+    const fog2 = this.fogAt(cy);
+    const fogK = 0.08 + o.z * 0.42;
+    const tint = (c) => [c[0] + (fog2[0] - c[0]) * fogK, c[1] + (fog2[1] - c[1]) * fogK, c[2] + (fog2[2] - c[2]) * fogK];
+    const baseX = cx - hx * S * 0.6;
+    const baseY = cy - hy * S * 0.6;
+    const spread = 0.95 * (1 - o.pulse * 0.6) + 0.12 * Math.sin(o.phase * 1.3);
+    const trail = o.dir + Math.PI;
+    for (let i = 0;i < 8; i++) {
+      const side = (i - 3.5) / 3.5;
+      let a = trail + side * spread;
+      let x = baseX + nx * side * S * 0.38;
+      let y = baseY + ny * side * S * 0.38;
+      const len = S * 2.5 * (0.85 + 0.15 * hash(i * 7.3));
+      const n = 26;
+      const curl = (i % 2 ? 1 : -1) * 0.16;
+      for (let s = 0;s <= n; s++) {
+        const q = s / n;
+        const w = S * 0.14 * (1 - q * 0.85) + 0.35;
+        const shade2 = 0.55 + 0.3 * (1 - q);
+        const [r, g, b] = tint(hsv(o.hue + q * 0.03, 0.72, shade2 * 0.62));
+        this.disc(x, y, w, r, g, b, 1);
+        if (s % 2 === 0 && w > 0.9) {
+          const [sr, sg, sb] = tint([0.95, 0.78, 0.72]);
+          this.disc(x + Math.cos(a + Math.PI / 2) * w * 0.55, y + Math.sin(a + Math.PI / 2) * w * 0.55, w * 0.32, sr, sg, sb, 0.9);
+        }
+        a += Math.sin(o.phase * 1.4 + i * 0.9 + q * 3.5) * 0.07 + (q > 0.6 ? curl : 0);
+        x += Math.cos(a) * (len / n);
+        y += Math.sin(a) * (len / n);
+      }
+    }
+    const ra = S * 0.85;
+    const rb = S * 0.6;
+    const mcx = cx + hx * S * 0.15;
+    const mcy = cy + hy * S * 0.15;
+    const R = Math.ceil(ra + 2);
+    const body2 = hsv(o.hue, 0.72, 0.68);
+    for (let y = Math.max(0, Math.floor(mcy - R));y <= Math.min(H - 1, mcy + R); y++)
+      for (let x = Math.max(0, Math.floor(mcx - R));x <= Math.min(this.W - 1, mcx + R); x++) {
+        const dx = x + 0.5 - mcx;
+        const dy = y + 0.5 - mcy;
+        const a = (dx * hx + dy * hy) / ra;
+        const b = (dx * nx + dy * ny) / (rb * (1 + 0.2 * a));
+        const e = a * a + b * b;
+        if (e > 1.15)
+          continue;
+        const cov = clamp((1 - e) * ra * 0.5 + 0.5, 0, 1);
+        const light = 0.55 + 0.5 * Math.sqrt(Math.max(0, 1 - e)) - dy / (ra * 4);
+        const spot = hash2(Math.floor(a * 6 + 20), Math.floor(b * 5 + 20)) > 0.72 && e < 0.8 ? 0.7 : 1;
+        const pulse2 = 1 + o.pulse * 0.15;
+        const [r, g, bl] = tint([body2[0] * light * spot * pulse2, body2[1] * light * spot * pulse2, body2[2] * light * spot * pulse2]);
+        this.blend((y * this.W + x) * 3, r, g, bl, cov);
+      }
+    for (const side of [-1, 1]) {
+      const ex = mcx - hx * ra * 0.45 + nx * rb * 0.55 * side;
+      const ey = mcy - hy * ra * 0.45 + ny * rb * 0.55 * side;
+      const er = Math.max(1, S * 0.11);
+      const [r, g, b] = tint([0.95, 0.82, 0.4]);
+      this.disc(ex, ey, er, r, g, b, 1);
+      this.disc(ex, ey, er * 0.45, 0.02, 0.02, 0.03, 1);
+    }
+  }
+}
+function gradeNightWater(hdr, water, mask, rowCol, nightRow, W, H, mx, my) {
+  for (let i = 0;i < W * H; i++) {
+    const o = i * 3;
+    mask[i] = clamp((Math.abs(hdr[o] - water[o]) + Math.abs(hdr[o + 1] - water[o + 1]) + Math.abs(hdr[o + 2] - water[o + 2])) * 10, 0, 1);
+  }
+  for (let y = 0;y < H; y++) {
+    const rowSum = rowCol[y * 3] + rowCol[y * 3 + 1] + rowCol[y * 3 + 2] || 0.000001;
+    const nr = nightRow[y * 3];
+    const ng = nightRow[y * 3 + 1];
+    const nb = nightRow[y * 3 + 2];
+    const reach = 0.75 - 0.4 * (y / H);
+    for (let x = 0;x < W; x++) {
+      const i = y * W + x;
+      const o = i * 3;
+      const detail = clamp((water[o] + water[o + 1] + water[o + 2]) / rowSum, 0.3, 2.5);
+      const dx = mx - x;
+      const dy = my - y;
+      const dist = Math.hypot(dx, dy * 1.6) || 1;
+      const moon = Math.exp(-dist / (0.16 * H));
+      const wr = nr * detail + moon * 0.02;
+      const wg = ng * detail + moon * 0.13;
+      const wb = nb * detail + moon * 0.3;
+      const m = mask[i];
+      if (m <= 0) {
+        hdr[o] = wr;
+        hdr[o + 1] = wg;
+        hdr[o + 2] = wb;
+        continue;
+      }
+      const l = Math.hypot(dx, dy) || 1;
+      const sx = clamp(Math.round(x + dx / l * 2), 0, W - 1);
+      const sy = clamp(Math.round(y + dy / l * 2), 0, H - 1);
+      const rim = m * (1 - mask[sy * W + sx]) * reach;
+      const edge = m * (1 - Math.min(mask[Math.max(0, i - 1)], mask[Math.min(W * H - 1, i + 1)], mask[Math.max(0, i - W)], mask[Math.min(W * H - 1, i + W)])) * 0.12;
+      hdr[o] = lerp(wr, hdr[o] * 0.05, m) + rim * 0.04 + edge * 0.02;
+      hdr[o + 1] = lerp(wg, hdr[o + 1] * 0.11, m) + rim * 0.42 + edge * 0.24;
+      hdr[o + 2] = lerp(wb, hdr[o + 2] * 0.22, m) + rim * 0.55 + edge * 0.3;
+    }
+  }
+}
+function steerTurn(c, want, deadzone, rate, dt) {
+  if (Math.abs(want) > deadzone)
+    c.heading = Math.sign(want);
+  const step = rate * dt;
+  c.turn = c.turn < c.heading ? Math.min(c.heading, c.turn + step) : Math.max(c.heading, c.turn - step);
+  c.face = Math.sin(c.turn * Math.PI / 2);
+}
+function buildCaustics() {
+  const tex = new Float32Array(CAUS_N * CAUS_N);
+  const cells = 7;
+  const pts = [];
+  for (let j = 0;j < cells; j++)
+    for (let i = 0;i < cells; i++)
+      pts.push((i + 0.15 + hash2(i, j) * 0.7) / cells, (j + 0.15 + hash2(i + 31, j + 17) * 0.7) / cells);
+  for (let y = 0;y < CAUS_N; y++) {
+    for (let x = 0;x < CAUS_N; x++) {
+      const u = x / CAUS_N;
+      const v = y / CAUS_N;
+      let f1 = 9;
+      let f2 = 9;
+      for (let p = 0;p < pts.length; p += 2) {
+        let dx = Math.abs(u - pts[p]);
+        let dy = Math.abs(v - pts[p + 1]);
+        if (dx > 0.5)
+          dx = 1 - dx;
+        if (dy > 0.5)
+          dy = 1 - dy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < f1) {
+          f2 = f1;
+          f1 = d;
+        } else if (d < f2)
+          f2 = d;
+      }
+      tex[y * CAUS_N + x] = Math.pow(1 - smoothstep(0, 0.32, (f2 - f1) * cells), 2.4);
+    }
+  }
+  return tex;
+}
+function buildRays2(seed) {
+  const tex = new Float32Array(RAY_N3);
+  for (let k = 0;k < 16; k++) {
+    const c = hash(seed + k * 3.1) * RAY_N3;
+    const w = 6 + hash(seed + k * 7.7) * 38;
+    const amp = 0.35 + hash(seed + k * 1.3) * 0.65;
+    for (let i = 0;i < RAY_N3; i++) {
+      let d = Math.abs(i - c);
+      if (d > RAY_N3 / 2)
+        d = RAY_N3 - d;
+      tex[i] += amp * Math.exp(-(d * d) / (w * w));
+    }
+  }
+  let max = 0;
+  for (let i = 0;i < RAY_N3; i++)
+    max = Math.max(max, tex[i]);
+  for (let i = 0;i < RAY_N3; i++)
+    tex[i] = Math.min(1, tex[i] / max);
+  return tex;
+}
+var ocean = {
+  id: "ocean",
+  name: "Ocean",
+  description: "Deep water, god rays, marine snow, and a whale that drifts past now and then",
+  activity: {
+    calm: "Water, light and the whale",
+    lively: "Adds a fish and an octopus",
+    teeming: "Adds a shark, diver, turtle and kelp"
+  },
+  scrim: {
+    day: [
+      [16, 40, 60],
+      [10, 28, 48],
+      [6, 16, 34]
+    ],
+    sunset: [
+      [44, 30, 36],
+      [22, 20, 36],
+      [8, 10, 24]
+    ],
+    night: [
+      [4, 10, 22],
+      [3, 7, 16],
+      [2, 4, 10]
+    ]
+  },
+  create: (settings) => new Ocean(settings)
+};
+
+// wallpapers/prehistoric.ts
+var TIME_SCALE10 = 0.35;
+var CREATURE_SPEED10 = 0.25;
+var HORIZON7 = 0.6;
+var VENT_X = 0.4;
+var CRATER = 0.205;
+var SMOKE_LIFE = 14;
+var SMOKE_PUFFS = 32;
+var DELOREAN = 14;
+var FLASH = 1.2;
+var LOOKS9 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.8],
+    sky: [
+      [0, [0.14, 0.34, 0.66]],
+      [0.3, [0.3, 0.52, 0.78]],
+      [HORIZON7, [0.74, 0.78, 0.74]]
+    ],
+    orb: { x: 0.16, y: 0.13, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.1, 1.1, 1.05], bottom: [0.62, 0.66, 0.74], alpha: 0.85 },
+    ridge: [0.42, 0.52, 0.6],
+    forest: [0.14, 0.3, 0.13],
+    ground: [
+      [0.36, 0.5, 0.2],
+      [0.2, 0.38, 0.1]
+    ],
+    rock: [0.32, 0.25, 0.22],
+    lava: [
+      [0.9, 0.1, 0.02],
+      [1.6, 0.45, 0.04]
+    ],
+    glow: 0.05,
+    smoke: [[0.3, 0.25, 0.22], [0.66, 0.64, 0.64], 0.5],
+    water: [0.22, 0.44, 0.52],
+    mirror: [0.78, 0.88, 0.92],
+    ripple: [0.55, 0.7, 0.75],
+    tint: [1, 1, 1]
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.3, 0.12],
+    sky: [
+      [0, [0.045, 0.04, 0.04]],
+      [0.25, [0.11, 0.075, 0.065]],
+      [0.45, [0.26, 0.06, 0.045]],
+      [HORIZON7, [0.58, 0.1, 0.05]]
+    ],
+    orb: { x: 0.2, y: 0.36, r: 0.07, core: [1.25, 0.32, 0.12], glow: [0.9, 0.22, 0.08], near: 0.3, wide: 0.3 },
+    stars: 0,
+    clouds: { top: [0.08, 0.06, 0.06], bottom: [0.36, 0.13, 0.08], alpha: 0.7 },
+    ridge: [0.2, 0.07, 0.05],
+    forest: [0.05, 0.025, 0.02],
+    ground: [
+      [0.22, 0.07, 0.04],
+      [0.07, 0.03, 0.02]
+    ],
+    rock: [0.1, 0.05, 0.045],
+    lava: [
+      [1.1, 0.12, 0.02],
+      [2, 0.55, 0.04]
+    ],
+    glow: 0.35,
+    smoke: [[0.8, 0.2, 0.06], [0.1, 0.07, 0.07], 0.65],
+    water: [0.42, 0.12, 0.06],
+    mirror: [0.9, 0.78, 0.72],
+    ripple: [1, 0.3, 0.1],
+    tint: [0.2, 0.1, 0.08]
+  },
+  night: {
+    style: "rim",
+    light: [0.3, 0.62, 1.5],
+    sky: [
+      [0, [0.004, 0.008, 0.03]],
+      [0.3, [0.014, 0.024, 0.07]],
+      [0.5, [0.035, 0.055, 0.14]],
+      [HORIZON7, [0.07, 0.1, 0.24]]
+    ],
+    orb: { x: 0.18, y: 0.15, r: 0.03, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 140,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.7 },
+    ridge: [0.02, 0.03, 0.08],
+    forest: [0.006, 0.012, 0.028],
+    ground: [
+      [0.035, 0.06, 0.13],
+      [0.012, 0.022, 0.05]
+    ],
+    rock: [0.02, 0.018, 0.045],
+    lava: [
+      [1.3, 0.1, 0.02],
+      [2.2, 0.55, 0.03]
+    ],
+    glow: 0.5,
+    smoke: [[0.8, 0.12, 0.03], [0.1, 0.025, 0.07], 0.6],
+    water: [0.02, 0.04, 0.1],
+    mirror: [0.8, 0.88, 1],
+    ripple: [0.1, 0.35, 0.9],
+    tint: [0.02, 0.032, 0.075]
+  }
+};
+var DAYLIGHT8 = (() => {
+  const l = Math.hypot(0.5, 0.6, 0.6);
+  return [-0.5 / l, -0.6 / l, 0.6 / l];
+})();
+var FERN = [0.2, 0.48, 0.14];
+var FROND2 = [0.16, 0.38, 0.12];
+var BARK = [0.35, 0.25, 0.16];
+var NEEDLES = [0.1, 0.3, 0.14];
+var SAUROPOD = [0.42, 0.44, 0.34];
+var REX = [0.42, 0.34, 0.18];
+var TRIKE = [0.52, 0.43, 0.28];
+var BONE = [0.88, 0.82, 0.66];
+
+class Prehistoric extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  night;
+  lighting = { style: "front", dir: DAYLIGHT8 };
+  shade;
+  allStars;
+  stars = [];
+  clouds;
+  ash = makeClouds(3, "ash", 0.04, 0.11);
+  shadows = makeShadows(3, HORIZON7 + 0.06, 0.95);
+  smoke = Array.from({ length: SMOKE_PUFFS }, (_, i) => ({ age: i / SMOKE_PUFFS * SMOKE_LIFE, seed: Math.random() * 100 }));
+  lava = { index: new Int32Array(0), k: new Float32Array(0), along: new Float32Array(0), box: [0, 0, -1, -1] };
+  trees = [0, 0];
+  plants = new SwayLayer;
+  rex = { x: -9, dir: 1, next: 2, phase: 0 };
+  dust = [];
+  sauropod = { p: 0, face: -1, target: -1, mode: "browse", timer: rand(4.5, 6), g: gait(-1), pose: 1 };
+  herd = [];
+  dragonflies = [];
+  nessie = { t: -1, x: 0, y: 0, dir: 1, wait: 1 };
+  pool = { y0: 0, y1: 0, rows: new Float32Array(0), amp: new Float32Array(0), gloss: new Float32Array(0) };
+  weather;
+  lights = new LightMap;
+  storm = makeStorm();
+  birds = [];
+  delorean = { wait: eggWait() * TIME_SCALE10, t: -1, x0: 0 };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS9[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.night = settings.time === "night";
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON7);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    this.allStars = makeStars(this.look.stars, 0.5);
+    this.clouds = settings.time === "sunset" ? makeClouds(4, "stratus", 0.08, 0.3) : makeClouds(3, "cumulus", 0.06, 0.28);
+    if (settings.activity !== "teeming")
+      return;
+    const walker = (x, y, size) => ({ x, y, wx: x, wy: y, wanderT: 0, face: 1, phase: Math.random() * TAU, graze: 0, rest: 0, moving: false, size, g: gait(1, hash(x * 7 + y)) });
+    this.herd = [walker(0.3, 0.8, 1), walker(0.55, 0.84, 1.1), walker(0.42, 0.82, 0.65)];
+    this.dragonflies = Array.from({ length: 4 }, () => ({ x: Math.random() * 1.5, y: rand(0.75, 0.95), tx: 0, ty: 0, rest: rand(0, 3), face: 1, phase: Math.random() * TAU }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE10;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED10;
+    this.creatureTime += cdt;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.shadows, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    for (const c of this.ash) {
+      c.x += c.speed * dt;
+      if (c.x > this.A + c.w)
+        c.x = this.plumeTop();
+    }
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.birds = flyAway(this.birds, dt, this.A);
+    this.stepDelorean(dt);
+    for (const s of this.smoke) {
+      s.age += dt;
+      if (s.age < SMOKE_LIFE)
+        continue;
+      s.age -= SMOKE_LIFE;
+      s.seed = Math.random() * 100;
+    }
+    for (const d of this.dust) {
+      d.age += dt;
+      d.x += d.vx * dt;
+      d.y -= 0.006 * dt;
+    }
+    this.dust = this.dust.filter((d) => d.age < 3);
+    this.stepRex(dt, cdt);
+    if (this.activity !== "calm")
+      this.stepSauropod(cdt);
+    if (this.activity !== "teeming")
+      return;
+    const A = this.A;
+    for (const w of this.herd) {
+      const [x0, y0] = [w.x, w.y];
+      this.wander(w, cdt, [0.08 * A, 0.45 * A, 0.78, 0.87], 0.03, [6, 14]);
+      stepGait(w.g, Math.hypot(w.x - x0, w.y - y0) / (0.13 * (0.6 + (w.y - 0.7) * 2.5) * w.size), cdt, w.face);
+    }
+    for (const d of this.dragonflies)
+      this.stepDragonfly(d, cdt);
+    this.stepNessie(cdt);
+  }
+  render() {
+    this.restore();
+    this.plants.draw(this.hdr, this.W, this.H, this.time);
+    if (!this.weather.covered)
+      paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points);
+    const orange = this.look.lava[1];
+    flowLava(this.hdr, this.lava.index, this.lava.k, this.lava.along, this.time, orange[0], orange[1], orange[2]);
+    this.touch(this.lava.box[0], this.lava.box[1], this.lava.box[2], this.lava.box[3]);
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    const orb = this.weather.covered ? undefined : this.look.orb;
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb);
+    paintShadows(this.hdr, this.W, this.H, this.shadows, HORIZON7 + 0.02, orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    const [hot, cool, alpha] = this.look.smoke;
+    const start = this.plumeTop();
+    for (const c of this.ash)
+      paintClouds(this.hdr, this.W, this.H, [c], [cool[0] * 1.15, cool[1] * 1.15, cool[2] * 1.15], [lerp(cool[0], hot[0], 0.3) * 0.7, lerp(cool[1], hot[1], 0.3) * 0.7, lerp(cool[2], hot[2], 0.3) * 0.7], alpha * 1.3 * smoothstep(start, start + 0.25, c.x), orb);
+    this.drawShadows();
+    this.drawSmoke();
+    const p = this.pool;
+    if (p.y1 > p.y0)
+      reflect(this.hdr, this.W, this.H, p.y0, p.y1, p.rows, p.amp, p.gloss, this.look.mirror, this.time);
+    if (this.activity !== "calm") {
+      this.drawPterosaurs();
+      this.drawSauropod();
+    }
+    if (this.activity === "teeming") {
+      this.drawNessie();
+      for (const w of [...this.herd].sort((a, b) => a.y - b.y))
+        this.drawTriceratops(w);
+    }
+    this.drawDust();
+    this.drawRex();
+    const A = this.A;
+    this.lights.clear(this.W, this.H);
+    if (this.night) {
+      const pulse2 = (lag) => 0.5 + 0.5 * Math.sin(this.time * 0.6 - lag);
+      this.lights.pool((A - VENT_X + 0.08 + 0.02 * Math.sin(this.time * 0.25)) * this.H, 0.63 * this.H, 0.45 * this.H, 0.13 * this.H, [1, 0.36, 0.06], 2.1 + 0.7 * pulse2(0), 0.03);
+      const [lx, ly, lrx, lry] = this.lake();
+      this.lights.pool((Math.max(lx, A - VENT_X - 0.05) + 0.03 * Math.sin(this.time * 0.3)) * this.H, ly * this.H, lrx * 0.7 * this.H, lry * 1.6 * this.H, [1, 0.3, 0.05], 1.6 * pulse2(0.9), 0.02 * pulse2(0.9));
+    }
+    this.lights.apply(this.hdr);
+    for (const [i, x] of [0.01, 0.2, 0.76, 0.99].entries())
+      this.drawFern(x * A, 1.03, 0.17 + hash(i) * 0.04, i, true);
+    if (this.activity === "teeming")
+      for (const d of this.dragonflies)
+        this.drawDragonfly(d);
+    if (this.delorean.t >= 0)
+      this.drawDelorean();
+    for (const b of this.birds)
+      this.shape(bird(b, this.H, 0.024 * this.H, this.paint([0.5, 0.3, 0.2])), this.lighting, 0.4);
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.rex.x < -5)
+      this.rex.next = 0;
+  }
+  poke(x, y) {
+    startle(this.birds, x, Math.max(y, 0.66), 4);
+  }
+  layout() {
+    const { W, H, A, look, px } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT8 } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, px);
+    this.weather.cover(this.hdr, W, H);
+    const sky = this.hdr.slice();
+    const day = look === LOOKS9.day;
+    for (const [i, c] of this.ash.entries())
+      c.x = lerp(this.plumeTop(), A + c.w, (i + 0.3) / this.ash.length);
+    const vx = A - VENT_X;
+    const ridgeTop = new Float32Array(W);
+    const volcanoTop = new Float32Array(W);
+    const forestTop = new Float32Array(W);
+    const groundTop = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      ridgeTop[x] = (0.53 - 0.05 * fbm1(u * 2, 21) - 0.02 * Math.abs(Math.sin(u * 3.3))) * H;
+      const d = Math.abs(u - vx);
+      const s = clamp((d - 0.045) / (u < vx ? 0.5 : 0.56), 0, 1);
+      volcanoTop[x] = d < 0.045 ? (CRATER + 0.01 * (1 - (d / 0.045) ** 2)) * H : (CRATER + 0.43 * (1 - (1 - s) ** 2.2) + 0.012 * (fbm1(u * 9, 11) - 0.5) * s) * H;
+      forestTop[x] = (0.6 - 0.018 * fbm1(u * 5, 31) - 0.012 * Math.abs(Math.sin(u * 23 + fbm1(u * 3, 7) * 4))) * H;
+      groundTop[x] = (0.618 + 0.005 * Math.sin(u * 2.4)) * H;
+    }
+    this.stars = this.allStars.filter((s) => s.y * H < Math.min(volcanoTop[clamp(Math.floor(s.x * W), 0, W - 1)], ridgeTop[clamp(Math.floor(s.x * W), 0, W - 1)]) - 2);
+    this.fillBelow(ridgeTop, forestTop, (x, y, d) => {
+      const haze2 = clamp((y / H - 0.47) * 4, 0, 0.4);
+      return this.rim([lerp(look.ridge[0], look.sky[look.sky.length - 1][1][0], haze2), lerp(look.ridge[1], look.sky[look.sky.length - 1][1][1], haze2), lerp(look.ridge[2], look.sky[look.sky.length - 1][1][2], haze2)], x, d, 1.5);
+    });
+    this.fillBelow(volcanoTop, forestTop, (x, y, d) => {
+      const u = x / H;
+      const v = y / H;
+      const g = (u - vx) / Math.max(0.02, v - CRATER + 0.02);
+      const gully = 0.82 + 0.18 * Math.sin(g * 22 + fbm1(g * 5, 3) * 5) + (hash2(Math.floor(x / px), Math.floor(y / px)) - 0.5) * 0.06;
+      const side = look.style === "front" ? 1 + 0.2 * clamp(-g, -1, 1) : 1;
+      const ash = smoothstep(0.32, 0.22, v) * 0.25;
+      const green = smoothstep(0.5, 0.6, v) * (0.5 + 0.5 * fbm1(u * 12, 5));
+      const k = gully * side;
+      const r = lerp(look.rock[0] * (1 + ash), look.forest[0], green) * k;
+      const gg = lerp(look.rock[1] * (1 + ash), look.forest[1], green) * k;
+      const b = lerp(look.rock[2] * (1 + ash), look.forest[2], green) * k;
+      return this.rim([r, gg, b], x, d, 2);
+    });
+    if (day)
+      haze(this.hdr, sky, W, H, 0.62, 0.63, 0.1);
+    this.paintLava(vx);
+    this.fillBelow(forestTop, groundTop, (x, y, d) => {
+      const k = 0.8 + 0.2 * fbm1(x / px * 0.3, 41) + (hash2(Math.floor(x / px), Math.floor(y / px)) - 0.5) * 0.1;
+      return this.rim([look.forest[0] * k, look.forest[1] * k, look.forest[2] * k], x, d, 1.5);
+    });
+    const [far, near2] = look.ground;
+    this.fillBelow(groundTop, undefined, (x, y, d) => {
+      const depth2 = clamp((y / H - 0.62) / 0.38, 0, 1);
+      const blades = this.cells ? 0.95 : 0.9 + 0.1 * Math.sin(x / px * 1.7 + y / px * 0.6 + fbm1(x / px * 0.1, 2) * 6) + (hash2(Math.floor(x / px), Math.floor(y / px)) - 0.5) * 0.05;
+      return this.rim([lerp(far[0], near2[0], depth2) * blades, lerp(far[1], near2[1], depth2) * blades, lerp(far[2], near2[2], depth2) * blades], x, d, 2);
+    });
+    if (day) {
+      mottle(this.hdr, W, H, 0.62, 1, 0.55, [1.16, 1.04, 0.66], [0.68, 0.84, 0.72]);
+      haze(this.hdr, sky, W, H, 0.62, 0.8, 0.14, 0, 0.56);
+    }
+    this.pool = { y0: 0, y1: 0, rows: new Float32Array(0), amp: new Float32Array(0), gloss: new Float32Array(0) };
+    this.paintLake();
+    this.paintRiver();
+    const water = this.hdr.slice(this.pool.y0 * W * 3, this.pool.y1 * W * 3);
+    this.trees = [0.06, 0.48];
+    const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+    const [lx, ly, lrx, lry] = this.lake();
+    const distant = [
+      [0.27, 0.632, 0.52, 0.4],
+      [0.74, 0.628, 0.5, 0.45],
+      [0.93, 0.626, 0.53, 0.35],
+      [A - 0.36, 0.624, 0.53, 0.35]
+    ];
+    for (const [x, base, top, s] of distant)
+      this.drawTree(x, base, top, s);
+    const edge = [
+      [0.17, 0.648, 0.034],
+      [0.37, 0.65, 0.04],
+      [0.62, 0.645, 0.034],
+      [0.84, 0.65, 0.045],
+      [lx - lrx - 0.04, 0.655, 0.04],
+      [A - 0.2, 0.652, 0.036]
+    ];
+    for (const [i, [x, y, s]] of edge.entries())
+      this.drawBush(x, y, s, i + 3);
+    for (const [x, base, top] of [[this.trees[0], 0.665, 0.29], [this.trees[1], 0.662, 0.31], [A - 0.1, 0.64, 0.45]])
+      ground(x, base, 0.08, base - top, 1.5);
+    for (const [x, y, s] of [[0.32, 0.78, 0.07], [0.88, 0.74, 0.08], [0.48, 0.9, 0.08]])
+      ground(x * A, y, s * 1.4, s * 0.8, 1.2);
+    for (const [x, y, s] of [[0.04, 0.86, 0.09], [0.47, 0.835, 0.07], [0.9, 0.84, 0.1]])
+      ground(x * A, y, s * 1.4, s * 1.1, 1.5);
+    this.drawTree(this.trees[0], 0.665, 0.29);
+    this.drawTree(this.trees[1], 0.662, 0.31);
+    this.drawTree(A - 0.1, 0.64, 0.45);
+    this.plants.begin(this.hdr);
+    const treeFerns = [
+      [lx - lrx - 0.02, 0.715, 0.05],
+      [0.66, 0.7, 0.045],
+      [A - 0.04, 0.74, 0.06]
+    ];
+    for (const [x, base, size] of treeFerns)
+      this.drawCycad(x, base, size, 2.4);
+    const bushes = [
+      [0.2, 0.72, 0.055],
+      [lx + lrx * 0.7, 0.8, 0.065],
+      [0.16 * A, 0.95, 0.08]
+    ];
+    for (const [i, [x, y, s]] of bushes.entries())
+      this.drawBush(x, y, s, i + 11);
+    const reeds = [
+      [lx - lrx * 0.75, ly + lry * 0.6, 0.08],
+      [lx + lrx * 0.82, ly + lry * 0.2, 0.07],
+      [lx - lrx * 0.15, ly + lry * 1.1, 0.06],
+      [lx - lrx * 0.55 - 0.13, 0.88, 0.1],
+      [lx - lrx * 0.55 + 0.06, 0.84, 0.08],
+      [lx - lrx * 0.9 - 0.06, 0.665, 0.035],
+      [0.62, 0.735, 0.05],
+      [0.9, 0.73, 0.045]
+    ];
+    for (const [i, [x, y, s]] of reeds.entries())
+      this.drawReeds(x, y, s, i + 5);
+    const ferns = [
+      [0.32, 0.78, 0.07],
+      [0.88, 0.74, 0.08],
+      [0.48, 0.9, 0.08],
+      [0.1, 0.74, 0.05],
+      [0.58, 0.76, 0.05],
+      [0.7, 0.95, 0.07]
+    ];
+    for (const [i, [x, y, s]] of ferns.entries())
+      this.drawFern(x * A, y, s, i + 7, false);
+    const cycads = [
+      [0.04, 0.86, 0.09],
+      [0.47, 0.835, 0.07],
+      [0.9, 0.84, 0.1]
+    ];
+    for (const [x, base, size] of cycads)
+      this.drawCycad(x * A, base, size);
+    const reach = [
+      ...ferns.map(([x, y, s]) => [x * A, y, s, s * 1.2]),
+      ...cycads.map(([x, y, s]) => [x * A, y, s, s * 2.2]),
+      ...treeFerns.map(([x, y, s]) => [x, y, s * 2.4, s * 2.2]),
+      ...bushes.map(([x, y, s]) => [x, y, s * 2, s * 1.2]),
+      ...reeds.map(([x, y, s]) => [x, y, s, s * 0.6])
+    ];
+    this.plants.end(this.hdr, W, H, 0.01 * H, (px2, py) => reach.reduce((w, [x, y, s, r]) => Math.abs(px2 / H - x) < r ? Math.max(w, clamp((y - py / H) / (s * 1.2), 0, 1)) : w, 0));
+    const p = this.pool;
+    const o = p.y0 * W * 3;
+    for (let i = 0;i < p.gloss.length; i++)
+      if (this.hdr[o + i * 3] !== water[i * 3] || this.hdr[o + i * 3 + 1] !== water[i * 3 + 1] || this.hdr[o + i * 3 + 2] !== water[i * 3 + 2])
+        p.gloss[i] = 0;
+  }
+  drawShadows() {
+    const H = this.H;
+    const ground = (x, y, w, h, tip) => groundShadow(this.hdr, this.W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+    if (this.activity !== "calm") {
+      const s = this.sauropod;
+      const [from, to] = this.sauropodSpots();
+      ground(lerp(from, to, s.p) - s.face * 0.06, 0.668, 0.28, 0.13, 0.8);
+    }
+    for (const w of this.herd) {
+      const S = 0.2 * (0.6 + (w.y - 0.7) * 2.5) * w.size;
+      ground(w.x + w.face * 0.04 * S, w.y, 1 * S, 0.55 * S, 0.8);
+    }
+    const r = this.rex;
+    if (r.x > -5)
+      ground(r.x - r.dir * 0.03, 0.935, 0.24, 0.24, 0.8);
+    const d = this.delorean;
+    if (d.t >= 0 && d.t <= DELOREAN)
+      ground(d.x0 + 0.05 * Math.min(d.t, DELOREAN), 0.958, 0.18, 0.065, 0.9);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  rim(base, x, depth2, width) {
+    if (this.look.style === "front")
+      return base;
+    const glow2 = 0.35 + 0.65 * Math.exp(-Math.abs(x - this.look.orb.x * this.W) / (0.45 * this.H));
+    const k = Math.exp(-depth2 / (width * this.px)) * glow2 * 0.35;
+    return [base[0] + this.look.light[0] * k, base[1] + this.look.light[1] * k, base[2] + this.look.light[2] * k];
+  }
+  fillBelow(top, until, color) {
+    const { W, H } = this;
+    for (let x = 0;x < W; x++)
+      for (let y = Math.max(0, Math.floor(top[x]));y < (until ? Math.min(H, Math.ceil(until[x])) : H); y++) {
+        const c = color(x, y, y + 0.5 - top[x]);
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top[x], 0, 1));
+      }
+  }
+  paintLava(vx) {
+    const { W, H, look } = this;
+    const core = new Float32Array(W * H);
+    const heat = new Float32Array(W * H);
+    const halo = new Float32Array(W * H);
+    const along2 = new Float32Array(W * H);
+    for (const [off, spread, end, seed] of [
+      [-0.035, -0.32, 0.47, 1],
+      [-0.015, -0.12, 0.38, 2],
+      [0.02, 0.2, 0.43, 3],
+      [0.038, 0.42, 0.54, 4]
+    ]) {
+      for (let py = (CRATER + 0.004) * H;py < end * H; py += 0.5 * this.px) {
+        const v = py / H;
+        const t = (v - CRATER) / (end - CRATER);
+        const px = (vx + off + spread * (v - CRATER) + 0.03 * (fbm1(v * 10 + seed * 7, 3) - 0.5) * t) * H;
+        const w = Math.max(0.7 * this.px, lerp(0.006, 0.0028, t) * H);
+        const R = w * 4;
+        for (let y = Math.max(0, Math.floor(py - R));y <= Math.min(H - 1, Math.ceil(py + R)); y++)
+          for (let x = Math.max(0, Math.floor(px - R));x <= Math.min(W - 1, Math.ceil(px + R)); x++) {
+            const d = Math.hypot(x + 0.5 - px, y + 0.5 - py);
+            const i = y * W + x;
+            const c = clamp(w - d + 0.5, 0, 1);
+            if (c > core[i]) {
+              core[i] = c;
+              along2[i] = v;
+            }
+            heat[i] = Math.max(heat[i], clamp(1 - d / w, 0, 1) * (1 - 0.7 * t));
+            halo[i] = Math.max(halo[i], Math.exp(-d / (w * 1.3)) * (1 - 0.5 * t));
+          }
+      }
+    }
+    const cx = vx * H;
+    const cy = (CRATER + 0.006) * H;
+    for (let y = Math.max(0, Math.floor(cy - 0.06 * H));y < Math.min(H, cy + 0.03 * H); y++)
+      for (let x = Math.max(0, Math.floor(cx - 0.08 * H));x < Math.min(W, cx + 0.08 * H); x++) {
+        const i = y * W + x;
+        halo[i] = Math.max(halo[i], Math.exp(-Math.hypot((x - cx) / 2.2, y - cy) / (0.012 * H)) * 1.5);
+      }
+    const [red, orange] = look.lava;
+    const index = [];
+    for (let i = 0;i < W * H; i++) {
+      if (halo[i] > 0.01) {
+        const k = halo[i] * look.glow;
+        this.hdr[i * 3] += red[0] * k;
+        this.hdr[i * 3 + 1] += red[1] * k;
+        this.hdr[i * 3 + 2] += red[2] * k;
+      }
+      if (core[i] <= 0)
+        continue;
+      const h = heat[i];
+      this.blend(i * 3, lerp(red[0], orange[0], h), lerp(red[1], orange[1], h), lerp(red[2], orange[2], h), core[i]);
+      index.push(i);
+    }
+    const box = index.length ? [index.reduce((m, i) => Math.min(m, i % W), W), Math.floor(index[0] / W), index.reduce((m, i) => Math.max(m, i % W), 0), Math.floor(index[index.length - 1] / W)] : [0, 0, -1, -1];
+    this.lava = { index: Int32Array.from(index), k: Float32Array.from(index, (i) => core[i] * (0.4 + heat[i])), along: Float32Array.from(index, (i) => along2[i]), box };
+  }
+  paintLake() {
+    const { W, H, A, look } = this;
+    const [lx, ly, lrx, lry] = this.lake();
+    const [cx, cy, rx, ry] = [lx * H, ly * H, lrx * H, lry * H];
+    const red = look.lava[0];
+    const mud = this.paint([0.3, 0.24, 0.15]);
+    const px = this.px;
+    const y0 = Math.max(0, Math.floor(cy - ry - 2 * px));
+    const y1 = Math.min(H, Math.ceil(cy + ry + 3 * px));
+    const gloss = new Float32Array((y1 - y0) * W);
+    for (let y = y0;y < y1; y++)
+      for (let x = Math.max(0, Math.floor(cx - rx - 3 * px));x < Math.min(W, cx + rx + 3 * px); x++) {
+        const q = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry);
+        const shore = clamp((1.12 - q) * 6, 0, 1);
+        if (shore <= 0)
+          continue;
+        const o = (y * W + x) * 3;
+        this.blend(o, mud[0], mud[1], mud[2], shore * 0.8);
+        const wet = clamp((1 - q) * Math.min(rx, ry) * 0.5 + 0.5, 0, 1);
+        if (wet <= 0)
+          continue;
+        this.blend(o, look.water[0], look.water[1], look.water[2], wet);
+        gloss[(y - y0) * W + x] = wet * (0.72 + 0.06 * Math.sin(y * 2.1 + x * 0.05));
+        const sheen = look.glow * 0.25 * Math.exp(-Math.abs(x / H - (A - VENT_X)) / 0.1) * wet * (0.7 + 0.3 * Math.sin(y / px * 2.7));
+        this.hdr[o] += red[0] * sheen;
+        this.hdr[o + 1] += red[1] * sheen;
+        this.hdr[o + 2] += red[2] * sheen;
+      }
+    const far = cy - ry;
+    const n = y1 - y0;
+    const below2 = (r) => Math.max(0, y0 + r - far);
+    this.pool = {
+      y0,
+      y1,
+      rows: Float32Array.from({ length: n }, (_, r) => (HORIZON7 - 0.004) * H - below2(r) * (1.5 + 3.2 * below2(r) / (2 * ry))),
+      amp: new Float32Array(n).fill(0.8 * (H / 180)),
+      gloss
+    };
+  }
+  paintRiver() {
+    const { W, H, look, px } = this;
+    const [lx, ly, lrx, lry] = this.lake();
+    const mud = this.paint([0.3, 0.24, 0.15]);
+    const sky = look.sky[look.sky.length - 1][1];
+    const reaches = [
+      { y0: 0.62, y1: ly - lry * 0.4, x0: lx - lrx * 0.9 - 0.1, x1: lx - lrx * 0.55, w0: 0.002, w1: 0.012, amp: 0.025, seed: 1 },
+      { y0: ly + lry * 0.4, y1: 1.02, x0: lx - lrx * 0.5, x1: lx - lrx * 0.55 - 0.16, w0: 0.014, w1: 0.08, amp: 0.05, seed: 2 }
+    ];
+    const [qx, qy, qrx, qry] = [0.76, 0.728, 0.1, 0.017];
+    for (let y = Math.floor((qy - qry * 1.4) * H);y < Math.ceil((qy + qry * 1.4) * H); y++)
+      for (let x = Math.floor((qx - qrx * 1.2) * H);x < Math.ceil((qx + qrx * 1.2) * H); x++) {
+        const q = Math.hypot(((x + 0.5) / H - qx) / qrx, ((y + 0.5) / H - qy) / qry);
+        const o = (y * W + x) * 3;
+        this.blend(o, mud[0], mud[1], mud[2], clamp((1.15 - q) * 6, 0, 1) * 0.8);
+        const wet = clamp((1 - q) * qry * H * 0.5 + 0.5, 0, 1);
+        if (wet <= 0)
+          continue;
+        const mirror = 0.5 - 0.3 * clamp(((y + 0.5) / H - qy + qry) / (2 * qry), 0, 1);
+        const ripple = 0.18 * smoothstep(0.75, 1, Math.sin(y / px * 1.3 + fbm1(x / px * 0.08 + 5, 4) * 6));
+        this.blend(o, lerp(look.water[0], sky[0] * look.mirror[0], mirror) + look.ripple[0] * ripple, lerp(look.water[1], sky[1] * look.mirror[1], mirror) + look.ripple[1] * ripple, lerp(look.water[2], sky[2] * look.mirror[2], mirror) + look.ripple[2] * ripple, wet);
+      }
+    for (const r of reaches)
+      for (let y = Math.floor(r.y0 * H);y < Math.min(H, Math.ceil(r.y1 * H)); y++) {
+        const t = clamp((y / H - r.y0) / (r.y1 - r.y0), 0, 1);
+        const w = lerp(r.w0, r.w1, t) * H;
+        const cx = (lerp(r.x0, r.x1, t) + r.amp * (Math.sin(TAU * t + r.seed) - Math.sin(r.seed))) * H;
+        const mirror = 0.45 - 0.25 * t;
+        const water = [lerp(look.water[0], sky[0] * look.mirror[0], mirror), lerp(look.water[1], sky[1] * look.mirror[1], mirror), lerp(look.water[2], sky[2] * look.mirror[2], mirror)];
+        for (let x = Math.max(0, Math.floor(cx - w * 1.4 - 1));x < Math.min(W, Math.ceil(cx + w * 1.4 + 1)); x++) {
+          if (Math.hypot(((x + 0.5) / H - lx) / lrx, ((y + 0.5) / H - ly) / lry) < 1)
+            continue;
+          const d = Math.abs(x + 0.5 - cx);
+          const o = (y * W + x) * 3;
+          this.blend(o, mud[0], mud[1], mud[2], clamp(w * 1.35 - d + 0.5, 0, 1) * 0.8);
+          const wet = clamp(w - d + 0.5, 0, 1);
+          if (wet <= 0)
+            continue;
+          const ripple = 0.18 * smoothstep(0.75, 1, Math.sin(y / px * 1.3 + fbm1(x / px * 0.08 + r.seed * 9, 4) * 6));
+          this.blend(o, water[0] + look.ripple[0] * ripple, water[1] + look.ripple[1] * ripple, water[2] + look.ripple[2] * ripple, wet);
+        }
+      }
+  }
+  lake() {
+    return [this.A - VENT_X - 0.1, 0.735, Math.min(0.3, 0.22 * this.A), 0.042];
+  }
+  drawTree(x, base, top, scale2 = 1) {
+    const H = this.H;
+    const h = base - top;
+    const z = scale2;
+    this.shape([cap(x * H, base * H, x * H, (top + 0.02 * z) * H, this.thick(0.008 * z), this.thick(0.004 * z), this.paint(BARK))], this.lighting, 0.6);
+    const needles = this.paint(NEEDLES);
+    const parts = [ell(x * H, (top + 0.015 * z) * H, 0.035 * z * H, 0.02 * z * H, 0, needles)];
+    for (let k = 0;k < 5; k++) {
+      const y = top + 0.02 * z + k * h * 0.07;
+      const w = (0.035 + k * 0.008 + hash(x * 9 + k) * 0.01) * z;
+      for (const s of [-1, 1]) {
+        parts.push(cap(x * H, y * H, (x + s * w) * H, (y + 0.012 * z) * H, this.thick(0.006 * z), this.thick(0.004 * z), needles));
+        parts.push(ell((x + s * w * 0.7) * H, (y + 0.012 * z) * H, w * 0.45 * H, 0.011 * z * H, s * 0.15, needles));
+      }
+    }
+    this.shape(parts, this.lighting, this.look.style === "rim" ? 0.4 : 0.7);
+  }
+  drawCycad(x, base, size, trunk = 0.6) {
+    const H = this.H;
+    const top = base - size * trunk;
+    const fern = trunk > 1;
+    this.shape([cap(x * H, base * H, x * H, top * H, size * (fern ? 0.1 : 0.14) * H, size * (fern ? 0.07 : 0.12) * H, this.paint(fern ? [0.3, 0.22, 0.14] : [0.42, 0.32, 0.18]), 4)], this.lighting, 0.7);
+    const frond = this.paint(FROND2);
+    for (let i = 0;i < 11; i++) {
+      const a = -Math.PI - 0.35 + i / 10 * (Math.PI + 0.7) + (hash(i + x) - 0.5) * 0.15;
+      const len = size * (1.4 + hash(i * 3 + x) * 0.5) * H;
+      const parts = [];
+      let [px, py] = [x * H, top * H];
+      const spine = [[px, py]];
+      const widths = [1];
+      let angle = a;
+      for (let s = 0;s < 6; s++) {
+        angle += Math.cos(a) > 0 ? 0.05 : -0.05;
+        const nx = px + Math.cos(angle) * (len / 6);
+        const ny = py + Math.sin(angle) * (len / 6) + s * 0.0015 * H;
+        parts.push(cap(px, py, nx, ny, this.thick(0.004), this.thick(0.003), frond));
+        const leaf = (1 - s / 8) * size * 0.4 * H;
+        spine.push([nx, ny]);
+        widths.push(leaf * 0.45);
+        if (!this.cells)
+          for (const side of [-1, 1])
+            parts.push(cap(nx, ny, nx + Math.cos(angle + side * 0.8) * leaf, ny + Math.sin(angle + side * 0.8) * leaf, 0.004 * H, 0.0012 * H, frond));
+        [px, py] = [nx, ny];
+      }
+      if (this.cells)
+        parts.push(...blade(spine, widths, frond));
+      this.shape(parts, this.lighting, this.look.style === "rim" ? this.cells ? 0.18 : 0.3 : 0.6);
+    }
+    if (!fern)
+      this.shape([ell(x * H, (top - 0.008) * H, size * 0.12 * H, size * 0.16 * H, 0, this.paint([0.7, 0.5, 0.2]), 3)], this.lighting, 0.6);
+  }
+  drawBush(x, y, size, seed) {
+    const H = this.H;
+    const greens = [this.paint(NEEDLES), this.paint(FROND2), this.paint([0.24, 0.44, 0.16])];
+    const parts = [];
+    for (let i = 0;i < 8; i++) {
+      const u = (i / 7 - 0.5) * 1.5 + (hash(seed * 13 + i) - 0.5) * 0.3;
+      const r = size * (0.42 + 0.22 * hash(seed * 7 + i)) * (1 - 0.35 * Math.abs(u));
+      const cy = y - r * 0.8 - size * 0.45 * (1 - u * u) * hash(seed * 3 + i);
+      parts.push(ell((x + u * size) * H, cy * H, r * H, r * 0.8 * H, 0, greens[i % 3]));
+    }
+    parts.sort((a, b) => a.kind === "ellipse" && b.kind === "ellipse" ? a.cy - b.cy : 0);
+    this.shape(parts, this.lighting, this.look.style === "rim" ? 0.3 : 0.6);
+  }
+  drawReeds(x, y, size, seed) {
+    const H = this.H;
+    const stalk = this.paint([0.2, 0.32, 0.1]);
+    const tip = this.paint([0.45, 0.38, 0.2]);
+    const parts = [];
+    for (let i = 0;i < 9; i++) {
+      const bx = x + (hash(seed * 11 + i) - 0.5) * size * 0.6;
+      const lean = (hash(seed * 5 + i) - 0.5) * 0.25;
+      const h = size * (0.6 + 0.5 * hash(seed * 17 + i));
+      const tx = bx + lean * h;
+      const ty = y - h;
+      parts.push(cap(bx * H, y * H, tx * H, ty * H, this.thick(0.003), this.thick(0.002), stalk));
+      if (!this.cells)
+        for (let j = 1;j < 5; j++) {
+          const jx = bx + lean * h * (j / 5);
+          const jy = y - h * (j / 5);
+          for (const side of [-1, 1])
+            parts.push(cap(jx * H, jy * H, (jx + side * size * 0.08) * H, (jy + size * 0.05) * H, 0.0012 * H, 0.0006 * H, stalk));
+        }
+      parts.push(ell(tx * H, (ty - size * 0.03) * H, this.thick(0.0028), size * 0.05 * H, lean, tip));
+    }
+    this.shape(parts, this.lighting, this.look.style === "rim" ? this.cells ? 0.18 : 0.3 : 0.6);
+  }
+  drawFern(x, y, size, seed, swaying) {
+    const H = this.H;
+    const fern = this.paint(FERN);
+    for (let i = 0;i < 7; i++) {
+      const base = -Math.PI / 2 + (i / 6 * 2 - 1) * 1.15 + (hash(seed * 5 + i) - 0.5) * 0.2;
+      const bend = swaying ? sway(x, this.time, i * 1.3 + seed * 2) * 0.05 * (Math.sin(base) > 0 ? -1 : 1) : 0;
+      const len = size * (0.75 + hash(seed * 7 + i) * 0.35) * H;
+      const parts = [];
+      let [px, py] = [x * H, y * H];
+      const spine = [[px, py]];
+      const widths = [1];
+      let angle = base + bend;
+      for (let s = 0;s < 7; s++) {
+        const q = s / 7;
+        angle += (Math.cos(base) >= 0 ? 1 : -1) * 0.1 * (0.4 + Math.abs(Math.cos(base))) + bend * 0.3;
+        const nx = px + Math.cos(angle) * (len / 7);
+        const ny = py + Math.sin(angle) * (len / 7);
+        parts.push(cap(px, py, nx, ny, this.thick(lerp(0.004, 0.0012, q)), this.thick(lerp(0.004, 0.0012, q + 1 / 7), 0.7), fern));
+        const leaf = Math.sin(Math.PI * (0.25 + q * 0.75)) * size * 0.22 * H;
+        spine.push([nx, ny]);
+        widths.push(leaf * 0.55);
+        if (!this.cells)
+          for (const side of [-1, 1])
+            parts.push(cap(nx, ny, nx + Math.cos(angle + side * 1.15) * leaf, ny + Math.sin(angle + side * 1.15) * leaf, 0.0045 * H, 0.001 * H, fern));
+        [px, py] = [nx, ny];
+      }
+      if (this.cells)
+        parts.push(...blade(spine, widths, fern));
+      this.shape(parts, this.lighting, this.look.style === "rim" ? this.cells ? 0.18 : 0.3 : 0.6);
+    }
+  }
+  plumeTop() {
+    return this.A - VENT_X + 0.08;
+  }
+  drawSmoke() {
+    const { A, H, look } = this;
+    const [hot, cool, alpha] = look.smoke;
+    const blown = 0.0025 * gust(A - VENT_X, this.time);
+    for (const s of this.smoke) {
+      const t = s.age;
+      const x = (A - VENT_X + (hash(s.seed) - 0.5) * 0.02 + 0.002 * t + 0.0009 * t * t + 0.006 * Math.sin(t * 0.7 + s.seed) + blown * t) * H;
+      const y = (CRATER - 0.004 - 0.018 * t + 0.0004 * t * t) * H;
+      const r = (0.012 + 0.006 * t) * (0.8 + hash(s.seed + 1) * 0.4) * H;
+      const a = alpha * smoothstep(0, 1.5, t) * (1 - smoothstep(8, SMOKE_LIFE, t));
+      const k = smoothstep(0, 5, t);
+      const c = [lerp(hot[0], cool[0], k), lerp(hot[1], cool[1], k), lerp(hot[2], cool[2], k)];
+      this.disc(x, y, r, c[0], c[1], c[2], a * 0.5);
+      this.disc(x - r * 0.15, y - r * 0.15, r * 0.65, c[0] * 1.08, c[1] * 1.08, c[2] * 1.08, a * 0.5);
+    }
+  }
+  drawPterosaurs() {
+    const { A, H } = this;
+    const count = this.activity === "teeming" ? 4 : 2;
+    const skin = this.paint([0.55, 0.32, 0.2]);
+    const wing = this.paint([0.42, 0.24, 0.16]);
+    const crest = this.paint([0.75, 0.3, 0.12]);
+    for (let i = 0;i < count; i++) {
+      const a = this.creatureTime * (0.55 + i * 0.09) + i * 1.9;
+      const x = (0.42 * A + i * 0.07 + Math.cos(a) * (0.16 + i * 0.05)) * H;
+      const y = (0.15 + i * 0.045 + Math.sin(a) * 0.035) * H;
+      const f = Math.sin(a) > 0 ? -1 : 1;
+      const flap = Math.sin(this.time * 1.6 + i * 2) * Math.max(0, Math.sin(this.time * 0.3 + i));
+      const s = (0.055 - i * 0.005) * H;
+      for (const side of [-1, 1]) {
+        const wrist = [x + side * 0.45 * s, y - (0.18 + flap * 0.35) * s];
+        const tip = [x + side * 1.05 * s, y + (0.05 - flap * 0.6) * s];
+        this.polygon([[x, y - 0.06 * s], wrist, tip, [x + side * 0.4 * s, y + 0.06 * s], [x, y + 0.1 * s]], wing);
+        this.shape([cap(x, y - 0.04 * s, ...wrist, 0.05 * s, 0.035 * s, skin), cap(...wrist, ...tip, 0.035 * s, 0.01 * s, skin)], this.lighting, 0.4);
+      }
+      this.shape([
+        ell(x, y, 0.2 * s, 0.08 * s, 0, skin),
+        cap(x + f * 0.12 * s, y - 0.03 * s, x + f * 0.3 * s, y - 0.1 * s, 0.05 * s, 0.045 * s, skin),
+        cap(x + f * 0.3 * s, y - 0.1 * s, x + f * 0.68 * s, y - 0.04 * s, 0.035 * s, 0.006 * s, skin),
+        cap(x + f * 0.3 * s, y - 0.12 * s, x + f * 0.02 * s, y - 0.26 * s, 0.035 * s, 0.006 * s, crest)
+      ], this.lighting, 0.5);
+    }
+  }
+  stepSauropod(dt) {
+    const s = this.sauropod;
+    stepGait(s.g, s.mode === "walk" ? 0.05 * dt / 0.06 : 0, dt, s.face);
+    s.pose = clamp(s.pose + (s.mode === "browse" ? 0.5 : -0.5) * dt, 0, 1);
+    if (s.mode === "browse") {
+      s.timer -= dt;
+      if (s.timer > 0)
+        return;
+      s.mode = "turn";
+      s.target = -s.face;
+      return;
+    }
+    if (s.mode === "turn") {
+      if (s.pose > 0)
+        return;
+      s.face = s.target > 0 ? Math.min(1, s.face + dt * 0.8) : Math.max(-1, s.face - dt * 0.8);
+      if (s.face === s.target)
+        s.mode = "walk";
+      return;
+    }
+    const [from, to] = this.sauropodSpots();
+    const speed = 0.05 / Math.max(0.05, Math.abs(to - from));
+    s.p = clamp(s.p + s.face * speed * dt, 0, 1);
+    if (s.face > 0 && s.p < 1 || s.face < 0 && s.p > 0)
+      return;
+    s.mode = "browse";
+    s.timer = rand(3, 6);
+  }
+  sauropodSpots() {
+    return [this.trees[0] + 0.175, this.trees[1] - 0.175];
+  }
+  drawSauropod() {
+    const H = this.H;
+    const s = this.sauropod;
+    const g = s.g;
+    const [from, to] = this.sauropodSpots();
+    const side = s.face < 0 ? -1 : 1;
+    const rise = bob(g.phase) * g.go * 0.004;
+    const P = body(lerp(from, to, s.p) * H, 0.668 * H, H, s.face);
+    const skin = this.paint(SAUROPOD);
+    const legs = { fore: 0.07, hind: 0.06, top: 0.085 - rise, w: 0.022, a: 0.038, b: 0.037, reach: 0.018, lift: 0.012, r: [0.02, 0.016, 0.015] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([SAUROPOD[0] * 0.75, SAUROPOD[1] * 0.75, SAUROPOD[2] * 0.75]) }), this.lighting, 0.5);
+    const browsing = [this.trees[side > 0 ? 1 : 0] - side * 0.035 + Math.sin(this.time * 0.4) * 0.006, (side > 0 ? 0.35 : 0.33) + Math.sin(this.time * 0.9) * 0.004];
+    const shoulder = P(0.07, -0.11 - rise);
+    const walkHead = P(0.18, -0.25 - rise + Math.cos(TAU * 2 * g.phase - 1.5) * 0.004 * g.go);
+    const pose = smoothstep(0, 1, s.pose);
+    const head = [lerp(walkHead[0], browsing[0] * H, pose), lerp(walkHead[1], browsing[1] * H, pose)];
+    const ctrl = [shoulder[0] + (head[0] - shoulder[0]) * 0.1, head[1] + (shoulder[1] - head[1]) * 0.6];
+    const neck = (t) => [(1 - t) ** 2 * shoulder[0] + 2 * (1 - t) * t * ctrl[0] + t * t * head[0], (1 - t) ** 2 * shoulder[1] + 2 * (1 - t) * t * ctrl[1] + t * t * head[1]];
+    const tail = (t) => P(lerp(-0.08, -0.29, t), lerp(-0.097 - rise, -0.03, t) + 0.03 * Math.sin(Math.PI * t) + (Math.sin(this.time * 0.5 + t * 2) * 0.01 + Math.sin(TAU * 2 * g.phase - t * 2) * 0.006 * g.go) * t, -g.lag * 0.06 * t * t);
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: skin }),
+      ell(...P(0, -0.092 - rise), P.len(0.115, 0.04), 0.05 * H, -0.12 * P.along, skin),
+      ...chain(tail, 6, 0.03 * H, 0.003 * H, skin),
+      ...chain(neck, 8, 0.028 * H, 0.009 * H, skin),
+      ell(head[0] + side * 0.008 * H, head[1], 0.017 * H, 0.0105 * H, side * 0.2, skin)
+    ], this.lighting, 0.6);
+  }
+  stepRex(dt, cdt) {
+    const r = this.rex;
+    if (r.x < -5) {
+      r.next -= dt;
+      if (r.next > 0)
+        return;
+      r.dir = Math.random() < 0.5 ? 1 : -1;
+      r.x = r.dir > 0 ? -0.45 : this.A + 0.45;
+      return;
+    }
+    const before = r.phase;
+    r.x += r.dir * 0.3 * cdt;
+    r.phase += cdt * 1.45;
+    if (Math.floor(r.phase * 2) !== Math.floor(before * 2)) {
+      const foot = r.x + r.dir * 0.05;
+      for (let i = 0;i < 5; i++)
+        this.dust.push({ x: foot + (Math.random() - 0.5) * 0.04, y: 0.93 - Math.random() * 0.01, vx: (Math.random() - 0.5) * 0.02, age: 0 });
+    }
+    if (r.x < -0.5 || r.x > this.A + 0.5) {
+      r.x = -9;
+      r.next = rand(60, 110);
+    }
+  }
+  drawDust() {
+    const H = this.H;
+    const c = this.paint([0.55, 0.45, 0.3]);
+    for (const d of this.dust)
+      this.disc(d.x * H, d.y * H, (0.008 + d.age * 0.008) * H, c[0], c[1], c[2], (1 - d.age / 3) * 0.3);
+  }
+  drawRex() {
+    const r = this.rex;
+    if (r.x < -5)
+      return;
+    const H = this.H;
+    const P = body(r.x * H, 0.935 * H, 0.3 * H, r.dir);
+    const S = P.S;
+    const rise = bob(r.phase, 0.55) * 0.02;
+    const skin = this.paint(REX);
+    const dark = this.paint([REX[0] * 0.7, REX[1] * 0.7, REX[2] * 0.7]);
+    const leg = (offset, color) => {
+      const [reach, lift2] = stride(r.phase, offset, 0.55);
+      const fu = reach * 0.19;
+      const fv = -lift2 * 0.08;
+      const ankle = [fu - 0.08, fv - 0.13];
+      return [
+        ...limb(P, 0, -0.57 - rise, ...ankle, 0.25, 0.27, -1, 0.14 * S, 0.065 * S, 0.04 * S, color),
+        cap(...P(...ankle), ...P(fu + 0.01, fv - 0.025), 0.04 * S, 0.03 * S, color),
+        cap(...P(fu - 0.01, fv - 0.022), ...P(fu + 0.12, fv - 0.012 - lift2 * 0.03), 0.032 * S, 0.012 * S, color)
+      ];
+    };
+    this.shape(leg(0.5, dark), this.lighting, 0.5);
+    const nod = Math.cos(TAU * 2 * r.phase - 1.2) * 0.015;
+    const jaw = Math.max(0, Math.sin(this.creatureTime * 0.9 + 1)) ** 8 * 0.05;
+    const tail = (t) => P(lerp(-0.16, -0.95, t), lerp(-0.66 - rise, -0.57, t) - 0.04 * Math.sin(Math.PI * t) + Math.sin(TAU * 2 * r.phase - 1 - t * 2.5) * 0.03 * t);
+    const [hu, hv] = [0.47, -0.84 - rise + nod];
+    this.shape([
+      ...leg(0, skin),
+      ...chain(tail, 7, 0.14 * S, 0.012 * S, skin),
+      ell(...P(0.04, -0.64 - rise), 0.29 * S, 0.15 * S, 0.12 * r.dir, skin),
+      ell(...P(0.2, -0.62 - rise), 0.13 * S, 0.14 * S, 0, skin),
+      cap(...P(0.24, -0.7 - rise), ...P(hu - 0.07, hv + 0.02), 0.11 * S, 0.075 * S, skin),
+      ell(...P(hu, hv), 0.12 * S, 0.075 * S, 0.1 * r.dir, skin),
+      cap(...P(hu + 0.04, hv - 0.01), ...P(hu + 0.19, hv + 0.025), 0.065 * S, 0.042 * S, skin),
+      cap(...P(hu - 0.02, hv + 0.05), ...P(hu + 0.16, hv + 0.06 + jaw), 0.05 * S, 0.026 * S, skin),
+      ...limb(P, 0.27, -0.6 - rise, 0.35, -0.53 - rise + nod * 0.5, 0.07, 0.07, 1, 0.026 * S, 0.02 * S, 0.014 * S, skin)
+    ], this.lighting, 0.7);
+    this.shape([0, 1, 2, 3].map((k) => cap(...P(-0.16 + k * 0.1, -0.77 - rise), ...P(-0.13 + k * 0.1, -0.64 - rise), 0.02 * S, 0.01 * S, dark)), this.lighting, 0.2);
+    const eye = this.paint([0.95, 0.7, 0.1]);
+    this.disc(...P(hu + 0.05, hv - 0.035), 0.016 * S, eye[0], eye[1], eye[2], 1);
+  }
+  stepDelorean(dt) {
+    const d = this.delorean;
+    if (d.t < 0) {
+      d.wait -= dt;
+      if (d.wait > 0)
+        return;
+      d.t = 0;
+      d.x0 = rand(0.12, 0.3) * this.A;
+      return;
+    }
+    d.t += dt;
+    if (d.t < DELOREAN + 6)
+      return;
+    d.t = -1;
+    d.wait = eggWait(true) * TIME_SCALE10;
+  }
+  drawDelorean() {
+    const H = this.H;
+    const d = this.delorean;
+    const speed = 0.05;
+    const x = d.x0 + speed * Math.min(d.t, DELOREAN);
+    const y = 0.958;
+    const along2 = Math.ceil(Math.max(0, x - 0.054 - d.x0) * H);
+    for (let i = 0;i < along2; i++) {
+      const u = d.x0 + i / H;
+      const age = d.t - (u - d.x0) / speed;
+      const k = Math.exp(-age / 1.8) * (0.7 + 0.3 * Math.sin(i * 1.7 + this.time * 20)) * 0.9;
+      if (k < 0.02)
+        continue;
+      for (const v of [-0.003, -0.001, 0.005, 0.007])
+        this.add(u * H, (y + v) * H, 1.2 * k, 0.42 * k, 0.06 * k);
+    }
+    for (const [at, cx] of [[0, d.x0], [DELOREAN, x]]) {
+      const f = (d.t - at) / FLASH;
+      if (f < 0 || f > 1)
+        continue;
+      const k = Math.sin(f * Math.PI);
+      this.disc(cx * H, (y - 0.03) * H, (0.02 + f * 0.08) * H, 0.25 * k, 0.6 * k, 1.5 * k, 0.5 * k);
+      for (let i = 0;i < 64; i++) {
+        const a = i / 64 * TAU;
+        const r = (0.03 + f * 0.12) * H;
+        this.splat(cx * H + Math.cos(a) * r, (y - 0.03) * H + Math.sin(a) * r * 0.5, 0.2 * k, 0.55 * k, 1.4 * k);
+      }
+    }
+    const appear = clamp(d.t / (FLASH * 0.5), 0, 1);
+    if (d.t > DELOREAN || appear <= 0)
+      return;
+    const S = 0.18 * H;
+    const P = (u, v) => [x * H + u * S, y * H + v * S];
+    const body2 = this.look.stars > 50 ? [0.07, 0.11, 0.26] : this.paint([0.62, 0.64, 0.68]);
+    const dark = this.paint([0.1, 0.1, 0.12]);
+    this.polygon([P(-0.5, -0.05), P(-0.5, -0.2), P(-0.25, -0.24), P(-0.05, -0.36), P(0.15, -0.36), P(0.5, -0.17), P(0.5, -0.08), P(0.45, -0.05)], body2, appear);
+    this.polygon([P(-0.12, -0.23), P(-0.02, -0.33), P(0.13, -0.33), P(0.3, -0.22)], dark, appear);
+    this.polygon([P(-0.5, -0.12), P(0.5, -0.12), P(0.5, -0.1), P(-0.5, -0.1)], this.paint([0.3, 0.3, 0.34]), appear);
+    for (const u of [-0.3, 0.3])
+      this.disc(...P(u, -0.06), 0.075 * S, dark[0], dark[1], dark[2], appear);
+    this.disc(...P(-0.47, -0.17), 0.03 * S, 0.25, 0.6, 1.6, appear);
+    this.disc(...P(-0.49, -0.1), 0.02 * S, 1.3, 0.08, 0.05, appear * 0.8);
+  }
+  wander(w, dt, zone, speed, pause) {
+    w.phase += dt * (w.moving ? 6 : 1.5);
+    if (w.rest > 0) {
+      w.rest -= dt;
+      w.graze = Math.min(1, w.graze + dt * 0.8);
+      w.moving = false;
+      return;
+    }
+    w.graze = Math.max(0, w.graze - dt * 1.2);
+    w.wanderT -= dt;
+    if (w.wanderT <= 0) {
+      w.wanderT = rand(6, 14);
+      [w.wx, w.wy] = this.openSpot(...zone);
+    }
+    const dx = w.wx - w.x;
+    const dy = w.wy - w.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.01) {
+      w.rest = rand(pause[0], pause[1]);
+      w.wanderT = 0;
+      return;
+    }
+    w.moving = true;
+    if (Math.abs(dx) > 0.005)
+      w.face = Math.sign(dx);
+    w.x += dx / d * speed * dt;
+    w.y += dy / d * speed * dt;
+  }
+  drawTriceratops(w) {
+    const H = this.H;
+    const g = w.g;
+    const P = body(w.x * H, w.y * H, 0.27 * H * (0.6 + (w.y - 0.7) * 2.5) * w.size, g.turn);
+    const S = P.S;
+    const skin = this.paint(TRIKE);
+    const rise = bob(g.phase) * g.go * 0.012;
+    const legs = { fore: 0.24, hind: 0.24, top: 0.32 - rise, w: 0.11, a: 0.17, b: 0.16, reach: 0.15, lift: 0.07, r: [0.1, 0.065, 0.055], paw: [0.03, this.paint([0.4, 0.33, 0.21])] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([TRIKE[0] * 0.75, TRIKE[1] * 0.75, TRIKE[2] * 0.75]) }), this.lighting, 0.7);
+    const gz = smoothstep(0, 1, w.graze);
+    const nod = Math.cos(TAU * 2 * g.phase - 1) * 0.02 * g.go;
+    const [hu, hv] = [lerp(0.48, 0.56, gz), lerp(-0.44, -0.22, gz) + nod - rise];
+    const tail = (t) => P(lerp(-0.26, -0.74, t), lerp(-0.48 - rise, -0.3, t) + Math.sin(TAU * 2 * g.phase - t * 2) * 0.025 * t * g.go, -g.lag * 0.08 * t * t);
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: skin }),
+      ...chain(tail, 5, 0.15 * S, 0.015 * S, skin),
+      ell(...P(-0.02, -0.46 - rise), P.len(0.4, 0.2), 0.23 * S, 0.08 * P.along, skin),
+      ell(...P(hu - 0.08, hv - 0.1), P.len(0.11, 0.18), 0.19 * S, lerp(-0.45, -0.1, gz) * P.along, this.paint([0.62, 0.34, 0.18])),
+      cap(...P(hu - 0.02, hv - 0.02), ...P(hu + 0.19, hv + 0.07), 0.1 * S, 0.045 * S, skin),
+      cap(...P(hu + 0.17, hv + 0.06), ...P(hu + 0.23, hv + 0.12), 0.04 * S, 0.012 * S, this.paint([0.3, 0.25, 0.17]))
+    ], this.lighting, 0.7);
+    const bone = this.paint(BONE);
+    this.shape([
+      cap(...P(hu + 0.02, hv - 0.06), ...P(hu + 0.28, hv - 0.22 + gz * 0.14), 0.026 * S, 0.004 * S, bone),
+      cap(...P(hu + 0.05, hv - 0.05, 0.05), ...P(hu + 0.31, hv - 0.17 + gz * 0.14, 0.08), 0.022 * S, 0.004 * S, bone),
+      cap(...P(hu + 0.15, hv + 0.01), ...P(hu + 0.19, hv - 0.07), 0.022 * S, 0.004 * S, bone)
+    ], this.lighting, 0.5);
+  }
+  stepDragonfly(d, dt) {
+    d.phase += dt;
+    if (d.rest > 0) {
+      d.rest -= dt;
+      if (d.rest > 0)
+        return;
+      d.tx = clamp(d.x + rand(-0.3, 0.3), 0.02, this.A - 0.02);
+      d.ty = rand(0.72, 0.95);
+      d.face = Math.sign(d.tx - d.x) || 1;
+    }
+    const dx = d.tx - d.x;
+    const dy = d.ty - d.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.005) {
+      d.rest = rand(1, 4);
+      return;
+    }
+    const step = Math.min(dist, 0.3 * dt);
+    d.x += dx / dist * step;
+    d.y += dy / dist * step;
+  }
+  drawDragonfly(d) {
+    const H = this.H;
+    const s = 0.045 * H;
+    const x = d.x * H;
+    const y = (d.y + Math.sin(d.phase * 3 + d.x * 10) * 0.004) * H;
+    const f = d.face;
+    const wing = this.paint([0.6, 0.85, 0.9]);
+    const shimmer2 = 0.3 + 0.15 * Math.sin(this.time * 8 + d.x * 30);
+    this.ellipse(x + f * 0.1 * s, y - 0.12 * s, 0.32 * s, 0.07 * s, wing[0], wing[1], wing[2], shimmer2);
+    this.ellipse(x - f * 0.08 * s, y - 0.08 * s, 0.28 * s, 0.06 * s, wing[0], wing[1], wing[2], shimmer2);
+    this.shape([cap(x - f * 0.55 * s, y + 0.02 * s, x + f * 0.3 * s, y, 0.025 * s, 0.05 * s, this.paint([0.1, 0.55, 0.6])), ell(x + f * 0.36 * s, y, 0.07 * s, 0.07 * s, 0, this.paint([0.15, 0.4, 0.75]))], this.lighting, 0.5);
+  }
+  stepNessie(dt) {
+    const n = this.nessie;
+    if (n.t < 0) {
+      n.wait -= dt;
+      if (n.wait > 0)
+        return;
+      const [cx, cy, rx, ry] = this.lake();
+      n.t = 0;
+      [n.x, n.y] = this.openSpot(cx - 0.6 * rx, cx + 0.6 * rx, cy - 0.2 * ry, cy + 0.4 * ry);
+      n.dir = Math.random() < 0.5 ? 1 : -1;
+      return;
+    }
+    n.t += dt / 3;
+    if (n.t < 1)
+      return;
+    n.t = -1;
+    n.wait = rand(2, 5);
+  }
+  drawNessie() {
+    const n = this.nessie;
+    if (n.t < 0)
+      return;
+    const { H, look } = this;
+    const e = smoothstep(0, 0.15, n.t) * (1 - smoothstep(0.85, 1, n.t));
+    for (let k = 0;k < 3; k++) {
+      const r = (this.time * 0.25 + k / 3) % 1;
+      const rx = (0.012 + r * 0.05) * H;
+      const a = (1 - r) * e * 0.35;
+      for (let i = 0;i < 48; i++) {
+        const t = i / 48 * TAU;
+        this.splat(n.x * H + Math.cos(t) * rx, n.y * H + Math.sin(t) * rx * 0.2, look.ripple[0] * a, look.ripple[1] * a, look.ripple[2] * a);
+      }
+    }
+    const skin = this.paint([0.3, 0.4, 0.36]);
+    const base = [n.x * H, n.y * H];
+    const look2 = Math.sin(n.t * TAU * 1.5) * 0.02;
+    const head = [(n.x + n.dir * 0.045 + look2) * H, (n.y - 0.11 * e) * H];
+    const ctrl = [base[0] - n.dir * 0.01 * H, (n.y - 0.09 * e) * H];
+    const neck = (t) => [(1 - t) ** 2 * base[0] + 2 * (1 - t) * t * ctrl[0] + t * t * head[0], (1 - t) ** 2 * base[1] + 2 * (1 - t) * t * ctrl[1] + t * t * head[1]];
+    const parts = [ell(base[0] - n.dir * 0.035 * H, base[1], 0.03 * H, 0.007 * H * e + 0.5, 0, skin)];
+    for (let i = 0;i < 6; i++)
+      parts.push(cap(...neck(i / 6), ...neck((i + 1) / 6), lerp(0.011, 0.006, i / 6) * H * e, lerp(0.011, 0.006, (i + 1) / 6) * H * e, skin));
+    parts.push(ell(head[0] + n.dir * 0.008 * H, head[1], 0.014 * H * e, 0.008 * H * e, n.dir * 0.15, skin));
+    this.shape(parts, this.lighting, 0.6);
+  }
+}
+function flowLava(hdr, index, k, along2, time, r, g, b) {
+  for (let j = 0;j < index.length; j++) {
+    const p = 0.5 + 0.5 * Math.sin(along2[j] * 90 - time * 2);
+    const a = p * p * p * k[j] * 0.45;
+    const o = index[j] * 3;
+    hdr[o] += r * a;
+    hdr[o + 1] += g * a;
+    hdr[o + 2] += b * a;
+  }
+}
+var prehistoric = {
+  id: "prehistoric",
+  name: "Prehistoric",
+  description: "A smoking volcano over ferns and cycads, with a T. rex stomping by now and then",
+  activity: {
+    calm: "Volcano, smoke, ferns and cycads",
+    lively: "Adds a browsing sauropod and circling pterosaurs",
+    teeming: "Adds a triceratops herd, dragonflies and a lake with something in it"
+  },
+  scrim: {
+    day: [
+      [20, 40, 70],
+      [26, 40, 22],
+      [14, 28, 10]
+    ],
+    sunset: [
+      [18, 14, 14],
+      [34, 12, 8],
+      [12, 6, 5]
+    ],
+    night: [
+      [4, 6, 16],
+      [8, 4, 12],
+      [2, 4, 6]
+    ]
+  },
+  create: (settings) => new Prehistoric(settings)
+};
+
+// wallpapers/rider.ts
+var TIME_SCALE11 = 0.35;
+var CREATURE_SPEED11 = 0.25;
+var BIKE_Y = 0.2;
+var BIKE_L = 0.6;
+var RIDER_S = 0.28;
+var STRIDE = 0.1;
+var LIVELY = { up: 1.4, look: 1.6, turn: 0.45, down: 1.4, rest: 1, back: 0.45 };
+var TEEMING = { up: 1.9, wait: 0.4, mount: 0.9, idle: 0.8, off: 1.7, away: 2.2, slide: 2.2, settle: 0.6, dismount: 0.9, turn: 0.45, down: 1.9, rest: 0.6, back: 0.45 };
+var START = 1 - 45 * TIME_SCALE11 * CREATURE_SPEED11;
+var PSYCHIC = { rise: 3, hold: 26, drop: 28, gone: 46 };
+function unit(x, y, z) {
+  const l = Math.hypot(x, y, z);
+  return [x / l, y / l, z / l];
+}
+var LOOKS10 = {
+  day: {
+    style: "front",
+    dir: unit(-0.45, -0.6, 0.66),
+    light: [1, 1, 1],
+    sun: { x: 0.1, y: 0.1 },
+    ground: [0.7, 0.715, 0.77],
+    halo: [0.84, 0.84, 0.87],
+    seam: [0.36, 0.38, 0.45],
+    chip: [0.9, 0.92, 0.97],
+    dust: [0.6, 0.57, 0.52],
+    tint: [1, 1, 1],
+    pill: [
+      [0.92, 0.94, 0.98],
+      [0.12, 0.38, 0.85]
+    ],
+    screen: [0.85, 0.92, 1],
+    lamps: 0,
+    night: false
+  },
+  sunset: {
+    style: "front",
+    dir: unit(-0.85, -0.25, 0.48),
+    light: [1, 0.7, 0.45],
+    sun: { x: -0.15, y: 0.3 },
+    ground: [0.66, 0.34, 0.14],
+    halo: [0.88, 0.52, 0.22],
+    seam: [0.28, 0.14, 0.1],
+    chip: [0.9, 0.6, 0.36],
+    dust: [0.85, 0.55, 0.3],
+    tint: [1, 0.66, 0.46],
+    pill: [
+      [0.95, 0.72, 0.5],
+      [0.1, 0.25, 0.62]
+    ],
+    screen: [1, 0.75, 0.5],
+    lamps: 0.2,
+    night: false
+  },
+  night: {
+    style: "rim",
+    dir: unit(0.4, -0.6, 0.6),
+    light: [0.25, 0.5, 1.5],
+    sun: { x: 0.85, y: -0.25 },
+    ground: [0.03, 0.046, 0.11],
+    halo: [0.05, 0.085, 0.21],
+    seam: [0.012, 0.018, 0.045],
+    chip: [0.06, 0.11, 0.28],
+    dust: [0.08, 0.14, 0.36],
+    tint: [0.38, 0.1, 0.22],
+    pill: [
+      [0.1, 0.28, 1.1],
+      [0.03, 0.08, 0.4]
+    ],
+    screen: [0.1, 0.22, 0.6],
+    lamps: 1,
+    night: true
+  }
+};
+var PAINT2 = [0.88, 0.09, 0.05];
+var TIRE = [0.06, 0.065, 0.06];
+var CANOPY2 = [0.2, 0.06, 0.06];
+var SEAT = [0.32, 0.13, 0.06];
+var JACKET = [0.92, 0.1, 0.06];
+var TROUSERS = [0.78, 0.08, 0.05];
+var GLOVES = [0.68, 0.07, 0.05];
+var CUFF = [0.66, 0.66, 0.7];
+var HAIR2 = [0.02, 0.02, 0.03];
+var SKIN2 = [0.9, 0.62, 0.46];
+var HEADLAMP = [1.7, 1.1, 0.45];
+var TAILLAMP = [2, 0.1, 0.05];
+var CRACKS = [
+  [862, 362, 852, 392, 848, 425, 838, 450, 822, 472, 815, 505, 806, 528, 788, 548, 770, 572, 748, 598, 722, 628, 700, 652, 688, 668],
+  [848, 425, 868, 418, 882, 409],
+  [838, 450, 856, 461],
+  [815, 505, 838, 495, 860, 478],
+  [788, 548, 760, 558, 730, 566, 702, 570],
+  [770, 572, 792, 590],
+  [748, 598, 738, 622, 743, 646],
+  [722, 628, 699, 631]
+];
+var CHIPS = [
+  [785, 412, 5],
+  [905, 382, 4],
+  [742, 648, 8],
+  [1137, 637, 6],
+  [1157, 606, 3],
+  [1062, 675, 4],
+  [866, 466, 3],
+  [930, 700, 3],
+  [1210, 520, 3]
+];
+var JOINTS = ["head", "neck", "shL", "shR", "elL", "elR", "haL", "haR", "hip", "hipL", "hipR", "knL", "knR", "ftL", "ftR"];
+
+class Rider extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: LOOKS10.day.dir };
+  shade;
+  weather;
+  k = 1;
+  cx = 1;
+  cycle = START;
+  rider = { x: 1, y: 0.58, face: 0, mount: 0 };
+  gait = { phase: 0.3, go: 0 };
+  bike = { x: 1, y: BIKE_Y, angle: 0, on: true };
+  lamps = 0;
+  trails = [];
+  streak;
+  skids = [];
+  cracks = [];
+  bits = [];
+  dust = [];
+  visitor;
+  psychic = { wait: eggWait() * TIME_SCALE11, t: -1, x: 1, y: 0.8, chunks: [] };
+  crater;
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS10[settings.time];
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, 0);
+    const shade2 = sunShade(settings.time, this.look.sun, this.weather.covered);
+    this.shade = { ...shade2, cast: Math.min(0.9, shade2.cast * 1.3) };
+    this.lamps = this.look.lamps;
+    const motes = { calm: 5, lively: 8, teeming: 12 }[settings.activity];
+    this.dust = Array.from({ length: motes }, () => ({ x: Math.random() * 3, y: rand(0.1, 0.95), phase: Math.random() * TAU }));
+    if (settings.activity === "calm")
+      return;
+    const papers = settings.activity === "teeming" ? 2 : 1;
+    const pebbles = settings.activity === "teeming" ? 7 : 4;
+    for (let i = 0;i < papers; i++)
+      this.bits.push({ x: Math.random() * 2, y: rand(0.4, 0.95), vx: 0, vy: 0, spin: Math.random() * TAU, size: rand(0.022, 0.03), paper: true, age: 0, life: Infinity });
+    for (let i = 0;i < pebbles; i++)
+      this.bits.push({ x: Math.random() * 2, y: rand(0.35, 0.97), vx: 0, vy: 0, spin: Math.random() * TAU, size: rand(0.004, 0.007), paper: false, age: 0, life: Infinity });
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE11;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED11;
+    this.creatureTime += cdt;
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.stepScript(cdt);
+    this.stepTrails(cdt);
+    this.stepVisitor(cdt);
+    this.stepBits(dt);
+    this.stepPsychic(dt);
+    for (const c of this.cracks) {
+      c.age += dt;
+      c.grow = Math.min(1, c.grow + dt * 0.8);
+    }
+    this.cracks = this.cracks.filter((c) => c.age < c.life);
+    for (const d of this.dust) {
+      d.x += (0.006 + 0.07 * gust(d.x, this.time)) * dt;
+      d.y += Math.sin(this.time * 0.3 + d.phase) * 0.002 * dt;
+      if (d.x > this.A + 0.1)
+        d.x = -0.1;
+    }
+  }
+  render() {
+    this.restore();
+    const { W, H } = this;
+    if (this.gloom > 0)
+      for (let i = 0;i < 3; i++) {
+        const x = (this.time * 0.012 + i * 0.9) % (this.A + 1.2) - 0.6;
+        const y = 0.15 + i * 0.33;
+        fillShadow(this.hdr, W, H, x * H, y * H, (x + 0.25) * H, (y + 0.02) * H, 0.45 * H, 0.4 * H, 0.3, 0.34, 0.45, smoothstep(0, 1, this.gloom) * 0.5, 1, 1);
+      }
+    for (const s of this.skids)
+      this.drawTrail(s, this.paint([0.1, 0.1, 0.12]), 0.007, 0.3, false);
+    for (const c of this.cracks)
+      this.drawCrack(c);
+    if (this.crater)
+      this.drawCrater();
+    for (const b of this.bits)
+      this.drawBit(b);
+    this.drawDust();
+    for (const t of this.trails)
+      this.drawTrail(t, TAILLAMP, 0.007, this.look.night ? 0.95 : 0.8, true);
+    if (this.activity === "teeming" && this.bike.on)
+      this.drawParked();
+    this.drawRider();
+    if (this.visitor)
+      this.drawVisitor();
+    if (this.psychic.t >= 0)
+      this.drawChunks();
+    this.weather.draw(this.hdr, W, H);
+    this.finish();
+  }
+  visit() {
+    if (this.visitor)
+      return;
+    this.visitor = { x: this.A + 0.4, y: this.openRow(0.8, 0.92), speed: 0.9, trail: this.newTrail(this.trails, 2.5) };
+  }
+  poke(x, y) {
+    if (this.cracks.length > 8)
+      this.cracks.shift();
+    this.cracks.push(this.makeCrack(x, y, 4, 0.035, 0.07, 60));
+    for (let i = 0;i < 5; i++) {
+      const a = rand(0, TAU);
+      const v = rand(0.05, 0.14);
+      this.bits.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.6, spin: a, size: rand(0.004, 0.008), paper: false, age: 0, life: rand(30, 45) });
+    }
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.k = clamp(A / 0.85, 0.55, 1);
+    this.cx = A / 2;
+    this.bike.x = this.cx;
+    this.rider.x = this.cx;
+    this.lighting = look.style === "front" ? { style: "front", dir: look.dir } : { style: "rim", color: look.light, x: look.sun.x * W, y: look.sun.y * H };
+    this.drawGround();
+    if (this.activity !== "teeming")
+      this.drawParked();
+    this.stepScript(0);
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  poster(px, py) {
+    return [this.cx + (px - 1007) / 1125 * this.k, BIKE_Y + (py - 260) / 1125 * this.k];
+  }
+  drawGround() {
+    const { W, H, look, hdr, px } = this;
+    const grain = this.cells ? 2 : 1;
+    const seamW = Math.max(0.0013 * H * this.k, (this.cells ? 0.9 : 0.6) * px);
+    const covered = this.weather.covered ? 0.85 : 1;
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      const seamX = this.cx - 0.006 * this.k + 0.0015 * Math.sin(v * 9);
+      const seamA = smoothstep(BIKE_Y + 0.08 * this.k, BIKE_Y + 0.13 * this.k, v) * (1 - 0.65 * smoothstep(0.6, 1, v)) * 0.55;
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const dx = (u - this.cx) / 0.42;
+        const dy = (v - BIKE_Y - 0.27 * this.k) / 0.36;
+        const pool = Math.exp(-(dx * dx + dy * dy) * 1.6);
+        const stain = 1 + (fbm2(u * 2.2, v * 2.2, 3) - 0.5) * 0.1 + (fbm2(u * 9 + 3, v * 9, 2) - 0.5) * 0.04;
+        const g = 1 + (hash2(Math.floor(x / px / grain), Math.floor(y / px / grain)) - 0.5) * 0.03;
+        const m = stain * g * covered;
+        const o = (y * W + x) * 3;
+        hdr[o] = lerp(look.ground[0], look.halo[0], pool) * m;
+        hdr[o + 1] = lerp(look.ground[1], look.halo[1], pool) * m;
+        hdr[o + 2] = lerp(look.ground[2], look.halo[2], pool) * m;
+        const s = clamp(seamW - Math.abs(u - seamX) * H + 0.5, 0, 1) * seamA;
+        if (s > 0)
+          this.blend(o, look.seam[0], look.seam[1], look.seam[2], s);
+      }
+    }
+    const w = Math.max(0.0012 * H * this.k, (this.cells ? 0.75 : 0.5) * px);
+    for (const line of CRACKS) {
+      const pts = [];
+      for (let i = 0;i < line.length; i += 2)
+        pts.push(this.poster(line[i], line[i + 1]));
+      if (!look.night)
+        stroke(hdr, W, H, pts.flatMap(([x, y]) => [x * H + 1.3 * px, y * H + 0.6 * px, 0.5, w]), look.chip, 0);
+      stroke(hdr, W, H, pts.flatMap(([x, y]) => [x * H, y * H, 0.8, w]), look.seam, 0);
+    }
+    for (const [cx, cy, size] of CHIPS) {
+      const [x, y] = this.poster(cx, cy);
+      const r = Math.max(size / 1125 * this.k * H / 1.4, 0.7 * px);
+      this.ellipse(x * H + r * 0.5, y * H + r * 0.5, r * 1.2, r * 0.8, look.seam[0], look.seam[1], look.seam[2], 0.55);
+      this.ellipse(x * H, y * H, r, r * 0.75, look.chip[0], look.chip[1], look.chip[2], 0.9);
+    }
+  }
+  stepScript(cdt) {
+    const before = { x: this.rider.x, y: this.rider.y };
+    this.cycle += cdt;
+    if (this.activity === "calm")
+      this.calmAt();
+    if (this.activity === "lively")
+      this.livelyAt(this.cycle);
+    if (this.activity === "teeming")
+      this.teemingAt(this.cycle);
+    const d = Math.hypot(this.rider.x - before.x, this.rider.y - before.y);
+    this.gait.phase += d / (STRIDE * this.k);
+    this.gait.go = clamp(this.gait.go + (d > 0.0000001 && this.rider.mount === 0 ? cdt : -cdt) * 2.5, 0, 1);
+  }
+  calmAt() {
+    Object.assign(this.rider, { x: this.cx, y: BIKE_Y + 0.38 * this.k, face: 0, mount: 0 });
+  }
+  livelyAt(cycle) {
+    const T = LIVELY;
+    const total2 = T.up + T.look + T.turn + T.down + T.rest + T.back;
+    const near2 = BIKE_Y + 0.33 * this.k;
+    const far = Math.min(0.86, BIKE_Y + 0.6 * this.k);
+    const t = (cycle % total2 + total2) % total2;
+    const r = this.rider;
+    r.x = this.cx;
+    r.mount = 0;
+    const ends = [T.up, T.look, T.turn, T.down, T.rest, T.back].reduce((list, d) => [...list, (list.at(-1) ?? 0) + d], []);
+    if (t < ends[0])
+      return void Object.assign(r, { y: lerp(far, near2, walk(t / T.up)), face: 0 });
+    if (t < ends[1])
+      return void Object.assign(r, { y: near2, face: 0 });
+    if (t < ends[2])
+      return void Object.assign(r, { y: near2, face: smoothstep(0, 1, (t - ends[1]) / T.turn) });
+    if (t < ends[3])
+      return void Object.assign(r, { y: lerp(near2, far, walk((t - ends[2]) / T.down)), face: 1 });
+    if (t < ends[4])
+      return void Object.assign(r, { y: far, face: 1 });
+    Object.assign(r, { y: far, face: 1 - smoothstep(0, 1, (t - ends[4]) / T.back) });
+  }
+  teemingAt(cycle) {
+    const T = TEEMING;
+    const steps = [T.up, T.wait, T.mount, T.idle, T.off, T.away, T.slide, T.settle, T.dismount, T.turn, T.down, T.rest, T.back];
+    const total2 = steps.reduce((a, b2) => a + b2, 0);
+    const t = (cycle % total2 + total2) % total2;
+    let i = 0;
+    let s = t;
+    while (i < steps.length - 1 && s >= steps[i])
+      s -= steps[i++];
+    const p = s / steps[i];
+    const k = this.k;
+    const r = this.rider;
+    const b = this.bike;
+    const far = Math.min(0.86, BIKE_Y + 0.6 * k);
+    const spot = { x: this.cx + 0.05 * k, y: BIKE_Y + 0.2 * k };
+    const lamps = this.look.lamps;
+    b.on = true;
+    b.angle = 0;
+    b.y = BIKE_Y;
+    b.x = this.cx;
+    this.lamps = lamps;
+    r.face = 0;
+    r.mount = 0;
+    if (i === 0)
+      Object.assign(r, { x: lerp(this.cx, spot.x, walk(p)), y: lerp(far, spot.y, walk(p)) });
+    if (i >= 1 && i <= 9)
+      Object.assign(r, { x: spot.x, y: spot.y });
+    if (i === 2)
+      r.mount = smoothstep(0, 1, p);
+    if (i === 3)
+      r.mount = 1;
+    if (i === 3)
+      this.lamps = Math.max(lamps, 0.25) * (1 + 0.6 * smoothstep(0, 0.4, p));
+    if (i === 4) {
+      r.mount = 1;
+      this.lamps = Math.max(lamps, 0.25) * 1.6;
+      b.x = this.cx - (this.cx + 0.75) * p * p;
+      this.streak ??= this.newTrail(this.trails, 2.6);
+    }
+    if (i === 5) {
+      r.mount = 1;
+      b.on = false;
+    }
+    if (i === 6) {
+      r.mount = 1;
+      this.lamps = Math.max(lamps, 0.25) * 1.6;
+      const q = 1 - (1 - p) ** 2;
+      b.x = this.cx + (this.A - this.cx + 0.5) * (1 - q);
+      b.y = BIKE_Y + 0.1 * k * (1 - smoothstep(0.55, 1, p));
+      b.angle = 1.15 * (1 - smoothstep(0.6, 1, p));
+      this.streak ??= this.newTrail(this.trails, 2.6);
+      if (p > 0.08 && p < 0.95)
+        this.skid();
+    }
+    if (i === 7)
+      r.mount = 1;
+    if (i === 8)
+      r.mount = 1 - smoothstep(0, 1, p);
+    if (i === 9)
+      r.face = smoothstep(0, 1, p);
+    if (i === 10)
+      Object.assign(r, { x: lerp(spot.x, this.cx, walk(p)), y: lerp(spot.y, far, walk(p)), face: 1 });
+    if (i === 11)
+      Object.assign(r, { x: this.cx, y: far, face: 1 });
+    if (i === 12)
+      Object.assign(r, { x: this.cx, y: far, face: 1 - smoothstep(0, 1, p) });
+    if (i !== 4 && i !== 6) {
+      if (this.streak)
+        this.streak.open = false;
+      this.streak = undefined;
+      for (const s2 of this.skids)
+        s2.open = false;
+    }
+    if (!this.streak)
+      return;
+    const [tx, ty] = this.bikePoint(b, 1, 0.48, -0.01);
+    const last = this.streak.pts.at(-1);
+    if (!last || Math.hypot(tx / this.H - last.x, ty / this.H - last.y) > 0.012)
+      this.streak.pts.push({ x: tx / this.H, y: ty / this.H, age: 0 });
+  }
+  newTrail(list, life) {
+    const trail = { pts: [], life, open: true };
+    list.push(trail);
+    return trail;
+  }
+  skid() {
+    const b = this.bike;
+    const [x, y] = this.bikePoint(b, 1, 0.4, 0.12);
+    if (x > this.W + 4)
+      return;
+    const trail = this.skids.find((s) => s.open) ?? this.newTrail(this.skids, 9);
+    const last = trail.pts.at(-1);
+    if (!last || Math.hypot(x / this.H - last.x, y / this.H - last.y) > 0.01)
+      trail.pts.push({ x: x / this.H, y: y / this.H, age: 0 });
+  }
+  stepTrails(cdt) {
+    for (const list of [this.trails, this.skids])
+      for (const t of list)
+        for (const p of t.pts)
+          p.age += cdt;
+    const alive = (t) => t.open || t.pts.some((p) => p.age < t.life);
+    this.trails = this.trails.filter(alive);
+    this.skids = this.skids.filter(alive);
+    for (const t of [...this.trails, ...this.skids])
+      t.pts = t.pts.filter((p, i, all) => p.age < t.life || (all[i + 1]?.age ?? 0) < t.life);
+  }
+  stepVisitor(cdt) {
+    const v = this.visitor;
+    if (!v)
+      return;
+    v.x -= v.speed * cdt;
+    const [tx, ty] = [v.x + 0.48 * BIKE_L * 0.55 * this.k, v.y - 0.01 * BIKE_L * 0.55 * this.k];
+    const last = v.trail.pts.at(-1);
+    if (!last || Math.hypot(tx - last.x, ty - last.y) > 0.015)
+      v.trail.pts.push({ x: tx, y: ty, age: 0 });
+    if (v.x > -0.5)
+      return;
+    v.trail.open = false;
+    this.visitor = undefined;
+  }
+  stepBits(dt) {
+    for (const b of this.bits) {
+      b.age += dt;
+      const g = gust(b.x, this.time);
+      const push = b.paper ? 0.35 : 0.05;
+      b.vx += (g * g * push - b.vx * (b.paper ? 1.5 : 3)) * dt;
+      b.vy += (-b.vy * 3 + (b.paper ? Math.sin(this.time * 2 + b.spin) * 0.03 * g : 0)) * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.spin += b.vx * dt * (b.paper ? 40 : 20);
+      if (b.x < this.A + 0.06)
+        continue;
+      b.x = -0.06;
+      b.y = this.openRow(0.4, 0.95);
+    }
+    this.bits = this.bits.filter((b) => b.age < b.life);
+  }
+  stepPsychic(dt) {
+    const e = this.psychic;
+    if (e.t < 0) {
+      e.wait -= dt;
+      if (e.wait > 0)
+        return;
+      e.t = 0;
+      [e.x, e.y] = this.openSpot(0.25, this.A - 0.25, 0.7, 0.9);
+      e.chunks = Array.from({ length: 9 }, (_, i) => ({ a: i / 9 * TAU + rand(-0.2, 0.2), r: rand(0.02, 0.07), size: rand(0.009, 0.018), lift: rand(0.05, 0.11), phase: rand(0, TAU) }));
+      this.crater = this.makeCrack(e.x, e.y, 9, 0.06, 0.12, PSYCHIC.gone + 30);
+      this.crater.grow = 0;
+      return;
+    }
+    e.t += dt;
+    if (this.crater) {
+      this.crater.age += dt;
+      this.crater.grow = Math.min(1, this.crater.grow + dt * 0.6);
+      if (this.crater.age > this.crater.life)
+        this.crater = undefined;
+    }
+    if (e.t < PSYCHIC.gone)
+      return;
+    e.t = -1;
+    e.wait = eggWait(true) * TIME_SCALE11;
+  }
+  makeCrack(x, y, branches, min, max, life) {
+    const lines = [];
+    for (let i = 0;i < branches; i++) {
+      let a = i / branches * TAU + rand(-0.4, 0.4);
+      const length = rand(min, max);
+      const line = [x, y];
+      const n = 5;
+      for (let j = 1;j <= n; j++) {
+        a += rand(-0.5, 0.5);
+        const [px, py] = [line.at(-2) ?? x, line.at(-1) ?? y];
+        line.push(px + Math.cos(a) * (length / n), py + Math.sin(a) * (length / n) * 0.75);
+        if (j === 2 && Math.random() < 0.5) {
+          const b = a + (Math.random() < 0.5 ? -0.9 : 0.9);
+          const [qx, qy] = [line.at(-2) ?? x, line.at(-1) ?? y];
+          lines.push([qx, qy, qx + Math.cos(b) * length * 0.3, qy + Math.sin(b) * length * 0.22]);
+        }
+      }
+      lines.push(line);
+    }
+    return { lines, age: 0, life, grow: 0 };
+  }
+  bikePoint(b, scale2, u, v) {
+    const L = BIKE_L * this.k * scale2 * this.H;
+    const c = Math.cos(b.angle);
+    const s = Math.sin(b.angle);
+    return [b.x * this.H + (u * c - v * s) * L, b.y * this.H + (u * s + v * c) * L];
+  }
+  drawParked() {
+    const b = this.bike;
+    const H = this.H;
+    const L = BIKE_L * this.k * H;
+    groundShadow(this.hdr, this.W, H, this.shade, b.x * H + 0.02 * L, (b.y + 0.07 * this.k) * H, 0.95 * L, 0.22 * L, 0.9);
+    this.drawBike(b, 1, PAINT2, this.lamps);
+  }
+  drawBike(b, scale2, paint, lamps) {
+    const L = BIKE_L * this.k * scale2 * this.H;
+    const P = (u, v) => this.bikePoint(b, scale2, u, v);
+    const E = (u, v, rx, ry, a, color) => ell(...P(u, v), rx * L, ry * L, a + b.angle, color);
+    const C = (au, av, bu, bv, r0, r1, color) => cap(...P(au, av), ...P(bu, bv), r0 * L, r1 * L, color);
+    const tire = this.paint(TIRE);
+    const dark = this.paint([0.1, 0.09, 0.09]);
+    this.shape([E(-0.405, 0.036, 0.092, 0.106, 0, tire), E(0.4, 0.034, 0.095, 0.106, 0, tire), C(-0.28, 0.105, 0.28, 0.105, 0.032, 0.032, dark)], this.lighting, 0.8);
+    const hub = this.paint([0.34, 0.33, 0.33]);
+    this.shape([E(-0.4, 0.06, 0.036, 0.042, 0, hub), E(0.42, 0.05, 0.04, 0.048, 0, hub)], this.lighting, 0.6);
+    const red = this.paint(paint);
+    this.shape([
+      E(-0.215, 0.035, 0.205, 0.085, 0, red),
+      C(-0.36, 0.06, -0.06, 0.03, 0.06, 0.08, red),
+      E(-0.4, 0.085, 0.05, 0.04, 0.3, red),
+      C(-0.36, -0.01, -0.28, -0.055, 0.045, 0.04, red),
+      E(0.1, 0.075, 0.14, 0.055, 0, red),
+      E(-0.02, 0.02, 0.06, 0.07, 0, red),
+      C(0.2, 0.03, 0.4, 0.03, 0.085, 0.062, red),
+      E(0.3, -0.035, 0.11, 0.06, -0.12, red)
+    ], this.lighting, 0.6);
+    const seat = this.paint(SEAT);
+    this.shape([C(-0.01, -0.02, 0.12, -0.04, 0.068, 0.07, seat), C(0.13, -0.05, 0.19, -0.088, 0.068, 0.055, seat)], this.lighting, 0.7);
+    const stitch = this.paint([0.2, 0.08, 0.04]);
+    this.shape([C(0.06, -0.085, 0.065, 0.015, 0.006, 0.006, stitch), C(0.135, -0.1, 0.132, -0.01, 0.006, 0.006, stitch)], this.lighting, 0);
+    this.shape([E(0.17, -0.105, 0.035, 0.018, -0.4, this.paint([0.5, 0.24, 0.12])), E(0.03, -0.065, 0.045, 0.016, -0.1, this.paint([0.46, 0.21, 0.1]))], this.lighting, 0);
+    const canopy = this.paint(CANOPY2);
+    this.shape([E(-0.17, -0.085, 0.17, 0.072, -0.15, canopy), E(-0.02, -0.08, 0.035, 0.06, 0, this.paint([0.16, 0.14, 0.14]))], this.lighting, 0.7);
+    this.shape([E(-0.22, -0.105, 0.06, 0.012, -0.2, this.paint([0.42, 0.24, 0.24]))], this.lighting, 0);
+    this.shape([E(-0.295, 0.01, 0.046, 0.011, 0, this.paint([0.85, 0.86, 0.9]))], this.lighting, 0.2);
+    this.shape([E(-0.295, 0.01, 0.019, 0.019, 0, this.paint([0.12, 0.2, 0.6]))], this.lighting, 0.2);
+    const badge = (u, v, w, h, a) => [P(u - w + h * 0.3, v - w * a - h), P(u + w + h * 0.3, v + w * a - h), P(u + w - h * 0.3, v + w * a + h), P(u - w - h * 0.3, v - w * a + h)];
+    this.polygon(badge(-0.205, 0.045, 0.048, 0.02, 0.15), this.paint([0.1, 0.18, 0.55]));
+    this.polygon(badge(-0.205, 0.045, 0.04, 0.013, 0.15), this.paint([0.95, 0.72, 0.12]));
+    this.polygon(badge(-0.37, 0.085, 0.036, 0.015, 0.25), this.paint([0.95, 0.5, 0.1]));
+    const s = this.look.screen;
+    const arc = [
+      [-0.36, -0.08],
+      [-0.29, -0.14],
+      [-0.2, -0.195],
+      [-0.1, -0.232],
+      [-0.045, -0.238],
+      [-0.01, -0.16]
+    ];
+    this.polygon([...arc.map(([u, v]) => P(u, v)), P(-0.06, -0.14), P(-0.2, -0.14), P(-0.32, -0.07)], s, 0.2);
+    this.shape(arc.slice(1).map(([u, v], i) => C(arc[i][0], arc[i][1], u, v, 0.006, 0.006, s)), this.lighting, 0);
+    if (this.look.night)
+      this.shape(arc.slice(1).map(([u, v], i) => C(arc[i][0], arc[i][1], u, v, 0.006, 0.006, [s[0] * 1.5, s[1] * 1.5, s[2] * 1.5])), this.lighting, 0);
+    const glow2 = clamp(lamps, 0, 2);
+    const lit = (off, on) => [lerp(off[0], on[0], Math.min(1, glow2)), lerp(off[1], on[1], Math.min(1, glow2)), lerp(off[2], on[2], Math.min(1, glow2))];
+    this.shape([E(-0.47, 0.045, 0.018, 0.024, 0, lit(this.paint([0.9, 0.85, 0.6]), HEADLAMP)), E(0.485, -0.01, 0.014, 0.022, 0, lit(this.paint([0.5, 0.04, 0.03]), TAILLAMP))], this.lighting, 0);
+    if (glow2 <= 0)
+      return;
+    const [hx, hy] = P(-0.62, 0.075);
+    lightPool(this.hdr, this.W, this.H, hx, hy, 0.2 * L, 0.085 * L, [1, 0.55, 0.16], 2.4 * glow2, 0.025 * glow2);
+    const [fx, fy] = P(-0.9, 0.11);
+    lightPool(this.hdr, this.W, this.H, fx, fy, 0.4 * L, 0.17 * L, [1, 0.55, 0.16], 1.8 * glow2, 0.02 * glow2);
+    const [tx, ty] = P(0.56, 0.02);
+    lightPool(this.hdr, this.W, this.H, tx, ty, 0.12 * L, 0.07 * L, [1, 0.06, 0.04], 2.5 * glow2, 0.04 * glow2);
+  }
+  drawRider() {
+    const r = this.rider;
+    const H = this.H;
+    const S = RIDER_S * this.k * H;
+    const standing = this.standingPose(r.x * H, r.y * H, S, r.face);
+    if (r.mount <= 0)
+      groundShadow(this.hdr, this.W, H, this.shade, r.x * H, r.y * H, 0.34 * S, 0.95 * S, 0.7);
+    if (r.mount > 0 && !this.bike.on)
+      return;
+    const pose = r.mount <= 0 ? standing : r.mount >= 1 ? this.seatedPose(this.bike, 1) : mixPose(standing, this.seatedPose(this.bike, 1), r.mount);
+    this.drawPose(pose, JACKET, true);
+  }
+  standingPose(x, y, S, face) {
+    const g = this.gait;
+    const dir = face < 0.5 ? -1 : 1;
+    const sw = 0.62 + 0.38 * Math.abs(Math.cos(Math.PI * face));
+    const [rl, ll] = stride(g.phase, 0);
+    const [rr, lr] = stride(g.phase, 0.5);
+    const reach = 0.1 * g.go;
+    const stir = gust(x / this.H, this.time);
+    const rise = (bob(g.phase) - 0.5) * 0.012 * g.go + Math.sin(this.time * 1.1) * 0.003;
+    const footL = dir * rl * reach - ll * 0.035 * g.go;
+    const footR = dir * rr * reach - lr * 0.035 * g.go;
+    const swingL = -dir * rr * 0.09 * g.go + stir * 0.008;
+    const swingR = -dir * rl * 0.09 * g.go + stir * 0.012;
+    const P = (u, v) => [x + u * S, y + v * S];
+    return {
+      S,
+      face,
+      head: P(0, -0.885 + rise),
+      neck: P(0, -0.775 + rise),
+      shL: P(-0.16 * sw, -0.705 + rise),
+      shR: P(0.16 * sw, -0.705 + rise),
+      elL: P(-0.23 * sw, -0.6 + rise + swingL * 0.4),
+      elR: P(0.23 * sw, -0.6 + rise + swingR * 0.4),
+      haL: P(-0.215 * sw - Math.max(0, swingL) * 0.3, -0.48 + rise + swingL),
+      haR: P(0.215 * sw + Math.max(0, swingR) * 0.3, -0.48 + rise + swingR),
+      hip: P(0, -0.47 + rise),
+      hipL: P(-0.06 * sw, -0.45 + rise),
+      hipR: P(0.06 * sw, -0.45 + rise),
+      knL: P(-0.058 * sw, -0.25 + footL * 0.5 - ll * 0.02 * g.go),
+      knR: P(0.058 * sw, -0.25 + footR * 0.5 - lr * 0.02 * g.go),
+      ftL: P(-0.055 * sw, -0.04 + footL),
+      ftR: P(0.055 * sw, -0.04 + footR)
+    };
+  }
+  seatedPose(b, scale2) {
+    const P = (u, v) => this.bikePoint(b, scale2, u, v);
+    const sway2 = Math.sin(this.time * 9) * 0.002 * (this.lamps > 0.5 ? 1 : 0);
+    return {
+      S: RIDER_S * this.k * scale2 * this.H,
+      face: 0,
+      head: P(-0.135, -0.175 + sway2),
+      neck: P(-0.085, -0.145 + sway2),
+      shL: P(-0.065, -0.17 + sway2),
+      shR: P(-0.05, -0.105 + sway2),
+      elL: P(-0.12, -0.16),
+      elR: P(-0.1, -0.075),
+      haL: P(-0.16, -0.13),
+      haR: P(-0.15, -0.085),
+      hip: P(0.075, -0.085),
+      hipL: P(0.075, -0.1),
+      hipR: P(0.075, -0.055),
+      knL: P(-0.03, -0.085),
+      knR: P(-0.025, -0.01),
+      ftL: P(0.02, -0.06),
+      ftR: P(0.03, 0.045)
+    };
+  }
+  drawPose(p, jacket, pill) {
+    const S = p.S;
+    const trousers = this.paint(jacket === JACKET ? TROUSERS : [jacket[0] * 0.8, jacket[1] * 0.8, jacket[2] * 0.8]);
+    const boots = this.paint(jacket === JACKET ? JACKET : [0.1, 0.1, 0.12]);
+    const coat = this.paint(jacket);
+    this.shape([cap(...p.hipL, ...p.knL, 0.06 * S, 0.052 * S, trousers), cap(...p.knL, ...p.ftL, 0.052 * S, 0.046 * S, trousers), cap(...p.hipR, ...p.knR, 0.06 * S, 0.052 * S, trousers), cap(...p.knR, ...p.ftR, 0.052 * S, 0.046 * S, trousers)], this.lighting, 0.8);
+    this.shape([ell(...p.ftL, 0.055 * S, 0.062 * S, 0, boots), ell(...p.ftR, 0.055 * S, 0.062 * S, 0, boots)], this.lighting, 0.8);
+    const hips = Math.atan2(p.hipR[1] - p.hipL[1], p.hipR[0] - p.hipL[0]);
+    this.shape([cap(...p.neck, ...p.hip, 0.135 * S, 0.12 * S, coat), ell(...p.hip, 0.14 * S, 0.06 * S, hips, coat), cap(...p.shL, ...p.shR, 0.078 * S, 0.078 * S, coat), ell(...p.neck, 0.085 * S, 0.048 * S, 0, this.paint([jacket[0] * 1.05, jacket[1] * 1.3, jacket[2] * 1.3]))], this.lighting, 0.85);
+    const gloves = this.paint(jacket === JACKET ? GLOVES : [0.1, 0.1, 0.12]);
+    const arm = (sh, el, ha) => [cap(...sh, ...el, 0.055 * S, 0.048 * S, coat), cap(...el, ...ha, 0.048 * S, 0.038 * S, coat)];
+    this.shape([...arm(p.shL, p.elL, p.haL), ...arm(p.shR, p.elR, p.haR)], this.lighting, 0.9);
+    const cuff = this.paint(CUFF);
+    this.shape([ell(...p.haL, 0.04 * S, 0.042 * S, 0, gloves), ell(...p.haR, 0.04 * S, 0.042 * S, 0, gloves)], this.lighting, 0.7);
+    this.shape([ell(lerp(p.elL[0], p.haL[0], 0.75), lerp(p.elL[1], p.haL[1], 0.75), 0.038 * S, 0.014 * S, Math.atan2(p.haL[1] - p.elL[1], p.haL[0] - p.elL[0]) + Math.PI / 2, cuff), ell(lerp(p.elR[0], p.haR[0], 0.75), lerp(p.elR[1], p.haR[1], 0.75), 0.038 * S, 0.014 * S, Math.atan2(p.haR[1] - p.elR[1], p.haR[0] - p.elR[0]) + Math.PI / 2, cuff)], this.lighting, 0.3);
+    const hair = this.paint(HAIR2);
+    const [hx, hy] = p.head;
+    this.shape([ell(hx, hy, 0.09 * S, 0.088 * S, 0, hair), ell(hx - 0.065 * S, hy - 0.04 * S, 0.048 * S, 0.034 * S, 0.6, hair), ell(hx + 0.06 * S, hy - 0.05 * S, 0.048 * S, 0.034 * S, -0.5, hair), ell(hx + 0.01 * S, hy - 0.085 * S, 0.042 * S, 0.034 * S, 0.1, hair), ell(hx - 0.075 * S, hy + 0.03 * S, 0.03 * S, 0.04 * S, 0.3, hair)], this.lighting, 0.35);
+    if (p.face > 0.6) {
+      const f = (p.face - 0.6) / 0.4;
+      this.shape([ell(hx, hy + 0.02 * S, 0.06 * S * f, 0.058 * S, 0, this.paint(SKIN2))], this.lighting, 0.6);
+      this.shape([ell(hx, hy - 0.035 * S, 0.072 * S, 0.035 * S, 0, hair)], this.lighting, 0.5);
+    }
+    if (!pill || p.face > 0.4)
+      return;
+    const spine = Math.atan2(p.neck[1] - p.hip[1], p.neck[0] - p.hip[0]);
+    const a = spine + Math.PI / 2 - 0.35;
+    const side = Math.sin(Math.PI * p.face) * 0.12 * S;
+    const c = [lerp(p.neck[0], p.hip[0], 0.45) + side, lerp(p.neck[1], p.hip[1], 0.45)];
+    const d = [Math.cos(a) * 0.075 * S, Math.sin(a) * 0.075 * S];
+    const [pale, blue] = this.look.pill;
+    this.shape([cap(c[0] - d[0], c[1] - d[1], ...c, 0.034 * S, 0.034 * S, pale), cap(...c, c[0] + d[0], c[1] + d[1], 0.034 * S, 0.034 * S, blue)], this.lighting, 0.6);
+  }
+  drawTrail(t, color, radius, strength, glow2) {
+    if (t.pts.length < 2)
+      return;
+    const H = this.H;
+    const r = Math.max(radius * this.k * H, this.cells ? 1 : 0.6);
+    const pts = t.pts.flatMap((p) => [p.x * H, p.y * H, strength * clamp(1 - p.age / t.life, 0, 1) ** 1.5, r]);
+    if (glow2)
+      stroke(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 3 ? v * 4 : i % 4 === 2 ? v * 0.4 : v), color, 1);
+    stroke(this.hdr, this.W, H, pts, color, glow2 ? 0.6 : 0);
+  }
+  drawCrack(c) {
+    const H = this.H;
+    const fade = clamp((c.life - c.age) / 8, 0, 1);
+    const w = Math.max(0.0012 * H * this.k, this.cells ? 0.75 : 0.5);
+    for (const line of c.lines) {
+      const n = Math.max(2, Math.ceil(line.length / 2 * c.grow));
+      const pts = [];
+      for (let i = 0;i < n * 2 && i < line.length; i += 2)
+        pts.push(line[i] * H, line[i + 1] * H, 0.8 * fade, w);
+      if (!this.look.night)
+        stroke(this.hdr, this.W, H, pts.map((v, i) => i % 4 === 0 ? v + 1.3 : i % 4 === 1 ? v + 0.6 : i % 4 === 2 ? v * 0.6 : v), this.look.chip, 0);
+      stroke(this.hdr, this.W, H, pts, this.look.seam, 0);
+    }
+  }
+  drawCrater() {
+    const c = this.crater;
+    if (!c)
+      return;
+    const H = this.H;
+    const e = this.psychic;
+    const fade = clamp((c.life - c.age) / 10, 0, 1) * c.grow;
+    const s = this.look.seam;
+    this.ellipse(e.x * H, e.y * H, 0.07 * H, 0.03 * H, s[0], s[1], s[2], 0.25 * fade);
+    this.ellipse(e.x * H, e.y * H, 0.045 * H, 0.019 * H, s[0], s[1], s[2], 0.3 * fade);
+    this.drawCrack(c);
+  }
+  drawChunks() {
+    const e = this.psychic;
+    const H = this.H;
+    const up = smoothstep(0, PSYCHIC.rise, e.t) * (1 - smoothstep(PSYCHIC.hold, PSYCHIC.drop, e.t));
+    if (up <= 0)
+      return;
+    const color = this.look.chip;
+    for (const c of e.chunks) {
+      const x = (e.x + Math.cos(c.a) * c.r) * H;
+      const y = (e.y + Math.sin(c.a) * c.r * 0.45) * H;
+      const lift2 = (c.lift + Math.sin(this.time * 0.8 + c.phase) * 0.006) * up * H;
+      groundShadow(this.hdr, this.W, H, this.shade, x, y, c.size * 2.2 * H, c.size * 2 * H, 0.8, lift2);
+      this.shape([ell(x, y - lift2, c.size * H, c.size * 0.75 * H, c.phase, color)], this.lighting, 0.8);
+    }
+    if (this.look.night)
+      lightPool(this.hdr, this.W, H, e.x * H, (e.y - 0.04) * H, 0.12 * H, 0.08 * H, [0.3, 0.45, 1], 1.2 * up, 0.012 * up);
+  }
+  drawBit(b) {
+    const H = this.H;
+    const fade = clamp((b.life - b.age) / 6, 0, 1);
+    if (fade <= 0)
+      return;
+    const x = b.x * H;
+    const y = b.y * H;
+    const s = this.look.seam;
+    if (!b.paper) {
+      const r = Math.max(b.size * this.k * H, this.cells ? 0.8 : 0.5);
+      this.ellipse(x + r * 0.4, y + r * 0.5, r * 1.15, r * 0.8, s[0], s[1], s[2], 0.45 * fade);
+      const c2 = this.look.chip;
+      return this.ellipse(x, y, r, r * 0.8, c2[0], c2[1], c2[2], 0.85 * fade);
+    }
+    const w = b.size * H;
+    const flip = Math.cos(b.spin);
+    const a = b.spin * 0.3;
+    const P = (u, v) => [x + (u * Math.cos(a) - v * flip * Math.sin(a)) * w, y + (u * Math.sin(a) + v * flip * Math.cos(a)) * w * 0.8];
+    this.ellipse(x + 0.2 * w, y + 0.35 * w, w * 0.6, w * 0.25, s[0], s[1], s[2], 0.3);
+    const c = this.look.chip;
+    this.polygon([P(-0.5, -0.35), P(0.5, -0.4), P(0.48, 0.35), P(-0.5, 0.38)], [c[0] * 0.9, c[1] * 0.88, c[2] * 0.82]);
+  }
+  drawDust() {
+    const H = this.H;
+    const c = this.look.dust;
+    for (const d of this.dust) {
+      const g = gust(d.x, this.time);
+      const a = 0.08 + 0.2 * g;
+      this.ellipse(d.x * H, d.y * H, (0.012 + 0.02 * g) * H, 0.005 * H, c[0], c[1], c[2], a);
+    }
+  }
+  drawVisitor() {
+    const v = this.visitor;
+    if (!v)
+      return;
+    const b = { x: v.x, y: v.y, angle: 0, on: true };
+    const L = BIKE_L * this.k * 0.55 * this.H;
+    groundShadow(this.hdr, this.W, this.H, this.shade, v.x * this.H, v.y * this.H + 0.07 * L, 0.95 * L, 0.2 * L, 0.9);
+    this.drawBike(b, 0.55, [0.12, 0.32, 0.8], Math.max(this.look.lamps, 0.3) * 1.5);
+    this.drawPose(this.seatedPose(b, 0.55), [0.1, 0.35, 0.3], false);
+  }
+}
+function walk(p) {
+  const ramp = 0.15;
+  const t = clamp(p, 0, 1);
+  const v = 1 / (1 - ramp);
+  if (t < ramp)
+    return v * t * t / (2 * ramp);
+  if (t > 1 - ramp)
+    return 1 - v * (1 - t) * (1 - t) / (2 * ramp);
+  return v * (t - ramp / 2);
+}
+function mixPose(a, b, t) {
+  const out = { S: lerp(a.S, b.S, t), face: lerp(a.face, b.face, t) };
+  for (const j of JOINTS)
+    out[j] = [lerp(a[j][0], b[j][0], t), lerp(a[j][1], b[j][1], t)];
+  return out;
+}
+function stroke(hdr, W, H, pts, color, soft) {
+  const n = pts.length / 4;
+  for (let i = 0;i + 1 < n; i++) {
+    const [ax, ay, aa, ar] = [pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]];
+    const [bx, by, ba, br] = [pts[i * 4 + 4], pts[i * 4 + 5], pts[i * 4 + 6], pts[i * 4 + 7]];
+    if (aa <= 0 && ba <= 0)
+      continue;
+    const R = Math.max(ar, br) + 1;
+    const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - R));
+    const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx) + R));
+    const y0 = Math.max(0, Math.floor(Math.min(ay, by) - R));
+    const y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by) + R));
+    if (x0 > x1 || y0 > y1)
+      continue;
+    touch(hdr, x0, y0, x1, y1);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy || 0.000001;
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        const px = x + 0.5 - ax;
+        const py = y + 0.5 - ay;
+        const raw = (px * dx + py * dy) / len2;
+        if (raw < 0 && i > 0 || raw >= 1 && i < n - 2)
+          continue;
+        const t = clamp(raw, 0, 1);
+        const d = Math.hypot(px - dx * t, py - dy * t);
+        const r = ar + (br - ar) * t;
+        const a = aa + (ba - aa) * t;
+        const hard = clamp(r - d + 0.5, 0, 1);
+        const fall = Math.max(0, 1 - d / r) ** 2;
+        const cov = (hard + (fall - hard) * soft) * a;
+        if (cov <= 0)
+          continue;
+        const o = (y * W + x) * 3;
+        hdr[o] += (color[0] - hdr[o]) * cov;
+        hdr[o + 1] += (color[1] - hdr[o + 1]) * cov;
+        hdr[o + 2] += (color[2] - hdr[o + 2]) * cov;
+      }
+  }
+}
+var rider = {
+  id: "rider",
+  name: "Rider",
+  description: "A red capsule bike on pale cracked concrete, its rider walking up to it, with another of the gang speeding by now and then",
+  activity: {
+    calm: "The bike, the rider standing by it, and drifting dust",
+    lively: "He walks slowly up to the bike and back, and paper and pebbles skitter in the gusts",
+    teeming: "He rides off in a red tail-light streak and slides back in sideways"
+  },
+  scrim: {
+    day: [
+      [40, 44, 56],
+      [42, 45, 56],
+      [38, 41, 52]
+    ],
+    sunset: [
+      [46, 28, 20],
+      [50, 30, 20],
+      [42, 24, 16]
+    ],
+    night: [
+      [4, 7, 18],
+      [4, 7, 18],
+      [3, 5, 14]
+    ]
+  },
+  create: (settings) => new Rider(settings)
+};
+
+// wallpapers/space.ts
+var TIME_SCALE12 = 0.35;
+var CREATURE_SPEED12 = 0.25;
+var TW = 512;
+var TH = 256;
+var PLANET = { x: 0.52, y: 1.1, r: 0.58 };
+var RING2 = { tilt: 0.42, flat: 0.24, inner: 1.25, outer: 2.1 };
+var METEOR = 1.2;
+var LOOKS11 = {
+  day: {
+    sun: normalize(-0.55, -0.55, 0.62),
+    starK: 0.35,
+    nebula: [
+      [0.02, 0.06, 0.1],
+      [0.03, 0.03, 0.08]
+    ],
+    milkyWay: 0.25,
+    atmosphere: [0.25, 0.5, 1],
+    ring: 1,
+    lighting: "front",
+    tint: [1, 1, 1],
+    ringColor: [0.78, 0.64, 0.46],
+    rockColor: [0.62, 0.54, 0.46],
+    starTints: false
+  },
+  sunset: {
+    sun: normalize(-0.5, -0.48, -0.72),
+    starK: 0.6,
+    nebula: [
+      [0.09, 0.02, 0.07],
+      [0.08, 0.04, 0.02]
+    ],
+    milkyWay: 0.5,
+    atmosphere: [1, 0.5, 0.2],
+    ring: 0.45,
+    lighting: "limb",
+    tint: [0.3, 0.26, 0.28],
+    ringColor: [0.85, 0.62, 0.45],
+    rockColor: [0.75, 0.62, 0.55],
+    starTints: false
+  },
+  night: {
+    sun: normalize(0.6, 0.6, -0.5),
+    starK: 1,
+    nebula: [
+      [0.08, 0.025, 0.14],
+      [0.025, 0.055, 0.12]
+    ],
+    milkyWay: 1.3,
+    atmosphere: [0.2, 0.35, 0.8],
+    ring: 0.12,
+    lighting: "night",
+    tint: [0.05, 0.06, 0.09],
+    ringColor: [0.35, 0.4, 0.9],
+    rockColor: [0.4, 0.5, 0.95],
+    starTints: true
+  }
+};
+var SURFACE2 = buildSurface();
+var WHITE_STAR = [1, 0.97, 1.1];
+var STAR_TINTS3 = [
+  [0.55, 0.75, 1.2],
+  [1.15, 0.85, 0.45],
+  [1.1, 0.6, 0.85],
+  [0.7, 0.6, 1.2]
+];
+
+class Space extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: [0, 0, 1] };
+  ringFront = new Float32Array(0);
+  fineRing;
+  nebula;
+  ringBox = [0, 0, 0, 0];
+  ringMask = new Uint8Array(0);
+  starPos = [0, 0];
+  stars = Array.from({ length: 320 }, (_, i) => ({ x: Math.random() * 3, y: Math.random(), layer: i % 3, b: 0.3 + Math.random() * 0.7, phase: Math.random() * TAU, tint: STAR_TINTS3[i % STAR_TINTS3.length] }));
+  comet = { x: -9, y: 0, vx: 0, vy: 0, next: 14 };
+  ufo = { x: -9, y: 0.2, dir: 1, next: 30 };
+  station = { x: 0.2, y: 0.24, dir: 1, wait: 0 };
+  satellite = { x: 1.4, y: 0.15, dir: -1, wait: 0 };
+  rocks = [];
+  meteors = [];
+  starship = { x: -9, y: 0.2, wait: eggWait() * TIME_SCALE12 };
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS11[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.25;
+    if (settings.activity === "teeming")
+      this.rocks = Array.from({ length: 6 }, (_, i) => ({
+        x: Math.random() * 2,
+        y: 0.08 + Math.random() * 0.45,
+        vx: -(0.02 + Math.random() * 0.03),
+        vy: (Math.random() - 0.5) * 0.01,
+        r: 0.012 + Math.random() * 0.022,
+        spin: (Math.random() - 0.5) * 0.6,
+        angle: Math.random() * TAU,
+        seed: i * 13.7
+      }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE12;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED12;
+    this.creatureTime += cdt;
+    for (const s of this.stars) {
+      s.x -= (0.002 + s.layer * 0.003) * dt;
+      if (s.x < 0)
+        s.x += this.A;
+    }
+    this.stepComet(dt);
+    this.stepGloom(dt);
+    for (const m of this.meteors) {
+      m.age += dt;
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+    }
+    this.meteors = this.meteors.filter((m) => m.age < METEOR);
+    const ship = this.starship;
+    if (ship.x < -5) {
+      ship.wait -= dt;
+      if (ship.wait <= 0) {
+        ship.x = this.A + 0.4;
+        ship.y = rand(0.16, 0.24);
+      }
+    }
+    if (ship.x > -5) {
+      ship.x -= 0.1 * cdt;
+      if (ship.x < -0.4) {
+        ship.x = -9;
+        ship.wait = eggWait(true) * TIME_SCALE12;
+      }
+    }
+    if (this.activity !== "calm") {
+      this.travel(this.station, 0.12, 20, cdt);
+      this.travel(this.satellite, 0.18, 30, cdt);
+    }
+    if (this.activity === "teeming") {
+      for (const r of this.rocks) {
+        r.x += r.vx * cdt;
+        r.y += r.vy * cdt;
+        r.angle += r.spin * cdt;
+        if (r.x < -0.1) {
+          r.x = this.A + 0.1;
+          r.y = rand(0.08, 0.5);
+        }
+      }
+      this.stepUfo(dt);
+    }
+  }
+  poke(x, y) {
+    const dir = x < this.A / 2 ? 1 : -1;
+    this.meteors.push({ x, y, vx: dir * rand(0.25, 0.35), vy: rand(0.08, 0.15), age: 0 });
+  }
+  render() {
+    this.restore();
+    this.drawStars();
+    this.drawMoon();
+    this.drawPlanet();
+    this.drawRingFront();
+    this.drawStarGlare();
+    this.drawComet();
+    this.drawMeteors();
+    if (this.activity !== "calm") {
+      this.drawSatellite();
+      this.drawStation();
+    }
+    if (this.starship.x > -5)
+      this.drawStarship();
+    if (this.activity === "teeming") {
+      for (const r of this.rocks)
+        this.drawRock(r);
+      this.drawAstronaut();
+      this.drawUfo();
+    }
+    this.finish();
+  }
+  visit() {
+    if (this.comet.x < -5)
+      this.comet.next = 0;
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    const cx = W - PLANET.x * H;
+    const cy = PLANET.y * H;
+    const R = PLANET.r * H;
+    this.starPos = look.lighting === "front" ? [0.14 * W, 0.14 * H] : [cx + R * look.sun[0] / Math.hypot(look.sun[0], look.sun[1]), cy + R * look.sun[1] / Math.hypot(look.sun[0], look.sun[1])];
+    this.lighting = look.lighting === "front" ? { style: "front", dir: look.sun } : look.lighting === "limb" ? { style: "rim", color: [1, 0.6, 0.3], x: this.starPos[0], y: this.starPos[1] } : { style: "rim", color: [0.3, 0.6, 1.5], x: cx, y: cy };
+    const px = this.px;
+    const nebula = this.nebula ?? this.makeNebula(W / px, H / px);
+    this.nebula = px > 1 ? nebula : undefined;
+    for (let y = 0;y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const s = (Math.floor(y / px) * (W / px) + Math.floor(x / px)) * 3;
+        const o = (y * W + x) * 3;
+        this.hdr[o] = nebula[s];
+        this.hdr[o + 1] = nebula[s + 1];
+        this.hdr[o + 2] = nebula[s + 2];
+      }
+    this.ringFront = new Float32Array(W * H * 4);
+    this.ringMask = new Uint8Array(W * H);
+    const ext = RING2.outer * R;
+    const x0 = Math.max(0, Math.floor(cx - ext));
+    const x1 = Math.min(W - 1, Math.ceil(cx + ext));
+    const y0 = Math.max(0, Math.floor(cy - ext * 0.6));
+    const y1 = H - 1;
+    this.ringBox = [x0, y0, x1, y1];
+    const ct = Math.cos(RING2.tilt);
+    const st = Math.sin(RING2.tilt);
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        const dx = x + 0.5 - cx;
+        const dy = y + 0.5 - cy;
+        const qx = dx * ct + dy * st;
+        const qy = (-dx * st + dy * ct) / RING2.flat;
+        const rho = Math.hypot(qx, qy) / R;
+        if (rho < RING2.inner || rho > RING2.outer)
+          continue;
+        const gap = 1 - 0.85 * Math.exp(-(((rho - 1.72) / 0.035) ** 2));
+        const density = (0.55 + 0.45 * Math.sin(rho * 55) * Math.sin(rho * 13 + 1)) * gap * smoothstep(RING2.inner, RING2.inner + 0.08, rho) * smoothstep(RING2.outer, RING2.outer - 0.1, rho);
+        const a = 0.75 * density;
+        const k = look.ring * (0.6 + 0.4 * density);
+        const o = y * W + x;
+        const warm = look.lighting === "front" ? 0.16 * Math.sin(rho * 9 + 1) : 0;
+        const rr = look.ringColor[0] * (1 + warm);
+        const rg = look.ringColor[1];
+        const rb = look.ringColor[2] * (1 - warm * 1.5);
+        if (qy < 0) {
+          this.blend(o * 3, rr * k, rg * k, rb * k, a);
+          if (a > 0.3)
+            this.ringMask[o] = 1;
+          continue;
+        }
+        this.ringFront[o * 4] = rr * k * a;
+        this.ringFront[o * 4 + 1] = rg * k * a;
+        this.ringFront[o * 4 + 2] = rb * k * a;
+        this.ringFront[o * 4 + 3] = a;
+      }
+    if (this.px > 1)
+      this.fineRing = this.shrink(this.ringFront, 4);
+    else if (this.fineRing) {
+      this.ringFront = this.fineRing;
+      this.fineRing = undefined;
+    }
+  }
+  makeNebula(w, h) {
+    const look = this.look;
+    const [n1, n2] = look.nebula;
+    const out = new Float32Array(w * h * 3);
+    for (let y = 0;y < h; y++)
+      for (let x = 0;x < w; x++) {
+        const u = x / h;
+        const v = y / h;
+        const a = smoothstep(0.45, 0.85, fbm2(u * 2.2, v * 2.2, 5));
+        const b = smoothstep(0.5, 0.9, fbm2(u * 3.1 + 7, v * 3.1 + 3, 5));
+        const band = Math.abs(v - (0.15 + u * 0.25)) / 0.12;
+        const milky = Math.exp(-band * band) * (0.4 + 0.6 * fbm2(u * 9, v * 9, 4)) * 0.06 * look.milkyWay;
+        const o = (y * w + x) * 3;
+        const [mr, mg] = look.starTints ? [0.55, 0.4] : [0.85, 0.85];
+        out[o] = 0.004 + n1[0] * a + n2[0] * b + milky * mr;
+        out[o + 1] = 0.005 + n1[1] * a + n2[1] * b + milky * mg;
+        out[o + 2] = 0.012 + n1[2] * a + n2[2] * b + milky;
+      }
+    return out;
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  drawStars() {
+    const { W, H, look } = this;
+    for (const s of this.stars) {
+      const x = s.x * H;
+      const y = s.y * H;
+      const i = (y | 0) * W + (x | 0);
+      if (x < 0 || x >= W || y >= H || this.ringMask[i])
+        continue;
+      const k = s.b * (0.4 + s.layer * 0.3) * look.starK * (s.b > 0.85 ? 0.75 + 0.25 * Math.sin(this.time * 1.5 + s.phase) : 1) * 0.5;
+      const t = look.starTints ? s.tint : WHITE_STAR;
+      this.point(x, y, k * t[0], k * t[1], k * t[2], s.b > 0.9 ? 3 : s.b > 0.65 ? 2 : 1, true);
+    }
+  }
+  drawPlanet() {
+    const { W, H, hdr, look } = this;
+    const cx = W - PLANET.x * H;
+    const cy = PLANET.y * H;
+    const R = PLANET.r * H;
+    const rot = this.time * 0.02;
+    const cr = Math.cos(rot);
+    const sr = Math.sin(rot);
+    const [Lx, Ly, Lz] = look.sun;
+    const pad = 0.1 * R;
+    const lsx = Lx / (Math.hypot(Lx, Ly) || 1);
+    const lsy = Ly / (Math.hypot(Lx, Ly) || 1);
+    this.touch(cx - R - pad - 1, cy - R - pad - 1, cx + R + pad + 1, H - 1);
+    for (let y = Math.max(0, Math.floor(cy - R - pad));y < H; y++)
+      for (let x = Math.max(0, Math.floor(cx - R - pad));x <= Math.min(W - 1, Math.ceil(cx + R + pad)); x++) {
+        const dx = (x + 0.5 - cx) / R;
+        const dy = (y + 0.5 - cy) / R;
+        const r2 = dx * dx + dy * dy;
+        const r = Math.sqrt(r2);
+        const o = (y * W + x) * 3;
+        const facing = (dx * lsx + dy * lsy) / (r || 1);
+        const glowLit = look.lighting === "night" ? 0.25 : look.lighting === "limb" ? 0.2 + 1.6 * Math.max(0, facing) ** 4 : 0.3 + 0.7 * Math.max(0, facing);
+        if (r > 1) {
+          const halo = Math.exp(-(r - 1) / 0.025) * glowLit * 0.6 + (look.lighting === "night" ? Math.exp(-(r - 1) / 0.09) * 0.07 : 0);
+          hdr[o] += look.atmosphere[0] * halo;
+          hdr[o + 1] += look.atmosphere[1] * halo;
+          hdr[o + 2] += look.atmosphere[2] * halo;
+          continue;
+        }
+        const nz = Math.sqrt(1 - r2);
+        const diffuse = Math.max(0, dx * Lx + dy * Ly + nz * Lz);
+        const X = dx * cr + nz * sr;
+        const Z = -dx * sr + nz * cr;
+        const lon = (Math.atan2(X, Z) / TAU + 1) % 1;
+        const lat = Math.asin(clamp(-dy, -1, 1)) / Math.PI + 0.5;
+        const t = (Math.min(TH - 1, lat * TH | 0) * TW + (lon * TW | 0)) % (TW * TH);
+        const cloud = SURFACE2.cloud[t];
+        const light = 0.03 + 1.15 * diffuse;
+        let cr0 = SURFACE2.albedo[t * 3] * light;
+        let cg0 = SURFACE2.albedo[t * 3 + 1] * light;
+        let cb0 = SURFACE2.albedo[t * 3 + 2] * light;
+        const cl = 0.04 + 1.2 * diffuse;
+        cr0 += (cl - cr0) * cloud * 0.85;
+        cg0 += (cl - cg0) * cloud * 0.85;
+        cb0 += (cl * 1.02 - cb0) * cloud * 0.85;
+        const city2 = SURFACE2.city[t] * (1 - smoothstep(0, 0.12, diffuse)) * (1 - cloud * 0.7);
+        cr0 += city2 * 1;
+        cg0 += city2 * 0.72;
+        cb0 += city2 * 0.35;
+        const edge = Math.pow(1 - nz, 3) * glowLit * 1.2;
+        cr0 += look.atmosphere[0] * edge;
+        cg0 += look.atmosphere[1] * edge;
+        cb0 += look.atmosphere[2] * edge;
+        if (look.lighting === "night") {
+          const latitude = lat - 0.5;
+          const aurora = smoothstep(0.28, 0.36, latitude) * (1 - smoothstep(0.4, 0.47, latitude)) * (0.5 + 0.5 * Math.sin(lon * 70 + this.time * 0.6)) * 0.35;
+          cr0 += 0.1 * aurora;
+          cg0 += 0.9 * aurora;
+          cb0 += 0.4 * aurora;
+        }
+        this.blend(o, cr0, cg0, cb0, clamp((1 - r) * R + 0.5, 0, 1));
+      }
+  }
+  drawRingFront() {
+    const [x0, y0, x1, y1] = this.ringBox;
+    const { W, ringFront } = this;
+    this.touch(x0, y0, x1, y1);
+    for (let y = y0;y <= y1; y++)
+      for (let x = x0;x <= x1; x++) {
+        const o = y * W + x;
+        const a = ringFront[o * 4 + 3];
+        if (a <= 0)
+          continue;
+        const i = o * 3;
+        this.hdr[i] = this.hdr[i] * (1 - a) + ringFront[o * 4];
+        this.hdr[i + 1] = this.hdr[i + 1] * (1 - a) + ringFront[o * 4 + 1];
+        this.hdr[i + 2] = this.hdr[i + 2] * (1 - a) + ringFront[o * 4 + 2];
+      }
+  }
+  drawStarGlare() {
+    const { W, H, hdr, look } = this;
+    if (look.lighting === "night")
+      return;
+    const [sx, sy] = this.starPos;
+    const strength = (look.lighting === "front" ? 1 : 1.4) * (1 - smoothstep(0, 1, this.gloom) * 0.6);
+    const reach = 0.45 * H;
+    this.touch(sx - reach - 1, sy - reach - 1, sx + reach, sy + reach);
+    for (let y = Math.max(0, Math.floor(sy - reach));y < Math.min(H, sy + reach); y++)
+      for (let x = Math.max(0, Math.floor(sx - reach));x < Math.min(W, sx + reach); x++) {
+        const dx = x + 0.5 - sx;
+        const dy = y + 0.5 - sy;
+        const d = Math.hypot(dx, dy) / H;
+        const spikes = Math.exp(-Math.abs(dx) / 1.2) * Math.exp(-Math.abs(dy) / (0.15 * H)) + Math.exp(-Math.abs(dy) / 1.2) * Math.exp(-Math.abs(dx) / (0.15 * H));
+        const k = (Math.exp(-d / 0.012) * 4 + Math.exp(-d / 0.07) * 0.35 + spikes * 0.25) * strength;
+        const o = (y * W + x) * 3;
+        hdr[o] += k;
+        hdr[o + 1] += k * (look.lighting === "front" ? 0.95 : 0.7);
+        hdr[o + 2] += k * (look.lighting === "front" ? 0.85 : 0.45);
+      }
+  }
+  drawMoon() {
+    const { W, H, look } = this;
+    const a = this.creatureTime * 0.05;
+    const cx = (0.3 + 0.06 * Math.cos(a)) * H;
+    const cy = (0.24 + 0.025 * Math.sin(a)) * H;
+    const R = 0.035 * H;
+    const [mr, mg, mb] = look.lighting === "night" ? look.rockColor : [0.9, 0.9, 0.95];
+    for (let y = Math.max(0, Math.floor(cy - R - 1));y <= Math.min(H - 1, cy + R + 1); y++)
+      for (let x = Math.max(0, Math.floor(cx - R - 1));x <= Math.min(W - 1, cx + R + 1); x++) {
+        const dx = (x + 0.5 - cx) / R;
+        const dy = (y + 0.5 - cy) / R;
+        const r2 = dx * dx + dy * dy;
+        if (r2 > 1.1)
+          continue;
+        const nz = Math.sqrt(Math.max(0, 1 - r2));
+        const lit = Math.max(0, dx * look.sun[0] + dy * look.sun[1] + nz * look.sun[2]);
+        const craters = 0.75 + 0.35 * fbm2(dx * 3 + 5, dy * 3 + 2, 4);
+        const k = (0.015 + lit * 0.9) * craters;
+        this.blend((y * W + x) * 3, k * mr, k * mg, k * mb, clamp((1 - Math.sqrt(r2)) * R + 0.5, 0, 1));
+      }
+  }
+  stepComet(dt) {
+    const c = this.comet;
+    if (c.x < -5) {
+      c.next -= dt;
+      if (c.next > 0)
+        return;
+      const fromRight = Math.random() < 0.5;
+      c.x = fromRight ? this.A + 0.1 : -0.1;
+      c.y = rand(0.05, 0.3);
+      c.vx = (fromRight ? -1 : 1) * 0.07;
+      c.vy = rand(0.005, 0.02);
+      return;
+    }
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    if (c.x < -0.4 || c.x > this.A + 0.4) {
+      c.x = -9;
+      c.next = rand(40, 75);
+    }
+  }
+  drawComet() {
+    const c = this.comet;
+    if (c.x < -5)
+      return;
+    const H = this.H;
+    const hx = c.x * H;
+    const hy = c.y * H;
+    const [sx, sy] = this.look.lighting === "night" ? [hx + c.vx * H, hy + c.vy * H] : this.starPos;
+    const tl = Math.hypot(hx - sx, hy - sy) || 1;
+    const ux = (hx - sx) / tl;
+    const uy = (hy - sy) / tl;
+    for (let i = 0;i < 48; i++) {
+      const t = i / 47;
+      const d = t * 0.25 * H;
+      const k = (1 - t) ** 1.6 * 0.5;
+      this.disc(hx + ux * d, hy + uy * d, 0.8 + t * 3, 0.5 * k, 0.75 * k, 1 * k, 0.5 * (1 - t));
+    }
+    this.disc(hx, hy, 1.4, 2.5, 2.8, 3, 1);
+  }
+  drawMeteors() {
+    const H = this.H;
+    const c = this.look.starTints ? STAR_TINTS3[0] : WHITE_STAR;
+    for (const m of this.meteors) {
+      const k = Math.sin(m.age / METEOR * Math.PI);
+      const v = Math.hypot(m.vx, m.vy);
+      for (let i = 0;i < 48; i++) {
+        const t = i / 47;
+        const d = t * 0.12 * H;
+        const a = (1 - t) * k;
+        this.splat(m.x * H - m.vx / v * d, m.y * H - m.vy / v * d, c[0] * a, c[1] * a, c[2] * a);
+      }
+      this.disc(m.x * H, m.y * H, 1.1, c[0] * 1.3, c[1] * 1.3, c[2] * 1.3, k);
+    }
+  }
+  drawStarship() {
+    const H = this.H;
+    const s = this.starship;
+    const S = 0.55 * H;
+    const x = s.x * H;
+    const y = s.y * H;
+    const P = (u, v) => [x - u * S, y + v * S];
+    const hull = this.paint([0.7, 0.72, 0.78]);
+    const dark = this.paint([0.35, 0.37, 0.42]);
+    this.shape([
+      cap(...P(-0.45, 0.04), ...P(-0.1, 0.06), 0.022 * S, 0.02 * S, dark),
+      cap(...P(-0.45, -0.04), ...P(-0.1, -0.06), 0.022 * S, 0.02 * S, dark),
+      cap(...P(-0.4, 0), ...P(0.5, 0), 0.05 * S, 0.012 * S, hull),
+      cap(...P(-0.15, -0.045), ...P(0.05, -0.04), 0.02 * S, 0.014 * S, hull),
+      ell(...P(0.08, -0.04), 0.035 * S, 0.012 * S, 0, hull)
+    ], this.lighting, 0.8);
+    for (let i = 0;i < 10; i++)
+      this.splat(...P(-0.3 + i * 0.06, 0.008), 1.3, 0.65, 0.12);
+    for (const v of [-0.04, 0.04]) {
+      const [ex, ey] = P(-0.47, v);
+      this.disc(ex, ey, 0.016 * S, 0.35, 1, 2.2, 0.9);
+      this.splat(ex, ey, 0.3, 0.8, 1.6);
+    }
+    const blink = Math.sin(this.time * 3) > 0.7 ? 1.5 : 0;
+    this.splat(...P(-0.1, -0.075), blink, 0.1 * blink, 0.1 * blink);
+    this.splat(...P(-0.1, 0.075), 0.1 * blink, blink, 0.2 * blink);
+  }
+  travel(t, speed, pause, dt) {
+    if (t.wait > 0) {
+      t.wait -= dt;
+      if (t.wait <= 0)
+        t.x = t.dir > 0 ? -0.3 : this.A + 0.3;
+      return;
+    }
+    t.x += t.dir * speed * dt;
+    if (t.x < -0.35 || t.x > this.A + 0.35)
+      t.wait = pause;
+  }
+  drawStation() {
+    const t = this.station;
+    if (t.wait > 0)
+      return;
+    const H = this.H;
+    const S = 0.18 * H;
+    const x = t.x * H;
+    const y = (0.3 + 0.05 * Math.sin(t.x * 2)) * H;
+    const a = 0.12 * Math.sin(this.creatureTime * 0.1);
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const P = (u, v) => [x + (u * ca - v * sa) * S, y + (u * sa + v * ca) * S];
+    const panel = this.paint([0.18, 0.22, 0.5]);
+    const white = this.paint([0.8, 0.8, 0.82]);
+    const parts = [cap(...P(-0.5, 0), ...P(0.5, 0), 0.012 * S, 0.012 * S, this.paint([0.55, 0.55, 0.58]))];
+    for (const u of [-0.42, -0.27, 0.27, 0.42])
+      parts.push(cap(...P(u, -0.22), ...P(u, -0.04), 0.055 * S, 0.055 * S, panel, 4), cap(...P(u, 0.04), ...P(u, 0.22), 0.055 * S, 0.055 * S, panel, 4));
+    parts.push(cap(...P(-0.13, 0), ...P(0.13, 0), 0.045 * S, 0.045 * S, white), cap(...P(0, -0.12), ...P(0, 0.1), 0.035 * S, 0.035 * S, white), cap(...P(0.13, 0.02), ...P(0.2, 0.08), 0.02 * S, 0.02 * S, white));
+    this.shape(parts, this.lighting, 0.8);
+    if (this.look.lighting === "night") {
+      lightPool(this.hdr, this.W, H, ...P(0, 0), 0.4 * S, 0.25 * S, [1, 0.6, 0.15], 3, 0.008);
+      for (const u of [-0.08, 0, 0.08])
+        this.disc(...P(u, 0), 0.018 * S, 1.6, 0.85, 0.2, 0.9);
+    }
+    const blink = Math.sin(this.time * 4) > 0.6 ? 1.5 : 0;
+    this.splat(...P(0.5, 0), blink, 0.1 * blink, 0.1 * blink);
+    this.splat(...P(-0.5, 0), 0.1 * blink, blink, 0.2 * blink);
+  }
+  drawSatellite() {
+    const t = this.satellite;
+    if (t.wait > 0)
+      return;
+    const H = this.H;
+    const S = 0.06 * H;
+    const x = t.x * H;
+    const y = (0.15 + t.x * 0.05) * H;
+    const P = (u, v) => [x + u * S, y + v * S];
+    const panel = this.paint([0.18, 0.22, 0.5]);
+    this.shape([cap(...P(-0.55, 0), ...P(-0.12, 0), 0.08 * S, 0.08 * S, panel, 3), cap(...P(0.12, 0), ...P(0.55, 0), 0.08 * S, 0.08 * S, panel, 3), cap(...P(-0.09, 0), ...P(0.09, 0), 0.08 * S, 0.08 * S, this.paint([0.8, 0.6, 0.2])), ell(...P(0, -0.13), 0.06 * S, 0.03 * S, 0, this.paint([0.75, 0.75, 0.78]))], this.lighting, 0.8);
+    if (Math.sin(this.time * 3 + 1) > 0.7)
+      this.splat(...P(0, 0.1), 1.5, 0.1, 0.1);
+  }
+  drawRock(r) {
+    const { W, H, look } = this;
+    const cx = r.x * H;
+    const cy = r.y * H;
+    const R = r.r * H;
+    for (let y = Math.max(0, Math.floor(cy - R * 1.3));y <= Math.min(H - 1, cy + R * 1.3); y++)
+      for (let x = Math.max(0, Math.floor(cx - R * 1.3));x <= Math.min(W - 1, cx + R * 1.3); x++) {
+        const dx = (x + 0.5 - cx) / R;
+        const dy = (y + 0.5 - cy) / R;
+        const theta = Math.atan2(dy, dx) - r.angle;
+        const edge = 1 + 0.22 * (fbm1((theta / TAU + 1) % 1 * 6 + r.seed, 3) - 0.5) * 2;
+        const rr = Math.hypot(dx, dy) / edge;
+        if (rr > 1.05)
+          continue;
+        const nz = Math.sqrt(Math.max(0, 1 - rr * rr));
+        const lit = Math.max(0, dx / edge * look.sun[0] + dy / edge * look.sun[1] + nz * look.sun[2]);
+        const pits = 0.7 + 0.45 * fbm2(dx * 2.5 + Math.cos(r.angle) * 2 + r.seed, dy * 2.5 + Math.sin(r.angle) * 2, 4);
+        const ambient = look.lighting === "night" ? 0.01 : 0.02;
+        const rim = look.lighting === "night" ? Math.pow(1 - nz, 2) * Math.max(0, (dx / edge * (W - PLANET.x * H - cx) + dy / edge * (PLANET.y * H - cy)) / Math.hypot(W - PLANET.x * H - cx, PLANET.y * H - cy)) * 0.6 : 0;
+        const k = (ambient + lit * 0.7 + rim) * pits;
+        this.blend((y * W + x) * 3, k * look.rockColor[0], k * look.rockColor[1], k * look.rockColor[2], clamp((1.05 - rr) * R, 0, 1));
+      }
+  }
+  drawAstronaut() {
+    const H = this.H;
+    const t = this.creatureTime;
+    const x = (0.28 + 0.05 * Math.sin(t * 0.13)) * H;
+    const y = (0.6 + 0.03 * Math.sin(t * 0.21)) * H;
+    const a = t * 0.08;
+    const S = 0.09 * H;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const P = (u, v) => [x + (u * ca - v * sa) * S, y + (u * sa + v * ca) * S];
+    const suit = this.paint([0.88, 0.88, 0.9]);
+    const pack = this.paint([0.7, 0.7, 0.72]);
+    this.shape([
+      cap(...P(-0.03, -0.2), ...P(-0.03, 0.06), 0.14 * S, 0.13 * S, pack),
+      cap(...P(0, 0.12), ...P(0.08, 0.42), 0.065 * S, 0.055 * S, suit),
+      cap(...P(0.08, 0.12), ...P(0.22, 0.37), 0.065 * S, 0.055 * S, suit),
+      ell(...P(0.04, -0.05), 0.16 * S, 0.2 * S, a, suit),
+      cap(...P(0.12, -0.15), ...P(0.3, -0.02), 0.055 * S, 0.045 * S, suit),
+      cap(...P(-0.06, -0.15), ...P(-0.22, 0.05), 0.055 * S, 0.045 * S, suit),
+      ell(...P(0.06, -0.33), 0.13 * S, 0.13 * S, a, suit),
+      ell(...P(0.11, -0.33), 0.085 * S, 0.075 * S, a, this.paint([0.9, 0.62, 0.18]))
+    ], this.lighting, 0.8);
+    if (this.look.lighting !== "night")
+      this.add(...P(0.14, -0.36), 1.2, 1.1, 0.9);
+    if (this.look.lighting !== "night")
+      return;
+    lightPool(this.hdr, this.W, H, ...P(0.2, -0.33), 0.6 * S, 0.6 * S, [1, 0.6, 0.15], 2.5, 0.01);
+    this.disc(...P(0.12, -0.33), 0.06 * S, 1.2, 0.6, 0.12, 0.8);
+  }
+  stepUfo(dt) {
+    const u = this.ufo;
+    if (u.x < -5) {
+      u.next -= dt;
+      if (u.next > 0)
+        return;
+      u.dir = Math.random() < 0.5 ? 1 : -1;
+      u.x = u.dir > 0 ? -0.15 : this.A + 0.15;
+      u.y = rand(0.08, 0.2);
+      return;
+    }
+    u.x += u.dir * 0.09 * dt;
+    if (u.x < -0.3 || u.x > this.A + 0.3) {
+      u.x = -9;
+      u.next = rand(60, 120);
+    }
+  }
+  drawUfo() {
+    const u = this.ufo;
+    if (u.x < -5)
+      return;
+    const H = this.H;
+    const x = u.x * H;
+    const y = (u.y + Math.sin(this.time * 1.5) * 0.008) * H;
+    const tilt = Math.sin(this.time * 1.1) * 0.08;
+    this.shape([ell(x, y - 0.016 * H, 0.04 * H, 0.03 * H, tilt, this.paint([0.45, 0.75, 0.85])), ell(x, y, 0.09 * H, 0.022 * H, tilt, this.paint([0.6, 0.62, 0.66]))], this.lighting, 0.8);
+    for (let i = 0;i < 6; i++) {
+      const on = Math.floor(this.time * 4) % 6 === i ? 2 : 0.4;
+      const lx = x + Math.cos(i / 5 * Math.PI) * 0.075 * H;
+      const c = [[1, 0.2, 0.2], [0.2, 1, 0.3], [0.3, 0.5, 1]][i % 3];
+      this.splat(lx, y + 0.008 * H, c[0] * on, c[1] * on, c[2] * on);
+    }
+  }
+}
+function normalize(x, y, z) {
+  const l = Math.hypot(x, y, z);
+  return [x / l, y / l, z / l];
+}
+function buildSurface() {
+  const albedo = new Float32Array(TW * TH * 3);
+  const cloud = new Float32Array(TW * TH);
+  const city2 = new Float32Array(TW * TH);
+  for (let j = 0;j < TH; j++) {
+    const lat = (j / TH - 0.5) * Math.PI;
+    for (let i = 0;i < TW; i++) {
+      const lon = i / TW * TAU;
+      const X = Math.cos(lat) * Math.sin(lon);
+      const Y = Math.sin(lat);
+      const Z = Math.cos(lat) * Math.cos(lon);
+      const h = fbm2(X * 1.8 + Z * 1.1 + 3.1, Y * 1.8 - Z * 0.9 + 7.7, 5);
+      const ice = smoothstep(0.38, 0.45, Math.abs(Y) * 0.5 + (h - 0.5) * 0.15);
+      const t = j * TW + i;
+      let c;
+      if (h > 0.52) {
+        const dry = smoothstep(0.35, 0.75, fbm2(X * 3 + 20, Z * 3 + Y * 2, 3)) * (1 - Math.abs(Y));
+        c = [lerp(0.13, 0.42, dry), lerp(0.24, 0.34, dry), lerp(0.08, 0.2, dry)];
+        const cluster = smoothstep(0.52, 0.72, fbm2(X * 9 + Z * 5 + 40, Y * 9 - Z * 4, 3));
+        if (Math.abs(Y) < 0.8 && hash2(i, j) > 1 - cluster * 0.6)
+          city2[t] = (0.4 + hash2(j, i) * 0.6) * cluster;
+      } else {
+        const depth2 = smoothstep(0.3, 0.52, h);
+        c = [lerp(0.015, 0.04, depth2), lerp(0.06, 0.2, depth2), lerp(0.2, 0.4, depth2)];
+      }
+      albedo[t * 3] = lerp(c[0], 0.85, ice);
+      albedo[t * 3 + 1] = lerp(c[1], 0.88, ice);
+      albedo[t * 3 + 2] = lerp(c[2], 0.92, ice);
+      cloud[t] = smoothstep(0.5, 0.75, fbm2(X * 3 + Z * 2 + 11, Y * 6 + Z * 1.5, 4));
+    }
+  }
+  return { albedo, cloud, city: city2 };
+}
+var space = {
+  id: "space",
+  name: "Space",
+  description: "A ringed planet turning slowly below a nebula and drifting stars, with a comet now and then",
+  activity: {
+    calm: "The planet, its rings, a moon and the stars",
+    lively: "Adds an orbiting space station and a satellite",
+    teeming: "Adds asteroids, a floating astronaut and a flying saucer"
+  },
+  scrim: {
+    day: [
+      [10, 14, 30],
+      [8, 10, 24],
+      [6, 8, 18]
+    ],
+    sunset: [
+      [26, 12, 24],
+      [14, 8, 20],
+      [6, 4, 12]
+    ],
+    night: [
+      [4, 4, 12],
+      [3, 3, 10],
+      [2, 2, 6]
+    ]
+  },
+  create: (settings) => new Space(settings)
+};
+
+// wallpapers/tundra.ts
+var TIME_SCALE13 = 0.35;
+var CREATURE_SPEED13 = 0.25;
+var HORIZON8 = 0.55;
+var YETI = 12;
+var HOP = 0.2;
+var LOOKS12 = {
+  day: {
+    style: "front",
+    light: [1, 0.97, 0.9],
+    sky: [
+      [0, [0.12, 0.32, 0.7]],
+      [0.3, [0.28, 0.52, 0.84]],
+      [HORIZON8, [0.62, 0.76, 0.9]]
+    ],
+    orb: { x: 0.78, y: 0.22, r: 0.032, core: [4.5, 4.3, 3.8], glow: [1, 0.95, 0.85], near: 0.4, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.05, 1.08, 1.12], bottom: [0.62, 0.7, 0.82], alpha: 0.85 },
+    snow: [0.76, 0.72, 0.64],
+    shade: [0.2, 0.36, 0.76],
+    rock: [0.26, 0.29, 0.4],
+    peaks: [0.92, 0.86, 0.78],
+    ice: [0.4, 0.66, 0.86],
+    flakes: [0.9, 0.94, 1],
+    tint: [1, 1, 1],
+    aurora: 0,
+    glow: 0
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.55, 0.35],
+    sky: [
+      [0, [0.08, 0.05, 0.18]],
+      [0.3, [0.3, 0.12, 0.3]],
+      [0.45, [0.8, 0.35, 0.35]],
+      [HORIZON8, [1, 0.6, 0.35]]
+    ],
+    orb: { x: 0.62, y: 0.53, r: 0.055, core: [3, 1.6, 0.9], glow: [1, 0.45, 0.3], near: 0.5, wide: 0.22 },
+    stars: 25,
+    clouds: { top: [0.12, 0.05, 0.12], bottom: [0.85, 0.35, 0.3], alpha: 0.55 },
+    snow: [0.72, 0.42, 0.48],
+    shade: [0.3, 0.18, 0.38],
+    rock: [0.25, 0.12, 0.2],
+    peaks: [1, 0.55, 0.55],
+    ice: [0.6, 0.35, 0.45],
+    flakes: [1, 0.7, 0.75],
+    tint: [0.3, 0.17, 0.2],
+    aurora: 0.15,
+    glow: 0.6
+  },
+  night: {
+    style: "rim",
+    light: [0.3, 0.65, 1.5],
+    sky: [
+      [0, [0.004, 0.01, 0.035]],
+      [0.3, [0.012, 0.03, 0.08]],
+      [0.45, [0.025, 0.055, 0.14]],
+      [HORIZON8, [0.05, 0.1, 0.24]]
+    ],
+    orb: { x: 0.2, y: 0.14, r: 0.03, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 120,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.35 },
+    snow: [0.05, 0.12, 0.3],
+    shade: [0.02, 0.05, 0.14],
+    rock: [0.02, 0.04, 0.09],
+    peaks: [0.08, 0.16, 0.36],
+    ice: [0.04, 0.12, 0.25],
+    flakes: [0.25, 0.45, 0.9],
+    tint: [0.03, 0.06, 0.14],
+    aurora: 1,
+    glow: 1
+  }
+};
+var DAYLIGHT9 = (() => {
+  const l = Math.hypot(0.5, 0.55, 0.65);
+  return [0.5 / l, -0.55 / l, 0.65 / l];
+})();
+var PINE = [0.1, 0.25, 0.18];
+var FUR = [0.93, 0.91, 0.86];
+var DARK = [0.05, 0.05, 0.08];
+var ORANGE = [0.95, 0.5, 0.1];
+
+class Tundra extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT9 };
+  shade;
+  stars;
+  clouds;
+  shadows = makeShadows(3, HORIZON8 + 0.08, 0.95);
+  storm = makeStorm();
+  flakes;
+  owl = { x: -9, y: 0.25, dir: 1, next: 14, phase: 0 };
+  penguins = [];
+  fox;
+  bear;
+  fisher = { tug: 0, next: 8 };
+  yeti = { wait: eggWait() * TIME_SCALE13, t: -1, x: 0 };
+  weather;
+  pines = new SwayLayer;
+  lights = new LightMap;
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS12[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.stars = makeStars(this.look.stars, 0.45);
+    this.clouds = makeClouds(3, "stratus", 0.26, 0.4);
+    this.weather = new WeatherLayer(settings.weather ?? "clear", settings.time, HORIZON8);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    this.flakes = Array.from({ length: settings.weather ? 0 : { calm: 70, lively: 100, teeming: 130 }[settings.activity] }, () => ({ x: Math.random() * 4, y: Math.random(), z: Math.random(), s: Math.random() }));
+    const walker = (x, y) => ({ x, y, wx: x, wy: y, wanderT: 0, face: 1, phase: Math.random() * TAU, rest: 0, moving: false, hop: Infinity, g: gait(1, hash(x * 7 + y)) });
+    if (settings.activity !== "calm") {
+      this.penguins = Array.from({ length: settings.activity === "teeming" ? 5 : 3 }, (_, i) => walker(0.6 + i * 0.12, 0.81 + i % 2 * 0.015));
+      this.fox = walker(0.9, 0.88);
+    }
+    if (settings.activity === "teeming")
+      this.bear = walker(0.7, 0.655);
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE13;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED13;
+    this.creatureTime += cdt;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.shadows, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    for (const f2 of this.flakes) {
+      f2.y += (0.02 + f2.z * 0.035) * dt;
+      f2.x += (Math.sin(this.time * 0.6 + f2.s * 20) * 0.006 + 0.004 + gust(f2.x, this.time) * (0.06 + f2.z * 0.06)) * dt;
+      if (f2.y > 1) {
+        f2.y -= 1;
+        f2.x = Math.random() * this.A;
+      }
+      if (f2.x > this.A)
+        f2.x -= this.A;
+    }
+    this.stepOwl(dt);
+    const A = this.A;
+    for (const p of this.penguins)
+      this.wander(p, cdt, [0.34 * A, 0.58 * A, 0.8, 0.84], 0.025, 0.012);
+    if (this.fox)
+      this.wander(this.fox, cdt, [0.3 * A, 0.95 * A, 0.84, 0.92], 0.04, 0.038);
+    if (this.bear)
+      this.wander(this.bear, cdt, [0.25 * A, 0.85 * A, 0.648, 0.662], 0.025, 0.08);
+    const f = this.fisher;
+    f.next -= cdt;
+    if (f.next <= 0) {
+      f.tug = 1;
+      f.next = rand(6, 14);
+    }
+    f.tug = Math.max(0, f.tug - cdt * 1.5);
+    for (const p of this.penguins)
+      p.hop += cdt;
+    const y = this.yeti;
+    if (y.t < 0) {
+      y.wait -= dt;
+      if (y.wait > 0)
+        return;
+      y.t = 0;
+      y.x = this.openSpot(0.15 * this.A, 0.8 * this.A, 0.6, 0.6)[0];
+      return;
+    }
+    y.t += cdt;
+    if (y.t < YETI)
+      return;
+    y.t = -1;
+    y.wait = eggWait(true) * TIME_SCALE13;
+  }
+  poke(x, y) {
+    const order2 = [...this.penguins].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+    order2.forEach((p, i) => {
+      if (p.hop < HOP)
+        return;
+      p.hop = -i * 0.03;
+    });
+  }
+  render() {
+    this.restore();
+    this.pines.draw(this.hdr, this.W, this.H, this.time);
+    if (this.look.aurora > 0 && !this.weather.covered)
+      this.drawAurora();
+    if (!this.weather.covered)
+      paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.5, this.look.stars > 50 ? 0.5 : 0.3, this.points);
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    const orb = this.weather.covered ? undefined : this.look.orb;
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, orb);
+    paintShadows(this.hdr, this.W, this.H, this.shadows, 0.61, orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    this.drawShadows();
+    if (this.owl.x > -5)
+      this.drawOwl();
+    if (this.yeti.t >= 0)
+      this.drawYeti();
+    if (this.bear)
+      this.drawBear(this.bear);
+    if (this.activity === "teeming")
+      this.drawFisher();
+    for (const p of [...this.penguins].sort((a, b) => a.y - b.y))
+      this.drawPenguin(p);
+    if (this.fox)
+      this.drawFox(this.fox);
+    this.lights.clear(this.W, this.H);
+    if (this.look.aurora > 0 && !this.weather.covered)
+      this.lightSnow();
+    if (this.look.glow === 1)
+      for (const [i, [x, base, R]] of this.igloos().entries()) {
+        const k = firelight(this.time, i);
+        const sway2 = (noise1(this.time * 0.9, i + 7) - 0.5) * 0.3 * R;
+        this.lights.pool((x - R * 0.35 + sway2) * this.H, (base + 0.01) * this.H, R * 3.2 * this.H, R * 1.1 * this.H, [1, 0.42, 0.08], 1.3 * k, 0.036 * k);
+      }
+    this.lights.apply(this.hdr);
+    this.drawFlakes();
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.owl.x < -5)
+      this.owl.next = 0;
+  }
+  layout() {
+    const { W, H, A, look, px } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT9 } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    paintSky(this.hdr, W, H, look.sky, look.orb, px);
+    this.weather.cover(this.hdr, W, H);
+    const sky = this.hdr.slice();
+    this.drawMountains();
+    const drift = new Float32Array(W);
+    for (let x = 0;x < W; x++)
+      drift[x] = (0.6 + 0.012 * Math.sin(x / H * 2.4 + 1) + 0.01 * fbm1(x / H * 3, 4)) * H;
+    for (let x = 0;x < W; x++)
+      for (let y = Math.max(0, Math.floor(drift[x]));y < H; y++) {
+        const v = y / H;
+        const waves = 0.5 + 0.5 * Math.sin(x / H * 6 + v * 40 + fbm1(x / px * 0.02, 3) * 4);
+        const k = smoothstep(0.3, 1, waves) * (look === LOOKS12.day ? 0.2 : 0.35) * (1 - (v - 0.6) * 0.8);
+        const c = lerpRGB2(look.snow, look.shade, look === LOOKS12.day ? Math.min(1, k + smoothstep(0.7, 1.1, v) * 0.45) : k);
+        const edge = look.style === "rim" ? Math.exp(-(y + 0.5 - drift[x]) / (2 * px)) * 0.3 : 0;
+        this.blend((y * W + x) * 3, c[0] + look.light[0] * edge, c[1] + look.light[1] * edge, c[2] + look.light[2] * edge, clamp(y + 1 - drift[x], 0, 1));
+      }
+    if (look === LOOKS12.day) {
+      mottle(this.hdr, W, H, 0.6, 1, 0.7, [1.04, 1, 0.9], [0.5, 0.66, 1]);
+      haze(this.hdr, sky, W, H, 0.6, 0.8, 0.15, 0);
+    }
+    this.drawLake(0.5 * A, 0.745, 0.3, 0.045);
+    const pines = [[0.3, 0.1], [0.37, 0.08], [A - 0.36, 0.09], [A - 0.29, 0.11]];
+    const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+    for (const [x, h] of pines)
+      ground(x, 0.625, h * 0.45, h, 0.5);
+    for (const [x, base, R] of this.igloos())
+      ground(x, base, R * 2, R * 0.85, 0.8);
+    if (this.activity === "teeming")
+      ground(0.3 * A, 0.85, 0.068, 0.15, 0.6);
+    ground(0.62 * A, 0.87, 0.09, 0.195, 0.6);
+    for (const [x, h] of pines)
+      this.drawPine(x, 0.625, h, 0.5);
+    for (const [x, base, R] of this.igloos())
+      this.drawIgloo(x, base, R);
+    if (this.activity === "teeming")
+      this.drawSnowman(0.3 * A, 0.85, 0.75, [0.2, 0.35, 0.8], false);
+    this.drawSnowman(0.62 * A, 0.87, 1, [0.8, 0.12, 0.1], true);
+    this.pines.begin(this.hdr);
+    for (const [fx, h] of [[0.04, 0.46], [0.11, 0.34], [0.955, 0.42], [0.995, 0.3]])
+      this.drawPine(fx * A, 1.02, h, 0);
+    this.pines.end(this.hdr, W, H, 0.01 * H, (_x, y) => clamp((0.95 * H - y) / (0.4 * H), 0, 1) ** 1.5);
+  }
+  drawShadows() {
+    const H = this.H;
+    const ground = (x, y, w, h, tip, lift2) => groundShadow(this.hdr, this.W, H, this.shade, x * H, y * H, w * H, h * H, tip, lift2);
+    if (this.bear) {
+      const S = 0.16 * this.depthScale(this.bear.y);
+      ground(this.bear.x + this.bear.face * 0.04 * S, this.bear.y, 0.85 * S, 0.5 * S, 0.8);
+    }
+    if (this.activity === "teeming")
+      ground(0.68 * this.A + 0.05, 0.758, 0.033, 0.09, 0.6);
+    for (const p of this.penguins) {
+      const S = 0.075 * this.depthScale(p.y);
+      const hop = p.hop >= 0 && p.hop < HOP ? Math.abs(Math.sin(p.hop / HOP * TAU)) * 0.025 * this.depthScale(p.y) : 0;
+      ground(p.x, p.y, 0.45 * S, S, 0.6, hop * H);
+    }
+    if (this.fox) {
+      const S = 0.064 * this.depthScale(this.fox.y);
+      ground(this.fox.x - this.fox.face * 0.05 * S, this.fox.y, 1.1 * S, 0.7 * S, 0.7);
+    }
+  }
+  igloos() {
+    const A = this.A;
+    return [
+      [A - 0.2, 0.7, 0.055],
+      [A - 0.36, 0.77, 0.08],
+      [0.42, 0.79, 0.075]
+    ];
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  drawMountains() {
+    const { W, H, A, look } = this;
+    const count = Math.max(4, Math.round(A * 5));
+    const peaks = Array.from({ length: count }, (_, i) => ({ c: (i + 0.5 + (hash(i * 3.3) - 0.5) * 0.6) * (A / count), h: 0.08 + hash(i * 5.1) * 0.13, w: 0.12 + hash(i * 7.9) * 0.1 }));
+    const top = new Float32Array(W);
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const height = peaks.reduce((m, p) => Math.max(m, p.h * (1 - Math.abs(u - p.c) / p.w)), 0);
+      top[x] = (HORIZON8 + 0.02 - height - (fbm1(u * 25, 2) - 0.5) * 0.008) * H;
+    }
+    for (let x = 0;x < W; x++) {
+      const slope = (top[Math.min(W - 1, x + 1)] - top[Math.max(0, x - 1)]) / 2;
+      const snowLine = (HORIZON8 - 0.06 + (fbm1(x / H * 8, 6) - 0.5) * 0.04) * H;
+      for (let y = Math.max(0, Math.floor(top[x]));y < (HORIZON8 + 0.06) * H; y++) {
+        const haze2 = clamp((y / H - 0.35) * 1.2, 0, 0.4);
+        let c = y < snowLine ? look.peaks : look.rock;
+        if (look.style === "front")
+          c = mulRGB(c, slope > 0.3 ? [1.05, 1, 0.92] : slope < -0.3 ? [0.45, 0.6, 0.92] : [0.8, 0.82, 0.9]);
+        const edge = look.style === "rim" ? Math.exp(-(y + 0.5 - top[x]) / (1.8 * this.px)) * 0.5 : 0;
+        c = lerpRGB2(c, look.sky[look.sky.length - 1][1], haze2 * 0.5);
+        this.blend((y * W + x) * 3, c[0] + look.light[0] * edge, c[1] + look.light[1] * edge, c[2] + look.light[2] * edge, clamp(y + 1 - top[x], 0, 1));
+      }
+    }
+  }
+  drawLake(cx, cy, rx, ry) {
+    const { W, H } = this;
+    const ice = this.look.ice;
+    this.shape([ell(cx * H, cy * H, rx * H, ry * H, 0, ice)], this.lighting, 0.3);
+    const y0 = Math.max(0, Math.floor((cy - ry) * H));
+    const y1 = Math.min(H, Math.ceil((cy + ry) * H) + 1);
+    const gloss = new Float32Array((y1 - y0) * W);
+    for (let y = y0;y < y1; y++) {
+      const dy = (y + 0.5 - cy * H) / (ry * H);
+      for (let x = Math.max(0, Math.floor((cx - rx) * H));x < Math.min(W, (cx + rx) * H + 1); x++) {
+        const cover = clamp((1 - Math.hypot((x + 0.5 - cx * H) / (rx * H), dy)) * ry * H + 0.5, 0, 1);
+        gloss[(y - y0) * W + x] = cover * (0.5 - 0.2 * (dy * 0.5 + 0.5));
+      }
+    }
+    const below2 = (r) => Math.max(0, y0 + r - (cy - ry) * H);
+    const rows = Float32Array.from({ length: y1 - y0 }, (_, r) => 0.598 * H - below2(r) * (1.6 + 2.2 * below2(r) / (2 * ry * H)));
+    const top = Math.max(...ice);
+    reflect(this.hdr, W, H, y0, y1, rows, new Float32Array(y1 - y0).fill(0.4 * (H / 180)), gloss, [ice[0] / top * 0.9, ice[1] / top * 0.9, ice[2] / top * 0.9], 0);
+    const crack = scaleRGB(ice, 0.7);
+    for (let i = 0;i < 5; i++) {
+      const x0 = cx + (hash(i * 3.7) - 0.5) * rx * 1.4;
+      const y02 = cy + (hash(i * 5.3) - 0.5) * ry;
+      const parts = [];
+      let [x, y] = [x0, y02];
+      for (let s = 0;s < 4; s++) {
+        const nx = x + (hash(i * 9 + s) - 0.4) * 0.04;
+        const ny = y + (hash(i * 11 + s) - 0.5) * 0.012;
+        parts.push(cap(x * H, y * H, nx * H, ny * H, this.thick(0.0015, 0.55), this.thick(0.001, 0.45), crack));
+        [x, y] = [nx, ny];
+      }
+      this.shape(parts, this.lighting, 0);
+    }
+  }
+  drawPine(x, base, h, haze2) {
+    const H = this.H;
+    const sky = this.look.sky[this.look.sky.length - 1][1];
+    const green = lerpRGB2(this.paint(PINE), sky, haze2 * 0.5);
+    const snow = lerpRGB2(this.look.peaks, sky, haze2 * 0.4);
+    this.polygon([
+      [(x - h * 0.03) * H, base * H],
+      [(x + h * 0.03) * H, base * H],
+      [(x + h * 0.03) * H, (base - h * 0.15) * H],
+      [(x - h * 0.03) * H, (base - h * 0.15) * H]
+    ], this.paint([0.3, 0.2, 0.12]));
+    for (let t = 0;t < 4; t++) {
+      const y0 = base - h * (0.12 + t * 0.21);
+      const w = h * (0.32 - t * 0.065);
+      const peak = y0 - h * 0.32;
+      this.polygon([[(x - w) * H, y0 * H], [x * H, peak * H], [(x + w) * H, y0 * H]], green);
+      this.polygon([[(x - w * 0.55) * H, (peak + (y0 - peak) * 0.55) * H], [x * H, peak * H], [(x + w * 0.55) * H, (peak + (y0 - peak) * 0.55) * H], [x * H, (peak + (y0 - peak) * 0.4) * H]], snow);
+    }
+  }
+  drawIgloo(cx, base, R) {
+    const H = this.H;
+    const dome2 = (x, r2, h) => Array.from({ length: 25 }, (_, i) => [(x + Math.cos(i / 24 * Math.PI) * r2) * H, (base - Math.sin(i / 24 * Math.PI) * h) * H]);
+    const block = lerpRGB2(this.look.snow, this.look.shade, 0.5);
+    const seam = this.look.shade;
+    this.polygon(dome2(cx, R, R * 0.85), block);
+    this.polygon(dome2(cx - R * 0.15, R * 0.75, R * 0.72).map(([x, y]) => [x, y - R * 0.04 * H]), lerpRGB2(this.look.snow, this.look.peaks, 0.7), 0.55);
+    const lines = [];
+    for (let row = 1;row < 4; row++) {
+      const yy = base - row / 4 * R * 0.85;
+      const half = R * Math.sqrt(1 - (row / 4) ** 2);
+      lines.push(cap((cx - half) * H, yy * H, (cx + half) * H, yy * H, this.thick(0.0018, 0.6), this.thick(0.0018, 0.6), seam));
+      for (let k2 = 0;k2 < 4; k2++) {
+        const sx = cx + ((k2 + row % 2 * 0.5) / 4 * 2 - 1) * half * 0.85;
+        lines.push(cap(sx * H, yy * H, sx * H, (yy + R * 0.21) * H, this.thick(0.001, 0.5), this.thick(0.001, 0.5), seam));
+      }
+    }
+    this.shape(lines, this.lighting, 0);
+    const door = cx - R * 0.35;
+    this.polygon(dome2(door, R * 0.38, R * 0.42), block);
+    const k = this.look.glow;
+    const dark = this.paint(DARK);
+    this.polygon(dome2(door, R * 0.2, R * 0.27), [lerp(dark[0], 1.4, k), lerp(dark[1], 0.75, k), lerp(dark[2], 0.25, k)]);
+    if (k <= 0)
+      return;
+    const gx = door * H;
+    const gy = (base + 0.01) * H;
+    const r = R * 1.6 * H;
+    for (let y = Math.max(0, Math.floor(gy - r * 0.5));y < Math.min(H, gy + r * 0.4); y++)
+      for (let x = Math.max(0, Math.floor(gx - r));x < Math.min(this.W, gx + r); x++) {
+        const d = Math.hypot((x - gx) / r, (y - gy) / (r * 0.4));
+        if (d >= 1)
+          continue;
+        const a = (1 - d) ** 2 * 0.3 * k;
+        this.add(x, y, a, 0.55 * a, 0.18 * a);
+      }
+  }
+  drawSnowman(cx, base, scale2, scarf, hat) {
+    const H = this.H;
+    const S = 0.1 * H * scale2;
+    const x = cx * H;
+    const y = base * H;
+    const P = (u, v) => [x + u * S, y + v * S];
+    const body2 = lerpRGB2(this.look.snow, this.look.peaks, 0.6);
+    const stick = this.paint([0.35, 0.22, 0.12]);
+    this.shape([cap(...P(-0.25, -0.95), ...P(-0.6, -1.15), 0.025 * S, 0.015 * S, stick), cap(...P(-0.5, -1.08), ...P(-0.58, -1.25), 0.015 * S, 0.01 * S, stick), cap(...P(0.25, -0.95), ...P(0.62, -1.12), 0.025 * S, 0.015 * S, stick)], this.lighting, 0.5);
+    this.shape([ell(...P(0, -0.42), 0.45 * S, 0.42 * S, 0, body2), ell(...P(0, -1), 0.33 * S, 0.31 * S, 0, body2), ell(...P(0, -1.48), 0.24 * S, 0.23 * S, 0, body2)], this.lighting, 0.8);
+    const coal = this.paint(DARK);
+    this.shape([ell(...P(-0.08, -1.53), 0.035 * S, 0.035 * S, 0, coal), ell(...P(0.08, -1.53), 0.035 * S, 0.035 * S, 0, coal), ...[-0.85, -1, -1.15].map((v) => ell(...P(0, v), 0.035 * S, 0.035 * S, 0, coal))], this.lighting, 0);
+    this.shape([cap(...P(0.02, -1.46), ...P(0.3, -1.42), 0.045 * S, 0.008 * S, this.paint(ORANGE))], this.lighting, 0.5);
+    this.shape([cap(...P(-0.24, -1.27), ...P(0.24, -1.27), 0.05 * S, 0.05 * S, this.paint(scarf)), cap(...P(0.14, -1.27), ...P(0.2, -1.02), 0.045 * S, 0.04 * S, this.paint(scarf))], this.lighting, 0.6);
+    if (!hat)
+      return;
+    const black = this.paint([0.06, 0.06, 0.08]);
+    this.polygon([P(-0.3, -1.66), P(0.3, -1.66), P(0.3, -1.62), P(-0.3, -1.62)], black);
+    this.polygon([P(-0.18, -1.95), P(0.18, -1.95), P(0.18, -1.65), P(-0.18, -1.65)], black);
+  }
+  drawAurora() {
+    const { W, H, hdr, look } = this;
+    const t = this.time;
+    let bottom = 0;
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const band = (0.17 + 0.05 * Math.sin(u * 1.7 + t * 0.07) + 0.03 * Math.sin(u * 4.1 - t * 0.05)) * H;
+      const fold = auroraFold(u, t);
+      bottom = Math.max(bottom, band + 0.05 * H);
+      for (let y = 0;y < Math.min(H, band + 0.05 * H); y++) {
+        const above2 = band - y;
+        const k = (above2 > 0 ? Math.exp(-above2 / (0.12 * H)) : Math.exp(-((above2 / (0.015 * H)) ** 2))) * fold * 0.35 * look.aurora;
+        if (k < 0.003)
+          continue;
+        const violet = clamp(above2 / (0.15 * H), 0, 1);
+        const o = (y * W + x) * 3;
+        hdr[o] += k * lerp(0.1, 0.6, violet);
+        hdr[o + 1] += k * lerp(1, 0.2, violet);
+        hdr[o + 2] += k * lerp(0.5, 0.9, violet);
+      }
+    }
+    this.touch(0, 0, W - 1, bottom);
+  }
+  lightSnow() {
+    const { H, A, lights } = this;
+    const t = this.time;
+    const igloos = this.igloos();
+    for (let i = 0;i < lights.cols; i++) {
+      const u = i * lights.cell / H;
+      const fold = (auroraFold(u - 0.04, t) + auroraFold(u, t) + auroraFold(u + 0.04, t)) / 3;
+      const violet = 0.75 * smoothstep(0.1, 0.9, Math.sin(u * 3.5 - t * 0.05 + 1));
+      const color = [lerp(0.05, 0.5, violet), lerp(0.8, 0.08, violet), lerp(0.3, 0.75, violet)];
+      for (let j = Math.floor(HORIZON8 * H / lights.cell);j < lights.rows; j++) {
+        const v = j * lights.cell / H;
+        const lake = 1 + 0.9 * smoothstep(1.2, 0.6, ((u - 0.5 * A) / 0.3) ** 2 + ((v - 0.745) / 0.045) ** 2);
+        const ripple = 0.65 + 0.35 * Math.sin(u * 6 + v * 38 - t * 0.25);
+        const fire = igloos.reduce((m, [x, base, R]) => Math.max(m, smoothstep(1, 0.2, ((u - x + R * 0.35) / (R * 3)) ** 2 + ((v - base) / (R * 1.4)) ** 2)), 0);
+        const k = fold * ripple * lake * (1 - 0.85 * fire) * smoothstep(HORIZON8, 0.63, v) * (1 - 0.7 * smoothstep(0.66, 0.95, v)) * this.look.aurora;
+        if (k > 0.01)
+          lights.node(i, j, color, 0.9 * k, 0.009 * k);
+      }
+    }
+  }
+  drawFlakes() {
+    const { H, look } = this;
+    for (const f of this.flakes) {
+      const k = (0.12 + f.z * 0.25) * (0.6 + 0.4 * f.s);
+      const [x, y] = [f.x * H, f.y * H];
+      if (f.z > 0.75)
+        this.disc(x, y, 1.1, look.flakes[0] * k * 2, look.flakes[1] * k * 2, look.flakes[2] * k * 2, 0.5);
+      else
+        this.splat(x, y, look.flakes[0] * k, look.flakes[1] * k, look.flakes[2] * k);
+    }
+  }
+  wander(w, dt, zone, speed, stride2) {
+    const [x0, y0] = [w.x, w.y];
+    this.roam(w, dt, zone, speed);
+    stepGait(w.g, Math.hypot(w.x - x0, w.y - y0) / (stride2 * this.depthScale(w.y)), dt, w.face);
+  }
+  roam(w, dt, zone, speed) {
+    w.phase += dt * (w.moving ? 6 : 1);
+    if (w.rest > 0) {
+      w.rest -= dt;
+      w.moving = false;
+      return;
+    }
+    w.wanderT -= dt;
+    if (w.wanderT <= 0) {
+      w.wanderT = rand(6, 14);
+      [w.wx, w.wy] = this.openSpot(...zone);
+    }
+    const dx = w.wx - w.x;
+    const dy = w.wy - w.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.01) {
+      w.rest = rand(3, 8);
+      w.wanderT = 0;
+      return;
+    }
+    w.moving = true;
+    if (Math.abs(dx) > 0.005)
+      w.face = Math.sign(dx);
+    w.x += dx / d * speed * dt;
+    w.y += dy / d * speed * dt;
+  }
+  depthScale(y) {
+    return 0.55 + (y - 0.65) * 2.5;
+  }
+  drawPenguin(p) {
+    const H = this.H;
+    const g = p.g;
+    const S = 0.075 * H * this.depthScale(p.y);
+    const rock = Math.sin(TAU * g.phase) * 0.14 * g.go + Math.sin(p.phase) * 0.03 * (1 - g.go);
+    const x = p.x * H;
+    const y = (p.y - (p.hop >= 0 && p.hop < HOP ? Math.abs(Math.sin(p.hop / HOP * TAU)) * 0.025 * this.depthScale(p.y) : 0)) * H;
+    const [al, ac] = view(g.turn);
+    const cr = Math.cos(rock);
+    const sr = Math.sin(rock);
+    const P = (u, v, w = 0) => {
+      const sx = u * al - w * ac;
+      return [x + (sx * cr - v * sr) * S, y + (sx * sr + v * cr) * S];
+    };
+    const len = (u, w) => (u * Math.abs(al) + w * ac) * S;
+    const black = this.paint(DARK);
+    const belly = this.paint([0.92, 0.92, 0.95]);
+    const orange = this.paint(ORANGE);
+    const feet = [-1, 1].map((w) => {
+      const [reach, lift2] = stride(g.phase, w > 0 ? 0 : 0.5);
+      const fu = reach * 0.06 * g.go;
+      return ell(...P(fu + 0.05, -0.02 - lift2 * 0.05 * g.go, w * 0.09), len(0.1, 0.05), 0.035 * S, 0, orange);
+    });
+    const flip = 0.1 + g.lag * 0.12 + Math.abs(rock) * 0.3;
+    this.shape([
+      ...feet,
+      ell(...P(0, -0.42), len(0.22, 0.2), 0.4 * S, rock, black),
+      ...[-1, 1].map((w) => cap(...P(-0.04, -0.62, w * 0.17), ...P(-0.14 - flip * 0.3, -0.32, w * (0.2 + flip)), 0.06 * S, 0.025 * S, black)),
+      ell(...P(0.04, -0.82), len(0.15, 0.13), 0.14 * S, 0, black)
+    ], this.lighting, 0.6);
+    this.shape([ell(...P(0.08, -0.38), len(0.13, 0.15), 0.3 * S, rock, belly)], this.lighting, 0.6);
+    this.shape([cap(...P(0.14, -0.84), ...P(0.27, -0.81), 0.035 * S, 0.012 * S, orange)], this.lighting, 0.5);
+    for (const w of ac > 0.3 ? [-1, 1] : [0])
+      this.add(...P(0.1, -0.86, w * 0.06), 0.5, 0.5, 0.5);
+  }
+  drawYeti() {
+    const { H, look } = this;
+    const t = this.yeti.t;
+    const fade = smoothstep(0, 1.5, t) * (1 - smoothstep(10, 12, t));
+    const walk2 = smoothstep(4, 8, t);
+    const x = (this.yeti.x + walk2 * 0.06) * H;
+    const y = 0.645 * H;
+    const S = 0.1 * H;
+    const P = (u, v) => [x + u * S, y + v * S];
+    const step = t > 4 && t < 8 ? Math.sin(t * 6) * 0.06 : 0;
+    const turn = Math.sin(clamp((t - 1.5) / 2.5, 0, 1) * TAU) * 0.04;
+    const wave2 = smoothstep(8, 8.6, t) * (1 - smoothstep(9.6, 10, t));
+    const c = lerpRGB2(look.snow, scaleRGB(look.shade, 0.45), fade);
+    this.shape([
+      cap(...P(-0.1, -0.4), ...P(-0.1 + step, 0), 0.075 * S, 0.06 * S, c),
+      cap(...P(0.1, -0.4), ...P(0.1 - step, 0), 0.075 * S, 0.06 * S, c),
+      ell(...P(0, -0.6), 0.22 * S, 0.3 * S, 0, c),
+      ell(...P(0, -0.8), 0.26 * S, 0.14 * S, 0, c),
+      ell(...P(turn, -0.98), 0.1 * S, 0.11 * S, 0, c),
+      cap(...P(turn, -1), ...P(turn * 0.5, -1.1), 0.08 * S, 0.02 * S, c),
+      cap(...P(-0.24, -0.8), ...P(-0.3, -0.36), 0.065 * S, 0.055 * S, c),
+      cap(...P(0.24, -0.8), ...P(lerp(0.3, 0.42, wave2), lerp(-0.36, -1.18, wave2) + Math.sin(t * 9) * 0.04 * wave2), 0.065 * S, 0.055 * S, c)
+    ], this.lighting, 0);
+    if (look.style === "rim")
+      for (const s of [-1, 1])
+        this.add(...P(turn + s * 0.035, -0.99), 0.5 * fade, 0.3 * fade, 0.04 * fade);
+  }
+  drawFox(f) {
+    const H = this.H;
+    const g = f.g;
+    const P = body(f.x * H, f.y * H, 0.064 * H * this.depthScale(f.y), g.turn);
+    const S = P.S;
+    const fur = this.paint(FUR);
+    const rise = bob(g.phase) * g.go * 0.02;
+    const legs = { fore: 0.21, hind: 0.21, top: 0.3 - rise, w: 0.06, a: 0.5, b: 0.5, reach: 0.18, lift: 0.09, r: [0.065, 0.032, 0.028], paw: [0.035, fur] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([0.72, 0.72, 0.7]) }), this.lighting, 0.7);
+    const nod = Math.cos(TAU * 2 * g.phase - 1) * 0.015 * g.go - rise;
+    const flick = Math.sin(TAU * 2 * g.phase - 2) * 0.03 * g.go - g.lag * 0.05;
+    const tail = (t) => P(-0.26 - t * 0.4, -0.4 - rise + t * 0.12 - Math.sin(Math.PI * t) * 0.06 + flick * t * t);
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: fur }),
+      ell(...P(0, -0.4 - rise), P.len(0.3, 0.11), 0.12 * S, 0, fur),
+      ...chain(tail, 3, 0.07 * S, 0.1 * S, fur),
+      ell(...tail(0.95), P.len(0.09, 0.08), 0.08 * S, 0, fur),
+      cap(...P(0.22, -0.43 - rise), ...P(0.36, -0.54 + nod), 0.1 * S, 0.075 * S, fur),
+      ell(...P(0.4, -0.56 + nod), 0.09 * S, 0.08 * S, 0, fur),
+      cap(...P(0.44, -0.54 + nod), ...P(0.58, -0.5 + nod), 0.05 * S, 0.016 * S, fur),
+      ...[-1, 1].map((w) => cap(...P(0.38, -0.62 + nod, w * 0.05), ...P(0.36 - g.lag * 0.02, -0.76 + nod, w * 0.07), 0.035 * S, 0.006 * S, fur))
+    ], this.lighting, 0.7);
+    this.add(...P(0.58, -0.5 + nod), 0.02, 0.02, 0.02);
+  }
+  drawBear(b) {
+    const H = this.H;
+    const g = b.g;
+    const P = body(b.x * H, b.y * H, 0.16 * H * this.depthScale(b.y), g.turn);
+    const S = P.S;
+    const fur = this.paint([0.95, 0.9, 0.74]);
+    const rise = bob(g.phase) * g.go * 0.015;
+    const legs = { fore: 0.24, hind: 0.24, top: 0.33 - rise, w: 0.09, a: 0.5, b: 0.5, reach: 0.15, lift: 0.07, r: [0.11, 0.075, 0.07], paw: [0.05, fur] };
+    this.shape(quadruped(P, g, true, { ...legs, color: this.paint([0.76, 0.72, 0.6]) }), this.lighting, 0.7);
+    const sway2 = Math.sin(TAU * g.phase - 1) * 0.04 * g.go;
+    const nod = Math.cos(TAU * 2 * g.phase - 1) * 0.015 * g.go - rise;
+    this.shape([
+      ...quadruped(P, g, false, { ...legs, color: fur }),
+      ell(...P(-0.02, -0.4 - rise), P.len(0.36, 0.17), 0.19 * S, 0.08 * P.along, fur),
+      cap(...P(0.24, -0.44 - rise), ...P(0.46, -0.36 + nod, sway2), 0.14 * S, 0.09 * S, fur),
+      cap(...P(0.46, -0.37 + nod, sway2), ...P(0.62, -0.32 + nod, sway2), 0.085 * S, 0.045 * S, fur),
+      ...[-1, 1].map((w) => ell(...P(0.45, -0.45 + nod, sway2 + w * 0.05), 0.035 * S, 0.035 * S, 0, fur)),
+      ell(...P(-0.38, -0.46 - rise), 0.04 * S, 0.035 * S, 0, fur)
+    ], this.lighting, 0.7);
+    this.add(...P(0.63, -0.33 + nod, sway2), 0.02, 0.02, 0.02);
+  }
+  drawFisher() {
+    const H = this.H;
+    const S = 0.1 * H;
+    const hx = 0.68 * this.A * H;
+    const hy = 0.758 * H;
+    const x = hx + 0.06 * H;
+    const y = hy;
+    const P = (u, v) => [x + u * S, y + v * S];
+    this.shape([ell(hx, hy, 0.02 * H, 0.006 * H, 0, this.paint([0.05, 0.1, 0.18]))], this.lighting, 0);
+    this.polygon([P(-0.12, 0), P(0.12, 0), P(0.1, -0.28), P(-0.1, -0.28)], this.paint([0.4, 0.45, 0.55]));
+    const parka = this.paint([0.8, 0.15, 0.1]);
+    const lift2 = this.fisher.tug * 0.25;
+    const tip = [hx + 0.01 * H, hy - (0.09 + lift2 * 0.12) * H];
+    this.shape([
+      cap(...P(-0.02, -0.3), ...P(-0.28, -0.32), 0.07 * S, 0.06 * S, this.paint([0.15, 0.15, 0.2])),
+      cap(...P(-0.28, -0.32), ...P(-0.3, -0.05), 0.06 * S, 0.05 * S, this.paint([0.15, 0.15, 0.2])),
+      cap(...P(0, -0.32), ...P(-0.02, -0.68), 0.15 * S, 0.12 * S, parka),
+      cap(...P(-0.04, -0.58), ...P(-0.24, -0.45), 0.05 * S, 0.045 * S, parka),
+      ell(...P(-0.03, -0.8), 0.13 * S, 0.13 * S, 0, parka),
+      ell(...P(-0.06, -0.79), 0.08 * S, 0.09 * S, 0, this.paint([0.85, 0.65, 0.5]))
+    ], this.lighting, 0.6);
+    this.shape([cap(...P(-0.24, -0.45), ...tip, 0.012 * S, 0.006 * S, this.paint([0.3, 0.2, 0.12])), cap(...tip, hx, hy, 0.002 * H, 0.002 * H, this.paint([0.6, 0.6, 0.6]))], this.lighting, 0);
+  }
+  stepOwl(dt) {
+    const o = this.owl;
+    o.phase += dt;
+    if (o.x < -5) {
+      o.next -= dt;
+      if (o.next > 0)
+        return;
+      o.dir = Math.random() < 0.5 ? 1 : -1;
+      o.x = o.dir > 0 ? -0.15 : this.A + 0.15;
+      o.y = this.openRow(0.18, 0.35);
+      return;
+    }
+    o.x += o.dir * 0.07 * dt;
+    if (o.x < -0.3 || o.x > this.A + 0.3) {
+      o.x = -9;
+      o.next = rand(40, 75);
+    }
+  }
+  drawOwl() {
+    const H = this.H;
+    const o = this.owl;
+    const S = 0.6 * H;
+    const x = o.x * H;
+    const y = (o.y + Math.sin(o.phase * 0.8) * 0.01) * H;
+    const P = (u, v) => [x + u * S, y + v * S];
+    const white = this.paint([0.92, 0.94, 0.97]);
+    const flex = Math.sin(o.phase * 1.5) * 0.008;
+    const parts = [cap(...P(0, -0.006), ...P(0, 0.04), 0.016 * S, 0.012 * S, white), ell(...P(0, -0.02), 0.019 * S, 0.017 * S, 0, white)];
+    for (const side of [-1, 1]) {
+      const spine = (t) => [side * (0.02 + 0.11 * t), -0.015 * t * t + flex * t * t];
+      for (let i = 0;i < 5; i++)
+        parts.push(cap(...P(...spine(i / 5)), ...P(...spine((i + 1) / 5)), 0.024 * (1 - 0.3 * (i / 5)) * S, 0.024 * (1 - 0.3 * ((i + 1) / 5)) * S, white));
+      parts.push(ell(...P(...spine(0.95)), 0.02 * S, 0.015 * S, 0, white));
+    }
+    this.shape(parts, this.lighting, 0.6);
+    for (const s of [-1, 1])
+      this.add(...P(s * 0.007, -0.022), 1, 0.75, 0.1);
+  }
+}
+function auroraFold(u, t) {
+  return 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(u * 14 + Math.sin(u * 3 + t * 0.1) * 3 + t * 0.15), 2);
+}
+function lerpRGB2(a, b, t) {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+function scaleRGB(c, k) {
+  return [c[0] * k, c[1] * k, c[2] * k];
+}
+function mulRGB(a, b) {
+  return [a[0] * b[0], a[1] * b[1], a[2] * b[2]];
+}
+var tundra = {
+  id: "tundra",
+  name: "Tundra",
+  description: "Snowy peaks, a frozen lake, igloos and a snowman under falling snow, with a snowy owl now and then",
+  activity: {
+    calm: "Peaks, igloos, a snowman and falling snow",
+    lively: "Adds waddling penguins and an arctic fox",
+    teeming: "Adds a polar bear, an ice fisher and another snowman"
+  },
+  scrim: {
+    day: [
+      [24, 40, 64],
+      [30, 44, 60],
+      [24, 34, 50]
+    ],
+    sunset: [
+      [30, 16, 34],
+      [40, 18, 30],
+      [20, 10, 20]
+    ],
+    night: [
+      [3, 6, 16],
+      [2, 6, 14],
+      [2, 4, 10]
+    ]
+  },
+  create: (settings) => new Tundra(settings)
+};
+
+// wallpapers/zen.ts
+var TIME_SCALE14 = 0.35;
+var CREATURE_SPEED14 = 0.25;
+var HORIZON9 = 0.52;
+var GROUND2 = 0.565;
+var TANUKI = { arrive: 15, leave: 38, gone: 62 };
+var LOOKS13 = {
+  day: {
+    style: "front",
+    light: [1, 0.95, 0.85],
+    sky: [
+      [0, [0.12, 0.32, 0.7]],
+      [0.3, [0.28, 0.52, 0.84]],
+      [HORIZON9, [0.66, 0.8, 0.9]]
+    ],
+    orb: { x: 0.4, y: 0.12, r: 0.035, core: [5, 4.6, 3.8], glow: [1, 0.95, 0.8], near: 0.45, wide: 0.12 },
+    stars: 0,
+    clouds: { top: [1.1, 1.1, 1.1], bottom: [0.6, 0.66, 0.78], alpha: 0.85 },
+    hills: [
+      [0.42, 0.55, 0.72],
+      [0.18, 0.36, 0.22]
+    ],
+    snow: [1, 1.02, 1.08],
+    mist: [0.72, 0.82, 0.9],
+    moss: [0.2, 0.4, 0.12],
+    gravel: [0.72, 0.66, 0.55],
+    water: [0.03, 0.14, 0.13],
+    mirror: 0.55,
+    glitter: 0.15,
+    ripple: [0.45, 0.6, 0.6],
+    petal: [1.05, 0.68, 0.8],
+    lamps: 0,
+    tint: [1, 1, 1],
+    night: false
+  },
+  sunset: {
+    style: "rim",
+    light: [1, 0.68, 0.5],
+    sky: [
+      [0, [0.05, 0.055, 0.15]],
+      [0.16, [0.2, 0.18, 0.36]],
+      [0.3, [0.85, 0.48, 0.36]],
+      [HORIZON9, [1, 0.62, 0.36]]
+    ],
+    orb: { x: 0.52, y: 0.39, r: 0.045, core: [2.2, 1.35, 0.75], glow: [1, 0.58, 0.36], near: 0.38, wide: 0.22 },
+    stars: 10,
+    clouds: { top: [0.26, 0.18, 0.32], bottom: [1, 0.6, 0.45], alpha: 0.5 },
+    hills: [
+      [0.56, 0.33, 0.36],
+      [0.17, 0.11, 0.16]
+    ],
+    snow: [1, 0.7, 0.55],
+    mist: [1, 0.58, 0.4],
+    moss: [0.1, 0.08, 0.1],
+    gravel: [0.32, 0.22, 0.22],
+    water: [0.06, 0.045, 0.08],
+    mirror: 0.7,
+    glitter: 0.6,
+    ripple: [1, 0.66, 0.5],
+    petal: [0.95, 0.52, 0.6],
+    lamps: 0.45,
+    tint: [0.26, 0.17, 0.2],
+    night: false
+  },
+  night: {
+    style: "rim",
+    light: [0.3, 0.62, 1.5],
+    sky: [
+      [0, [0.004, 0.008, 0.03]],
+      [0.3, [0.014, 0.024, 0.07]],
+      [0.42, [0.035, 0.055, 0.14]],
+      [HORIZON9, [0.07, 0.1, 0.24]]
+    ],
+    orb: { x: 0.6, y: 0.16, r: 0.032, core: [1, 0.72, 0.3], glow: [0.45, 0.3, 0.12], near: 0.2, wide: 0.08, moon: true },
+    stars: 130,
+    clouds: { top: [0.015, 0.02, 0.05], bottom: [0.06, 0.1, 0.3], alpha: 0.4 },
+    hills: [
+      [0.025, 0.04, 0.1],
+      [0.008, 0.016, 0.035]
+    ],
+    snow: [0.07, 0.12, 0.3],
+    mist: [0.05, 0.09, 0.22],
+    moss: [0.01, 0.024, 0.035],
+    gravel: [0.045, 0.07, 0.15],
+    water: [0.014, 0.045, 0.12],
+    mirror: 0.5,
+    glitter: 0.6,
+    ripple: [0.06, 0.25, 0.55],
+    petal: [0.45, 0.12, 0.35],
+    lamps: 1,
+    tint: [0.02, 0.032, 0.075],
+    night: true
+  }
+};
+var DAYLIGHT10 = (() => {
+  const l = Math.hypot(0.4, 0.6, 0.6);
+  return [-0.4 / l, -0.6 / l, 0.6 / l];
+})();
+var STONE = [0.62, 0.6, 0.55];
+var ROCK2 = [0.46, 0.44, 0.4];
+var VERMILION = [0.85, 0.2, 0.07];
+var BAMBOO = [0.55, 0.6, 0.22];
+var PAD = [0.18, 0.45, 0.14];
+var AMBER3 = [1.6, 0.8, 0.25];
+var KOI = [
+  [[0.95, 0.92, 0.86], [0.9, 0.18, 0.06]],
+  [[1, 0.45, 0.1], null],
+  [[1, 0.72, 0.2], null],
+  [[0.12, 0.1, 0.1], [0.95, 0.38, 0.08]],
+  [[0.95, 0.92, 0.86], [0.12, 0.1, 0.1]],
+  [[1, 0.55, 0.15], [0.95, 0.92, 0.86]]
+];
+
+class Zen extends Canvas {
+  time = 0;
+  creatureTime = 0;
+  activity;
+  look;
+  lighting = { style: "front", dir: DAYLIGHT10 };
+  shade;
+  stars;
+  clouds;
+  pond = { x: 1, y: 0.8, rx: 0.45, ry: 0.14 };
+  cherry = { x: 1.6, y: 0.27 };
+  pool = new Int32Array(0);
+  poolBox = [0, 0, -1, -1];
+  wet = new Float32Array(0);
+  under = new Float32Array(0);
+  front = new Float32Array(0);
+  keep = new Float32Array(0);
+  mirror = new Float32Array(0);
+  wave = new Float32Array(0);
+  layers;
+  pads = [];
+  koi = [];
+  rings = [];
+  petals = [];
+  fountain = { fill: 0.55, tip: -1 };
+  heron = { phase: "away", t: 0, next: 6, stay: 0 };
+  frog = { croak: -1, next: 5 };
+  dragonflies = [];
+  fireflies = [];
+  drip = 2;
+  season;
+  weather;
+  lights = new LightMap;
+  storm = makeStorm();
+  sparrows = [];
+  tanuki = { wait: eggWait() * TIME_SCALE14, t: -1 };
+  trees = new SwayLayer(-1);
+  constructor(settings) {
+    super();
+    this.activity = settings.activity;
+    this.look = LOOKS13[settings.time];
+    if (settings.time === "day")
+      this.frame = 0.4;
+    this.season = settings.season ?? "spring";
+    this.weather = new WeatherLayer(settings.weather ?? (this.season === "winter" ? "snow" : "clear"), settings.time, HORIZON9, !settings.weather);
+    this.shade = sunShade(settings.time, this.look.orb, this.weather.covered);
+    this.stars = makeStars(this.look.stars, 0.45);
+    this.clouds = makeClouds(4, "wisp", 0.06, 0.24);
+    const count = { calm: 0, lively: 3, teeming: 6 }[settings.activity];
+    this.koi = Array.from({ length: count }, (_, i) => ({ a: rand(0, TAU), r: 0.32 + i % 3 * 0.16, dir: i === 4 ? -1 : 1, phase: rand(0, TAU), size: rand(0.85, 1.1), colors: KOI[i] }));
+    const falling = this.season === "spring" || this.season === "autumn";
+    this.petals = Array.from({ length: falling ? { calm: 16, lively: 22, teeming: 30 }[settings.activity] : 0 }, () => this.newPetal(true));
+    if (settings.activity === "teeming" && !this.look.night)
+      this.dragonflies = [[0.85, 0.18, 0.08], [0.15, 0.4, 0.9]].map((color) => ({ x: rand(0.8, 1.4), y: rand(0.6, 0.75), tx: 1, ty: 0.7, face: 1, rest: rand(0, 2), phase: rand(0, TAU), color }));
+    const flies = this.look.night ? { calm: 10, lively: 16, teeming: 26 }[settings.activity] : 0;
+    this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.58 + Math.random() * 0.36, vx: 0, vy: 0, phase: Math.random() * TAU }));
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE14;
+    this.time += dt;
+    const cdt = dt * CREATURE_SPEED14;
+    this.creatureTime += cdt;
+    driftClouds(this.clouds, this.A, dt);
+    driftClouds(this.storm, this.A, dt);
+    this.stepGloom(dt);
+    this.weather.step(dt);
+    this.sparrows = flyAway(this.sparrows, dt, this.A);
+    this.stepTanuki(dt);
+    for (const r of this.rings)
+      r.age += dt;
+    this.rings = this.rings.filter((r) => r.age < r.life);
+    this.drip -= dt;
+    if (this.drip <= 0) {
+      this.drip = rand(3, 7);
+      const a = rand(0, TAU);
+      const r = Math.sqrt(Math.random()) * 0.8;
+      this.rings.push({ x: this.pond.x + Math.cos(a) * r * this.pond.rx, y: this.pond.y + Math.sin(a) * r * this.pond.ry, age: 0, life: 4, strength: 0.5 });
+    }
+    for (const p of this.petals)
+      this.stepPetal(p, dt);
+    this.stepFountain(dt);
+    this.stepHeron(dt);
+    for (const k of this.koi) {
+      k.phase += cdt;
+      k.a += k.dir * 0.3 * cdt / k.r;
+      if (Math.random() < cdt * 0.15) {
+        const [u, v] = this.koiAt(k, 0);
+        this.rings.push({ x: this.pond.x + u * this.pond.rx, y: this.pond.y + v * this.pond.ry, age: 0, life: 4, strength: 0.8 });
+      }
+    }
+    if (this.activity === "teeming")
+      this.stepFrog(dt);
+    for (const d of this.dragonflies)
+      this.stepDragonfly(d, dt);
+    for (const f of this.fireflies) {
+      f.vx += (Math.random() - 0.5) * 0.02 * dt;
+      f.vy += (Math.random() - 0.5) * 0.02 * dt;
+      f.vx *= Math.exp(-dt * 0.5);
+      f.vy *= Math.exp(-dt * 0.5);
+      f.x = (f.x + f.vx * dt + this.A) % this.A;
+      f.y = clamp(f.y + f.vy * dt, 0.56, 0.96);
+    }
+  }
+  render() {
+    this.restore();
+    this.trees.draw(this.hdr, this.W, this.H, this.time);
+    if (!this.weather.covered)
+      paintStars(this.hdr, this.W, this.H, this.stars, this.time, 0.45, this.look.stars > 50 ? 0.5 : 0.3, this.points);
+    const [top, bottom] = this.weather.scud ?? [this.look.clouds.top, this.look.clouds.bottom];
+    paintClouds(this.hdr, this.W, this.H, this.clouds, top, bottom, this.look.clouds.alpha, this.weather.covered ? undefined : this.look.orb);
+    paintStorm(this.hdr, this.W, this.H, this.storm, this.look.clouds.top, this.look.clouds.bottom, this.gloom);
+    this.drawWater();
+    for (const r of this.rings)
+      this.drawRing(r);
+    for (const p of this.petals)
+      if (p.state === 1)
+        this.drawPetal(p);
+    for (const k of this.koi)
+      this.drawKoi(k);
+    const { hdr, pool, front, keep } = this;
+    for (let k = 0;k < pool.length; k++) {
+      const o = pool[k] * 3;
+      hdr[o] = front[k * 3] + keep[k] * hdr[o];
+      hdr[o + 1] = front[k * 3 + 1] + keep[k] * hdr[o + 1];
+      hdr[o + 2] = front[k * 3 + 2] + keep[k] * hdr[o + 2];
+    }
+    this.drawRocker();
+    if (this.activity === "teeming")
+      this.drawFrog();
+    this.drawHeron();
+    for (const d of this.dragonflies)
+      this.drawDragonfly(d);
+    if (this.tanuki.t >= 0)
+      this.drawTanuki();
+    for (const p of this.petals)
+      if (p.state !== 1)
+        this.drawPetal(p);
+    for (const b of this.sparrows)
+      this.shape(bird(b, this.H, 0.02 * this.H, this.paint([0.45, 0.33, 0.22])), this.lighting, 0.4);
+    this.lights.clear(this.W, this.H);
+    if (this.look.night)
+      for (const [i, l] of this.lanterns().entries()) {
+        const k = 0.3 + 0.7 * firelight(this.time * 0.7, i + 2);
+        this.lights.pool(l.x * this.H, l.base * this.H, l.scale * 1.6 * this.H, l.scale * 0.6 * this.H, [1, 0.5, 0.15], 2.1 * k, 0.0105 * k);
+      }
+    this.lights.apply(this.hdr);
+    this.drawFireflies();
+    this.weather.draw(this.hdr, this.W, this.H);
+    this.finish();
+  }
+  visit() {
+    if (this.heron.phase === "away")
+      this.heron.next = 0;
+  }
+  poke(x, y) {
+    if (this.wetAt(x, y) > 0.5)
+      return void this.rings.push({ x, y, age: 0, life: 4, strength: 1.2 });
+    startle(this.sparrows, x, Math.max(y, GROUND2 + 0.03), 4);
+  }
+  layout() {
+    const { W, H, A, look } = this;
+    this.lighting = look.style === "front" ? { style: "front", dir: DAYLIGHT10 } : { style: "rim", color: look.light, x: look.orb.x * W, y: look.orb.y * H };
+    const rx = Math.min(0.25 * A, 0.56);
+    this.pond = { x: Math.max(0.64 * A, 0.36 * A + rx + 0.06), y: 0.8, rx, ry: 0.14 };
+    this.cherry = { x: A - 0.2, y: 0.27 };
+    const p = this.pond;
+    this.pads = [
+      [-0.15, -0.5, 0.045],
+      [0.3, -0.6, 0.035],
+      [0.55, 0.35, 0.05],
+      [0.08, 0.5, 0.05],
+      [-0.62, -0.15, 0.04],
+      [0.35, 0.02, 0.03],
+      [-0.3, 0.2, 0.028]
+    ].map(([u, v, r]) => ({ x: p.x + u * p.rx, y: p.y + v * p.ry, r }));
+    paintSky(this.hdr, W, H, look.sky, look.orb, this.px);
+    this.weather.cover(this.hdr, W, H);
+    const clear = this.hdr.slice();
+    this.drawHills();
+    if (look === LOOKS13.day)
+      haze(this.hdr, clear, W, H, HORIZON9, GROUND2, 0.15);
+    const sky = this.hdr.slice();
+    this.drawGround();
+    if (look === LOOKS13.day)
+      mottle(this.hdr, W, H, GROUND2, 1, 0.5, [1.08, 1, 0.84], [0.76, 0.84, 0.96]);
+    const ground = (x, y, w, h, tip) => groundShadow(this.hdr, W, H, this.shade, x * H, y * H, w * H, h * H, tip);
+    ground(0.07 * A, 0.66, 0.1, 0.4, 1.6);
+    ground(this.cherry.x + 0.08, 0.66, 0.12, 0.38, 2);
+    for (const r of this.rocks())
+      ground(r.x + r.r * 0.2, r.y + r.r * 0.15, r.r * 2.2, r.r * 1.4, 0.8);
+    for (const [i, l] of this.lanterns().entries())
+      ground(l.x, l.base, l.scale * (i === 0 ? 0.45 : 1), l.scale * (i === 0 ? 1 : 0.8), i === 0 ? 0.9 : 0.8);
+    this.drawBackGarden();
+    const bank = this.hdr.slice();
+    const black = this.frontGardenOn(0);
+    const white = this.frontGardenOn(1);
+    const hdr = this.hdr;
+    for (let i = 0;i < hdr.length; i++)
+      hdr[i] = black[i] + (white[i] - black[i]) * hdr[i];
+    this.trees.seal(this.hdr, W);
+    if (this.px > 1) {
+      this.layers = [sky, bank, black, white].map((layer) => this.shrink(layer));
+      return;
+    }
+    const [skyLayer, bankLayer, onBlack, onWhite] = this.layers ?? [sky, bank, black, white];
+    this.layers = undefined;
+    const pool = [];
+    this.wet = new Float32Array(W * H);
+    for (let y = Math.floor(0.56 * H);y < H; y++)
+      for (let x = 0;x < W; x++) {
+        const c = this.wetness(x, y);
+        if (c <= 0)
+          continue;
+        this.wet[y * W + x] = c;
+        pool.push(y * W + x);
+      }
+    this.pool = Int32Array.from(pool);
+    this.poolBox = pool.length ? [pool.reduce((m, i) => Math.min(m, i % W), W), Math.floor(pool[0] / W), pool.reduce((m, i) => Math.max(m, i % W), 0), Math.floor(pool[pool.length - 1] / W)] : [0, 0, -1, -1];
+    this.under = new Float32Array(pool.length * 3);
+    for (let k = 0;k < pool.length; k++)
+      for (let c = 0;c < 3; c++)
+        this.under[k * 3 + c] = bankLayer[pool[k] * 3 + c];
+    this.mirror = new Float32Array(W * H * 3);
+    this.wave = new Float32Array(W);
+    const lamps = this.lanterns();
+    const y0 = pool.length ? Math.floor(pool[0] / W) : H;
+    for (let y = y0;y < H; y++) {
+      const sy = clamp(Math.round(2 * HORIZON9 * H - y), 0, H - 1);
+      const m = look.mirror * (1 - 0.4 * clamp((y / H - 0.62) / 0.32, 0, 1));
+      for (let x = 0;x < W; x++) {
+        const o = (y * W + x) * 3;
+        const s = (sy * W + x) * 3;
+        let r = look.water[0] * (1 - m) + skyLayer[s] * m;
+        let g = look.water[1] * (1 - m) + skyLayer[s + 1] * m;
+        let b = look.water[2] * (1 - m) + skyLayer[s + 2] * m;
+        for (const l of lamps) {
+          const k = Math.exp(-(((x - l.x * H) / (0.012 * H)) ** 2) - ((y - (2 * l.base - l.light) * H) / (0.035 * H)) ** 2) * look.lamps * 0.7;
+          r += AMBER3[0] * k;
+          g += AMBER3[1] * k;
+          b += AMBER3[2] * k;
+        }
+        this.mirror[o] = r;
+        this.mirror[o + 1] = g;
+        this.mirror[o + 2] = b;
+      }
+    }
+    this.front = new Float32Array(pool.length * 3);
+    this.keep = new Float32Array(pool.length);
+    for (let k = 0;k < pool.length; k++) {
+      const i = pool[k] * 3;
+      this.front.set([onBlack[i], onBlack[i + 1], onBlack[i + 2]], k * 3);
+      this.keep[k] = onWhite[i] - onBlack[i];
+    }
+  }
+  frontGardenOn(fill) {
+    const real = this.hdr;
+    this.hdr = new Float32Array(real.length).fill(fill);
+    this.drawFrontGarden();
+    const out = this.hdr;
+    this.hdr = real;
+    return out;
+  }
+  paint(c) {
+    const t = this.look.tint;
+    return [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
+  }
+  wetness(x, y) {
+    const p = this.pond;
+    const H = this.H;
+    const u = ((x + 0.5) / H - p.x) / p.rx;
+    const v = ((y + 0.5) / H - p.y) / p.ry;
+    const n = Math.hypot(u, v);
+    const a = Math.atan2(v, u);
+    const edge = 1 + 0.05 * Math.sin(3 * a + 1) + 0.03 * Math.sin(5 * a + 2);
+    const d = n / edge;
+    const pond = d < 0.8 ? 1 : clamp((1 - d) * H * n * edge / Math.hypot(u / p.rx, v / p.ry) + 0.5, 0, 1);
+    const t = ((y + 0.5) / H - 0.57) / (p.y - 0.57);
+    if (t < 0 || t > 1)
+      return pond;
+    const w = lerp(0.022, 0.06, t);
+    const stream = clamp((w - Math.abs((x + 0.5) / H - this.streamX(t))) * H + 0.5, 0, 1) * smoothstep(0.575, 0.61, (y + 0.5) / H);
+    return Math.max(pond, stream);
+  }
+  streamX(t) {
+    return this.pond.x - 0.12 + 0.08 * t;
+  }
+  lanterns() {
+    const p = this.pond;
+    return [
+      { x: p.x + 0.16, base: p.y - p.ry - 0.012, light: p.y - p.ry - 0.012 - 0.098, scale: 0.15 },
+      { x: p.x - p.rx * 0.97, base: p.y + 0.06, light: p.y + 0.06 - 0.043, scale: 0.1 }
+    ];
+  }
+  drawHills() {
+    const { W, H, A, look } = this;
+    const [far, near2] = look.hills;
+    const peak = 0.42 * A;
+    const fuji = (u) => 0.255 + 0.24 * (1 - Math.exp(-Math.max(0, Math.abs(u - peak) - 0.012) / 0.17));
+    const bottom = Math.min(H, Math.ceil((GROUND2 + 0.004) * H));
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const range = 0.41 - 0.035 * fbm1(u * 1.3, 3) - 0.015 * Math.sin(u * 2.5 + 1);
+      const top = Math.min(range, fuji(u)) * H;
+      const snowline = (0.3 + 0.012 * Math.sin(u * 140) * Math.sin(u * 37) - 0.01 * Math.abs(Math.sin(u * 61))) * H;
+      for (let y = Math.max(0, Math.floor(top));y < bottom; y++) {
+        const c = this.rim(fuji(u) <= range && y < snowline ? look.snow : far, x, y + 0.5 - top, 1.5);
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top, 0, 1));
+      }
+    }
+    for (let y = Math.floor(0.36 * H);y < Math.min(H, GROUND2 * H); y++) {
+      const k = smoothstep(0.36, HORIZON9, y / H) * 0.55;
+      for (let x = 0;x < W; x++)
+        this.blend((y * W + x) * 3, look.mist[0], look.mist[1], look.mist[2], k * (0.8 + 0.2 * Math.sin(x / H * 6 + y / this.px * 0.1)));
+    }
+    for (let x = 0;x < W; x++) {
+      const u = x / H;
+      const top = (0.485 - 0.012 * fbm1(u * 7, 5) - 0.01 * Math.sin(u * 2 + 2)) * H;
+      for (let y = Math.max(0, Math.floor(top));y < bottom; y++) {
+        const c = this.rim(near2, x, y + 0.5 - top, 2);
+        this.blend((y * W + x) * 3, c[0], c[1], c[2], clamp(y + 1 - top, 0, 1));
+      }
+    }
+    this.drawPagoda(A - 0.4, 0.482);
+  }
+  drawPagoda(x, base) {
+    const H = this.H;
+    const near2 = this.look.hills[1];
+    const c = this.paint([0.42, 0.2, 0.14]);
+    const wall = [lerp(c[0], near2[0], 0.4), lerp(c[1], near2[1], 0.4), lerp(c[2], near2[2], 0.4)];
+    const roof = [wall[0] * 0.6, wall[1] * 0.6, wall[2] * 0.6];
+    const P = (u, v) => [(x + u) * H, (base + v) * H];
+    for (let i = 0;i < 3; i++) {
+      const y = -i * 0.03;
+      const w = 0.018 - i * 0.003;
+      this.polygon([P(-w * 0.6, y), P(w * 0.6, y), P(w * 0.6, y - 0.02), P(-w * 0.6, y - 0.02)], wall);
+      this.polygon([P(-w * 1.5, y - 0.016), P(-w * 1.2, y - 0.022), P(0, y - 0.03), P(w * 1.2, y - 0.022), P(w * 1.5, y - 0.016), P(0, y - 0.022)], roof);
+    }
+    this.polygon([P(-0.001, -0.09), P(0.001, -0.09), P(0.001, -0.115), P(-0.001, -0.115)], roof);
+  }
+  rim(base, x, depth2, width) {
+    if (this.look.style === "front")
+      return base;
+    const glow2 = 0.35 + 0.65 * Math.exp(-Math.abs(x - this.look.orb.x * this.W) / (0.45 * this.H));
+    const k = Math.exp(-depth2 / (width * this.px)) * glow2 * 0.35;
+    return [base[0] + this.look.light[0] * k, base[1] + this.look.light[1] * k, base[2] + this.look.light[2] * k];
+  }
+  drawGround() {
+    const { W, H, look, pond: p } = this;
+    const rocks = this.rocks();
+    const s0 = 0.011;
+    const k = (0.03 - s0) / (1 - GROUND2);
+    const px = this.px;
+    const least = this.cells ? Math.max(s0, 8 * px / H) : s0;
+    const near2 = GROUND2 + (least - s0) / k;
+    for (let y = Math.floor(GROUND2 * H);y < H; y++) {
+      const v = (y + 0.5) / H;
+      const perspective = s0 + k * (v - GROUND2);
+      const spacing = Math.max(least, perspective);
+      const ring = this.cells ? Math.max(perspective, 6 * px / (0.42 * H)) : perspective;
+      const lines = v < near2 ? (v - GROUND2) / least : (near2 - GROUND2) / least + Math.log(spacing / least) / k;
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const top = GROUND2 + 0.004 * Math.sin(u * 9);
+        if (v < top)
+          continue;
+        const pd = Math.hypot((u - p.x) / p.rx, (v - p.y) / p.ry);
+        const t = (v - 0.57) / (p.y - 0.57);
+        const sd = t >= 0 && t <= 1 ? Math.abs(u - this.streamX(t)) - lerp(0.022, 0.06, t) : 1;
+        let groove = Math.sin(lines * TAU);
+        let moss = smoothstep(0.62, 0.6, v + 0.008 * Math.sin(u * 13)) + smoothstep(1.22, 1.15, pd + 0.04 * Math.sin(u * 23)) + smoothstep(0.04, 0.03, sd);
+        for (const r of rocks) {
+          const d = Math.hypot(u - r.x, (v - r.y) / 0.42);
+          if (d < r.r + 4.4 * perspective + ring)
+            groove = Math.sin((d - r.r) / ring * TAU);
+          moss += smoothstep(r.r * 1.12, r.r * 0.95, d);
+        }
+        const grain = (hash2(Math.floor(x / px), Math.floor(y / px)) - 0.5) * 0.08;
+        const g = 0.93 + 0.1 * groove + grain;
+        const m = clamp(moss, 0, 1);
+        const mt = 0.85 + 0.25 * hash2(Math.floor(x / px) >> 1, Math.floor(y / px) >> 1) + 0.1 * Math.sin(u * 40 + v * 30);
+        const o = (y * W + x) * 3;
+        const cov = clamp((v - top) * H + 0.5, 0, 1);
+        this.blend(o, lerp(look.gravel[0] * g, look.moss[0] * mt, m), lerp(look.gravel[1] * g, look.moss[1] * mt, m), lerp(look.gravel[2] * g, look.moss[2] * mt, m), cov);
+      }
+    }
+  }
+  rocks() {
+    const A = this.A;
+    return [
+      { x: 0.15 * A, y: 0.84, r: 0.05 },
+      { x: 0.28 * A, y: 0.68, r: 0.032 }
+    ];
+  }
+  drawBackGarden() {
+    const { A, H } = this;
+    for (let i = 0, x = -0.03;x < A + 0.06; i++, x += 0.07) {
+      const g = this.paint([0.1 + hash(i) * 0.06, 0.26 + hash(i + 9) * 0.08, 0.1]);
+      this.shape([ell(x * H, (0.57 + hash(i + 3) * 0.008) * H, (0.045 + hash(i + 5) * 0.015) * H, (0.022 + hash(i + 7) * 0.008) * H, 0, g)], this.lighting, 0.8);
+    }
+    for (const [x, y, r] of [[0.33 * A, 0.6, 0.045], [this.pond.x + this.pond.rx * 0.62, 0.635, 0.05]]) {
+      this.shape([ell(x * H, y * H, r * H, r * 0.6 * H, 0, this.paint([0.16, 0.36, 0.12]))], this.lighting, 0.9);
+      for (let k = 0;k < (this.season === "spring" || this.season === "summer" ? 40 : 0); k++) {
+        const a = hash(k * 3.7 + x) * TAU;
+        const d = Math.sqrt(hash(k * 5.1 + y));
+        const c = this.paint([0.95, 0.3, 0.5]);
+        this.disc((x + Math.cos(a) * d * r * 0.9) * H, (y + Math.sin(a) * d * r * 0.5 - 0.004) * H, 0.004 * H, c[0], c[1], c[2], 0.8);
+      }
+    }
+    for (const r of this.rocks()) {
+      const c = this.paint(ROCK2);
+      this.shape([ell(r.x * H, (r.y - r.r * 0.55) * H, r.r * H, r.r * 0.75 * H, -0.15, c), ell((r.x + r.r * 0.75) * H, (r.y - r.r * 0.25) * H, r.r * 0.55 * H, r.r * 0.45 * H, 0.2, this.paint([0.4, 0.38, 0.35]))], this.lighting, 0.8);
+    }
+    this.trees.begin(this.hdr);
+    this.drawMaple();
+    this.drawCherry();
+    this.trees.end(this.hdr, this.W, H, 0.012 * H, (_x, y) => clamp((0.56 * H - y) / (0.3 * H), 0, 1));
+  }
+  drawMaple() {
+    const { A, H } = this;
+    const x = 0.07 * A;
+    const bark = this.paint([0.28, 0.18, 0.13]);
+    this.shape([
+      cap(x * H, 0.66 * H, (x + 0.02) * H, 0.5 * H, 0.016 * H, 0.012 * H, bark),
+      cap((x + 0.02) * H, 0.5 * H, (x + 0.06) * H, 0.38 * H, 0.012 * H, 0.008 * H, bark),
+      cap((x + 0.02) * H, 0.5 * H, (x - 0.04) * H, 0.36 * H, 0.01 * H, 0.006 * H, bark),
+      cap((x + 0.06) * H, 0.38 * H, (x + 0.16) * H, 0.3 * H, 0.008 * H, 0.004 * H, bark),
+      cap((x + 0.04) * H, 0.42 * H, (x + 0.08) * H, 0.24 * H, 0.007 * H, 0.004 * H, bark)
+    ], this.lighting, 0.6);
+    if (this.season === "winter")
+      return;
+    const reds = [[0.62, 0.09, 0.05], [0.82, 0.16, 0.07], [0.95, 0.3, 0.1]];
+    for (const [cx, cy, w] of [[x + 0.05, 0.2, 0.09], [x + 0.13, 0.28, 0.08], [x - 0.03, 0.3, 0.08], [x + 0.07, 0.36, 0.1], [x - 0.02, 0.41, 0.06]])
+      for (let shade2 = 0;shade2 < 3; shade2++) {
+        const parts = [];
+        for (let i = 0;i < 12; i++) {
+          const h = hash(cx * 31 + cy * 17 + i * 3.3 + shade2 * 7);
+          const across = (h - 0.5) * 2;
+          parts.push(ell((cx + across * w) * H, (cy + (hash(h * 13) - 0.5) * 0.022 + across * across * 0.012 - shade2 * 0.007) * H, (0.02 - shade2 * 0.003) * H, (0.011 - shade2 * 0.002) * H, (hash(h * 7) - 0.5) * 0.6, this.paint(reds[shade2])));
+        }
+        this.shape(parts, this.lighting, this.cells && this.look.style === "rim" ? 0.25 : 0.7);
+      }
+  }
+  drawCherry() {
+    const H = this.H;
+    const c = this.cherry;
+    const bark = this.paint([0.25, 0.16, 0.14]);
+    this.shape([
+      cap((c.x + 0.08) * H, 0.66 * H, (c.x + 0.05) * H, 0.48 * H, 0.016 * H, 0.012 * H, bark),
+      cap((c.x + 0.05) * H, 0.48 * H, c.x * H, (c.y + 0.06) * H, 0.012 * H, 0.008 * H, bark),
+      cap((c.x + 0.05) * H, 0.48 * H, (c.x + 0.14) * H, (c.y + 0.04) * H, 0.01 * H, 0.006 * H, bark),
+      cap(c.x * H, (c.y + 0.06) * H, (c.x - 0.14) * H, (c.y + 0.08) * H, 0.007 * H, 0.004 * H, bark)
+    ], this.lighting, 0.6);
+    if (this.season === "winter")
+      return;
+    const foliage = {
+      spring: [[0.8, 0.42, 0.55], [0.95, 0.6, 0.72], [1.05, 0.76, 0.84]],
+      summer: [[0.14, 0.32, 0.1], [0.2, 0.42, 0.13], [0.28, 0.52, 0.17]],
+      autumn: [[0.66, 0.16, 0.06], [0.88, 0.36, 0.08], [0.98, 0.58, 0.14]],
+      winter: []
+    };
+    const pinks = foliage[this.season];
+    for (let shade2 = 0;shade2 < 3; shade2++) {
+      const parts = [];
+      for (let i = 0;i < 9; i++) {
+        const a = i / 9 * TAU + shade2;
+        const d = 0.5 + 0.5 * hash(i * 7.7 + shade2);
+        parts.push(ell((c.x + Math.cos(a) * d * 0.15) * H, (c.y + Math.sin(a) * d * 0.08 - shade2 * 0.012) * H, (0.06 - shade2 * 0.01) * H, (0.04 - shade2 * 0.007) * H, 0, this.paint(pinks[shade2])));
+      }
+      this.shape(parts, this.lighting, 0.7);
+    }
+    if (this.season !== "spring")
+      return;
+    const bloom2 = this.paint([1.15, 0.85, 0.92]);
+    for (let k = 0;k < 90; k++) {
+      const a = hash(k * 1.9) * TAU;
+      const d = Math.sqrt(hash(k * 4.3));
+      this.disc((c.x + Math.cos(a) * d * 0.19) * H, (c.y + Math.sin(a) * d * 0.11) * H, 0.0035 * H, bloom2[0], bloom2[1], bloom2[2], 0.7);
+    }
+  }
+  drawFrontGarden() {
+    const { H, pond: p } = this;
+    this.drawBridge();
+    for (const [i, l] of this.lanterns().entries())
+      i === 0 ? this.drawKasuga(l.x, l.base, l.scale) : this.drawYukimi(l.x, l.base, l.scale);
+    const stones = [];
+    for (let i = 0;i < 14; i++) {
+      const a = 0.12 * Math.PI + i / 13 * 0.82 * Math.PI;
+      if (hash(i * 2.3) < 0.2)
+        continue;
+      const edge = 1 + 0.05 * Math.sin(3 * a + 1) + 0.03 * Math.sin(5 * a + 2);
+      const r = (0.016 + hash(i * 5.3) * 0.014) * H;
+      stones.push(ell((p.x + Math.cos(a) * edge * p.rx * 1.01) * H, (p.y + Math.sin(a) * edge * p.ry * 1.03) * H, r * 1.4, r * 0.75, (hash(i) - 0.5) * 0.4, this.paint(i % 3 ? ROCK2 : STONE)));
+    }
+    this.shape(stones, this.lighting, 0.8);
+    for (const [i, pad] of this.pads.entries()) {
+      const notch = hash(i * 3.1) * TAU;
+      const points = Array.from({ length: 20 }, (_, k) => {
+        const a = notch + 0.35 + k / 19 * (TAU - 0.7);
+        return [(pad.x + Math.cos(a) * pad.r) * H, (pad.y + Math.sin(a) * pad.r * 0.38) * H];
+      });
+      this.polygon([...points, [pad.x * H, pad.y * H]], this.paint(i % 2 ? PAD : [0.24, 0.52, 0.18]));
+      if (i !== 0 && i !== 5)
+        continue;
+      const flower = this.paint([1, 0.62, 0.78]);
+      const [fx, fy] = [(pad.x + pad.r * 0.3) * H, (pad.y - pad.r * 0.1) * H];
+      const petals = [];
+      for (let k = -2;k <= 2; k++)
+        petals.push(cap(fx, fy, fx + k * 0.006 * H, fy - (0.016 - Math.abs(k) * 0.003) * H, 0.004 * H, 0.002 * H, flower));
+      this.shape(petals, this.lighting, 0.5);
+    }
+    const [ix, iy] = [p.x - p.rx * 0.62, p.y + p.ry * 0.98];
+    const leaf = this.paint([0.2, 0.45, 0.15]);
+    const leaves = [];
+    for (let k = 0;k < 9; k++) {
+      const x = (ix + (k - 4) * 0.006) * H;
+      leaves.push(cap(x, iy * H, x + (k - 4) * 0.004 * H, (iy - 0.05 - hash(k) * 0.03) * H, 0.0025 * H, 0.0008 * H, leaf));
+    }
+    this.shape(leaves, this.lighting, 0.4);
+    for (let k = 0;k < 4; k++) {
+      const x = (ix + (k - 1.5) * 0.012) * H;
+      const y = (iy - 0.06 - hash(k + 4) * 0.02) * H;
+      this.shape([ell(x - 0.003 * H, y, 0.004 * H, 0.006 * H, -0.5, this.paint([0.45, 0.2, 0.8])), ell(x + 0.003 * H, y, 0.004 * H, 0.006 * H, 0.5, this.paint([0.45, 0.2, 0.8])), ell(x, y - 0.004 * H, 0.003 * H, 0.006 * H, 0, this.paint([0.55, 0.3, 0.9]))], this.lighting, 0.5);
+    }
+    const f = this.pivot();
+    const bamboo = this.paint(BAMBOO);
+    this.shape([ell((f.x + 0.015) * H, (f.y + 0.04) * H, 0.04 * H, 0.016 * H, 0, this.paint(ROCK2))], this.lighting, 0.7);
+    this.shape([
+      cap((f.x - 0.004) * H, (f.y + 0.035) * H, (f.x - 0.004) * H, (f.y - 0.004) * H, 0.003 * H, 0.003 * H, bamboo),
+      cap((f.x + 0.07) * H, (f.y + 0.04) * H, (f.x + 0.07) * H, (f.y - 0.08) * H, 0.006 * H, 0.006 * H, bamboo),
+      cap((f.x + 0.07) * H, (f.y - 0.072) * H, (f.x - 0.06) * H, (f.y - 0.066) * H, 0.0035 * H, 0.003 * H, bamboo)
+    ], this.lighting, 0.6);
+  }
+  pivot() {
+    return { x: this.pond.x + this.pond.rx * 0.98, y: this.pond.y - this.pond.ry * 0.05 };
+  }
+  drawBridge() {
+    const H = this.H;
+    const t = (0.625 - 0.57) / (this.pond.y - 0.57);
+    const bx = this.streamX(t);
+    const by = 0.625;
+    const span = 0.1;
+    const deck = (s) => by - 0.06 * Math.pow(Math.max(0, 1 - s * s), 0.6);
+    const red = this.paint(VERMILION);
+    const shadow = this.paint([0.4, 0.08, 0.04]);
+    const posts = [];
+    for (const s of [-0.45, 0.45])
+      posts.push(cap((bx + s * span) * H, deck(s) * H, (bx + s * span) * H, (by + 0.03) * H, this.thick(0.004, 0.95), this.thick(0.004, 0.95), this.paint([0.2, 0.1, 0.08])));
+    this.shape(posts, this.lighting, 0.4);
+    const S = Array.from({ length: 25 }, (_, i) => -1.05 + i / 24 * 2.1);
+    this.polygon([...S.map((s) => [(bx + s * span) * H, (deck(s) - 0.004) * H]), ...S.toReversed().map((s) => [(bx + s * span) * H, deck(s) * H])], this.paint([0.42, 0.3, 0.2]));
+    this.polygon([...S.map((s) => [(bx + s * span) * H, deck(s) * H]), ...S.toReversed().map((s) => [(bx + s * span) * H, (deck(s) + 0.012) * H])], red);
+    this.polygon([...S.map((s) => [(bx + s * span) * H, (deck(s) + 0.012) * H]), ...S.toReversed().map((s) => [(bx + s * span) * H, (deck(s) + 0.016) * H])], shadow);
+    const rail = [];
+    const r = this.thick(0.0022, 0.55);
+    for (let i = 0;i < 9; i++) {
+      const s = -0.95 + i / 8 * 1.9;
+      rail.push(cap((bx + s * span) * H, deck(s) * H, (bx + s * span) * H, (deck(s) - 0.026) * H, r, r, red));
+    }
+    for (let i = 0;i < 16; i++) {
+      const [s0, s1] = [-0.95 + i / 16 * 1.9, -0.95 + (i + 1) / 16 * 1.9];
+      rail.push(cap((bx + s0 * span) * H, (deck(s0) - 0.026) * H, (bx + s1 * span) * H, (deck(s1) - 0.026) * H, r, r, red));
+      rail.push(cap((bx + s0 * span) * H, (deck(s0) - 0.013) * H, (bx + s1 * span) * H, (deck(s1) - 0.013) * H, r * 0.7, r * 0.7, red));
+    }
+    this.shape(rail, this.lighting, 0.5);
+    const brass = this.paint([0.75, 0.55, 0.2]);
+    this.shape([ell((bx - 0.95 * span) * H, (deck(-0.95) - 0.029) * H, 0.004 * H, 0.005 * H, 0, brass), ell((bx + 0.95 * span) * H, (deck(0.95) - 0.029) * H, 0.004 * H, 0.005 * H, 0, brass)], this.lighting, 0.6);
+  }
+  drawKasuga(x, y, scale2) {
+    const H = this.H;
+    const S = scale2 * H;
+    const P = (u, v) => [x * H + u * S, y * H + v * S];
+    const stone = this.paint(STONE);
+    const dark = this.paint([0.48, 0.46, 0.42]);
+    this.polygon([P(-0.2, 0), P(0.2, 0), P(0.15, -0.08), P(-0.15, -0.08)], dark);
+    this.shape([cap(...P(0, -0.08), ...P(0, -0.48), 0.065 * S, 0.055 * S, stone)], this.lighting, 0.6);
+    this.polygon([P(-0.17, -0.48), P(0.17, -0.48), P(0.12, -0.56), P(-0.12, -0.56)], dark);
+    this.polygon([P(-0.11, -0.56), P(0.11, -0.56), P(0.11, -0.76), P(-0.11, -0.76)], stone);
+    this.lamp(P(-0.06, -0.59), P(0.06, -0.73));
+    this.polygon([P(-0.3, -0.72), P(-0.2, -0.79), P(-0.06, -0.9), P(0.06, -0.9), P(0.2, -0.79), P(0.3, -0.72), P(0.2, -0.76), P(-0.2, -0.76)], dark);
+    this.shape([cap(...P(0, -0.88), ...P(0, -0.99), 0.035 * S, 0.015 * S, stone), ell(...P(0, -0.95), 0.045 * S, 0.045 * S, 0, stone)], this.lighting, 0.6);
+  }
+  drawYukimi(x, y, scale2) {
+    const H = this.H;
+    const S = scale2 * H;
+    const P = (u, v) => [x * H + u * S, y * H + v * S];
+    const stone = this.paint(STONE);
+    const dark = this.paint([0.48, 0.46, 0.42]);
+    this.shape([cap(...P(-0.3, 0), ...P(-0.14, -0.3), 0.04 * S, 0.035 * S, stone), cap(...P(0.3, 0), ...P(0.14, -0.3), 0.04 * S, 0.035 * S, stone), cap(...P(0.04, 0.05), ...P(0.02, -0.3), 0.04 * S, 0.035 * S, dark)], this.lighting, 0.6);
+    this.polygon([P(-0.15, -0.28), P(0.15, -0.28), P(0.15, -0.55), P(-0.15, -0.55)], stone);
+    this.lamp(P(-0.08, -0.32), P(0.08, -0.51));
+    this.polygon([P(-0.55, -0.52), P(-0.38, -0.6), P(-0.12, -0.72), P(0.12, -0.72), P(0.38, -0.6), P(0.55, -0.52), P(0.38, -0.565), P(-0.38, -0.565)], dark);
+    this.shape([ell(...P(0, -0.78), 0.07 * S, 0.07 * S, 0, stone)], this.lighting, 0.6);
+  }
+  lamp(a, b) {
+    const k = this.look.lamps;
+    const dark = this.paint([0.12, 0.1, 0.08]);
+    this.polygon([a, [b[0], a[1]], b, [a[0], b[1]]], [lerp(dark[0], AMBER3[0], k), lerp(dark[1], AMBER3[1], k), lerp(dark[2], AMBER3[2], k)]);
+    if (k <= 0)
+      return;
+    const cx = (a[0] + b[0]) / 2;
+    const cy = (a[1] + b[1]) / 2;
+    const R = 0.06 * this.H;
+    for (let y = Math.max(0, Math.floor(cy - R));y < Math.min(this.H, cy + R); y++)
+      for (let x = Math.max(0, Math.floor(cx - R));x < Math.min(this.W, cx + R); x++) {
+        const d = Math.hypot(x - cx, y - cy) / R;
+        if (d >= 1)
+          continue;
+        const g = (1 - d) ** 2 * 0.3 * k;
+        this.add(x, y, 1 * g, 0.5 * g, 0.15 * g);
+      }
+  }
+  drawWater() {
+    const { W, H, hdr, look, mirror, under, wave: wave2, pool, wet } = this;
+    const t = this.time;
+    for (let x = 0;x < W; x++)
+      wave2[x] = 2 * Math.sin(x / H * 9 + t * 0.35);
+    const amp = 0.004 * H;
+    const ox = look.orb.x * W;
+    const tick = Math.floor(t * 3) * 131;
+    this.touch(this.poolBox[0], this.poolBox[1], this.poolBox[2], this.poolBox[3]);
+    for (let k = 0;k < pool.length; k++) {
+      const i = pool[k];
+      const y = i / W | 0;
+      const x = i - y * W;
+      const sx = clamp(x + amp * Math.sin(y / H * 160 + t * 1.2 + wave2[x]), 0, W - 1.001);
+      const x0 = sx | 0;
+      const f = sx - x0;
+      const a = (y * W + x0) * 3;
+      let r = mirror[a] + (mirror[a + 3] - mirror[a]) * f;
+      let g = mirror[a + 1] + (mirror[a + 4] - mirror[a + 1]) * f;
+      let b = mirror[a + 2] + (mirror[a + 5] - mirror[a + 2]) * f;
+      const spread = (0.015 + (y / H - 0.6) * 0.25) * H;
+      const along2 = Math.abs(x - ox) / spread;
+      if (along2 < 1 && hash2(x, (y >> 1) + tick) > 0.88 + along2 * 0.1) {
+        const s = (1 - along2) * look.glitter * 1.5;
+        r += look.orb.glow[0] * s;
+        g += look.orb.glow[1] * s;
+        b += look.orb.glow[2] * s;
+      }
+      const c = wet[i];
+      const o = i * 3;
+      hdr[o] = under[k * 3] + (r - under[k * 3]) * c;
+      hdr[o + 1] = under[k * 3 + 1] + (g - under[k * 3 + 1]) * c;
+      hdr[o + 2] = under[k * 3 + 2] + (b - under[k * 3 + 2]) * c;
+    }
+  }
+  drawRing(ring) {
+    const { W, H, hdr, wet, look } = this;
+    const R = (0.004 + ring.age * 0.012) * H;
+    const fade = (1 - ring.age / ring.life) ** 1.5 * ring.strength;
+    const cx = ring.x * H;
+    const cy = ring.y * H;
+    this.touch(cx - R - 2, cy - R * 0.32 - 2, cx + R + 2, cy + R * 0.32 + 2);
+    for (let y = Math.max(0, Math.floor(cy - R * 0.32 - 2));y <= Math.min(H - 1, Math.ceil(cy + R * 0.32 + 2)); y++)
+      for (let x = Math.max(0, Math.floor(cx - R - 2));x <= Math.min(W - 1, Math.ceil(cx + R + 2)); x++) {
+        const i = y * W + x;
+        if (!wet[i])
+          continue;
+        const dx = x + 0.5 - cx;
+        const dy = (y + 0.5 - cy) / 0.32;
+        const d = Math.hypot(dx, dy);
+        const k = (Math.max(0, 1 - Math.abs(d - R) / 1.3) + 0.5 * Math.max(0, 1 - Math.abs(d - R * 0.6) / 1.1)) * fade * wet[i];
+        if (k <= 0)
+          continue;
+        hdr[i * 3] += look.ripple[0] * k;
+        hdr[i * 3 + 1] += look.ripple[1] * k;
+        hdr[i * 3 + 2] += look.ripple[2] * k;
+      }
+  }
+  newPetal(anywhere) {
+    const c = this.cherry;
+    const fromTree = Math.random() < 0.75;
+    return {
+      x: fromTree ? c.x + rand(-0.17, 0.17) : this.A + 0.03,
+      y: fromTree ? c.y + rand(-0.04, 0.1) : rand(0.1, 0.5),
+      vx: rand(-0.035, -0.015),
+      vy: rand(0.018, 0.032),
+      spin: rand(0, TAU),
+      land: rand(0.6, 0.98),
+      state: 0,
+      age: anywhere ? rand(-30, 0) : 0
+    };
+  }
+  stepPetal(p, dt) {
+    p.age += dt;
+    if (p.age < 0)
+      return;
+    if (p.state === 0) {
+      p.spin += dt * 2;
+      p.x += (p.vx + 0.012 * Math.sin(this.time * 0.8 + p.spin * 0.3) - 0.09 * gust(this.A - p.x, this.time)) * dt;
+      p.y += p.vy * dt;
+      if (p.x < -0.05)
+        Object.assign(p, this.newPetal(false));
+      if (p.y < p.land)
+        return;
+      p.age = 0;
+      p.state = this.wetAt(p.x, p.y) > 0.5 ? 1 : 2;
+      if (p.state === 1)
+        this.rings.push({ x: p.x, y: p.y, age: 0, life: 2.5, strength: 0.35 });
+      return;
+    }
+    if (p.state === 1) {
+      p.x -= 0.003 * dt;
+      if (p.age > 25 || this.wetAt(p.x, p.y) < 0.5)
+        Object.assign(p, this.newPetal(false));
+      return;
+    }
+    if (p.age > 6)
+      Object.assign(p, this.newPetal(false));
+  }
+  wetAt(x, y) {
+    const xi = Math.floor(x * this.H);
+    const yi = Math.floor(y * this.H);
+    if (xi < 0 || yi < 0 || xi >= this.W || yi >= this.H)
+      return 0;
+    return this.wet[yi * this.W + xi];
+  }
+  drawPetal(p) {
+    if (p.age < 0)
+      return;
+    const H = this.H;
+    const pink = this.look.petal;
+    const c = this.season === "autumn" ? [pink[0], pink[1] * 0.7, pink[2] * 0.25] : pink;
+    const s = 0.006 * H;
+    if (p.state === 0)
+      return this.ellipse(p.x * H, p.y * H, s * (0.3 + 0.7 * Math.abs(Math.cos(p.spin))), s * 0.55, c[0], c[1], c[2], 0.9);
+    const fade = p.state === 1 ? clamp((25 - p.age) / 5, 0, 1) : clamp(1 - p.age / 6, 0, 1);
+    this.ellipse(p.x * H, p.y * H, s, s * 0.4, c[0], c[1], c[2], 0.85 * fade);
+  }
+  stepFountain(dt) {
+    const f = this.fountain;
+    if (f.tip < 0) {
+      f.fill += dt / 22;
+      if (f.fill < 1)
+        return;
+      f.tip = 0;
+      return;
+    }
+    const before = f.tip;
+    f.tip += dt / 1.6;
+    if (before < 0.2 && f.tip >= 0.2) {
+      const [x, y] = this.rockerEnd(0.5);
+      this.rings.push({ x, y: y + 0.01, age: 0, life: 4, strength: 1 });
+    }
+    if (f.tip < 1)
+      return;
+    f.tip = -1;
+    f.fill = 0;
+  }
+  rockerAngle() {
+    const f = this.fountain;
+    if (f.tip < 0)
+      return -0.35 + 0.12 * f.fill;
+    if (f.tip < 0.15)
+      return lerp(-0.23, 0.5, smoothstep(0, 0.15, f.tip));
+    if (f.tip < 0.45)
+      return 0.5;
+    if (f.tip < 0.65)
+      return lerp(0.5, -0.42, smoothstep(0.45, 0.65, f.tip));
+    return lerp(-0.42, -0.35, smoothstep(0.65, 1, f.tip));
+  }
+  rockerEnd(angle) {
+    const f = this.pivot();
+    return [f.x - Math.cos(angle) * 0.075, f.y + Math.sin(angle) * 0.075];
+  }
+  drawRocker() {
+    const H = this.H;
+    const f = this.pivot();
+    const a = this.rockerAngle();
+    const [ex, ey] = this.rockerEnd(a);
+    const bamboo = this.paint(BAMBOO);
+    const water = this.look.night ? [0.1, 0.3, 0.75] : this.look.ripple;
+    const sx = (f.x - 0.06) * H;
+    this.shape([cap(sx, (f.y - 0.064) * H, sx, Math.min(ey - 0.004, f.y + 0.02) * H, 0.0012 * H, 0.0012 * H, [water[0], water[1], water[2]])], this.lighting, 0);
+    this.shape([cap(ex * H, ey * H, (f.x + Math.cos(a) * 0.035) * H, (f.y - Math.sin(a) * 0.035) * H, 0.0075 * H, 0.0065 * H, bamboo)], this.lighting, 0.7);
+    this.shape([ell(ex * H, ey * H, 0.0035 * H, 0.0065 * H, -a, this.paint([0.25, 0.25, 0.08]))], this.lighting, 0);
+  }
+  stepHeron(dt) {
+    const h = this.heron;
+    if (h.phase === "away") {
+      h.next -= dt;
+      if (h.next > 0)
+        return;
+      h.phase = "in";
+      h.t = 0;
+      return;
+    }
+    h.t += dt;
+    if (h.phase === "in" && h.t >= 8) {
+      const [x, y] = this.heronSpot();
+      h.phase = "stand";
+      h.t = 0;
+      h.stay = rand(30, 45);
+      this.rings.push({ x, y, age: 0, life: 4, strength: 0.9 });
+    }
+    if (h.phase === "stand" && h.t >= h.stay) {
+      h.phase = "out";
+      h.t = 0;
+    }
+    if (h.phase === "out" && h.t >= 8) {
+      h.phase = "away";
+      h.next = rand(60, 110);
+    }
+  }
+  heronSpot() {
+    return [this.pond.x - this.pond.rx * 0.5, this.pond.y + this.pond.ry * 0.35];
+  }
+  drawHeron() {
+    const h = this.heron;
+    if (h.phase === "away")
+      return;
+    const H = this.H;
+    const [sx, sy] = this.heronSpot();
+    const p = h.t / 8;
+    const [x, y, fly] = h.phase === "stand" ? [sx, sy, 0] : h.phase === "in" ? [lerp(-0.25, sx, 1 - (1 - p) ** 2), lerp(0.22, sy, 1 - (1 - p) ** 2), clamp((1 - p) / 0.25, 0, 1)] : [lerp(sx, this.A + 0.3, p * p), lerp(sy, 0.18, p * p), clamp(p / 0.12, 0, 1)];
+    const S = 0.16 * H;
+    const P = (u, v) => [x * H + u * S, y * H + v * S];
+    const L = (a, b) => [lerp(a[0], b[0], fly), lerp(a[1], b[1], fly)];
+    const huntAt = (t) => h.phase === "stand" ? smoothstep(0.2, 0.9, 0.5 - 0.5 * Math.cos(t * 0.45)) : 0;
+    const hunt = huntAt(h.t);
+    const sweep = (huntAt(h.t - 0.5) - hunt) * 0.6;
+    const flap = Math.sin(this.time * 2.6);
+    const lag = Math.sin(this.time * 2.6 - 0.7);
+    const body2 = this.paint([0.62, 0.66, 0.72]);
+    const neck = this.paint([0.82, 0.82, 0.84]);
+    const wing = this.paint([0.38, 0.42, 0.5]);
+    const legs = this.paint([0.55, 0.48, 0.32]);
+    const shoulder = L([0.11, -0.47], [0.13, -0.42]);
+    const n1 = L([lerp(0.15, 0.22, hunt), lerp(-0.6, -0.53, hunt)], [0.17, -0.46]);
+    const n2 = L([lerp(0.09, 0.3, hunt), lerp(-0.7, -0.56, hunt)], [0.16, -0.49]);
+    const head = L([lerp(0.14, 0.38, hunt), lerp(-0.8, -0.52, hunt)], [0.22, -0.47]);
+    const beak = L([lerp(0.15, 0.1, hunt), lerp(0.01, 0.11, hunt)], [0.15, 0.015]);
+    const wingTip = [-0.08, -0.45 - 0.42 * lag];
+    const wingMid = [-0.03, -0.45 - 0.22 * flap];
+    const wade = (side) => h.phase === "stand" ? Math.max(0, Math.sin(h.t * 0.3 + side * 1.6)) ** 10 : 0;
+    const leg = (side) => {
+      const hip = L([side * 0.015, -0.33], [-0.1, -0.4 + side * 0.01]);
+      const foot = L([side * 0.025 + wade(side) * 0.04, -wade(side) * 0.09], [-0.4, -0.37 + side * 0.02]);
+      return [...limb(P, ...hip, ...foot, 0.17, 0.17, 1, 0.012 * S, 0.01 * S, 0.008 * S, legs), cap(...P(...foot), ...P(foot[0] + L([0.06, 0], [-0.04, 0])[0], foot[1]), 0.006 * S, 0.004 * S, legs)];
+    };
+    if (fly > 0.3)
+      this.shape([cap(...P(0.03, -0.45), ...P(wingMid[0] + 0.04, wingMid[1] + 0.02), 0.07 * S, 0.05 * S, this.paint([0.28, 0.31, 0.38])), cap(...P(wingMid[0] + 0.04, wingMid[1] + 0.02), ...P(wingTip[0] + 0.05, wingTip[1] + 0.03), 0.05 * S, 0.02 * S, this.paint([0.28, 0.31, 0.38]))], this.lighting, 0.4);
+    this.shape([
+      ...leg(-1),
+      ...leg(1),
+      ell(...P(0, L([0, -0.41], [0, -0.42])[1]), 0.17 * S, 0.075 * S, -0.4 * (1 - fly), body2),
+      cap(...P(-0.12, L([-0.34, -0.33], [-0.42, -0.42])[1]), ...P(-0.2, L([-0.3, -0.3], [-0.42, -0.42])[1]), 0.04 * S, 0.02 * S, wing),
+      cap(...P(...shoulder), ...P(...n1), 0.042 * S, 0.032 * S, neck),
+      cap(...P(...n1), ...P(...n2), 0.032 * S, 0.026 * S, neck),
+      cap(...P(...n2), ...P(...head), 0.026 * S, 0.03 * S, neck),
+      ell(...P(...head), 0.042 * S, 0.032 * S, 0, neck),
+      cap(...P(...head), ...P(head[0] + beak[0], head[1] + beak[1]), 0.016 * S, 0.003 * S, this.paint([0.9, 0.72, 0.2])),
+      cap(...P(head[0] - 0.01, head[1] - 0.02), ...P(head[0] - 0.12 - sweep * 0.3, head[1] - 0.01 - sweep * 0.15), 0.009 * S, 0.003 * S, this.paint([0.08, 0.08, 0.1]))
+    ], this.lighting, 0.6);
+    if (fly > 0.3)
+      this.shape([cap(...P(0.03, -0.44), ...P(...wingMid), 0.08 * S, 0.06 * S, wing), cap(...P(...wingMid), ...P(...wingTip), 0.06 * S, 0.025 * S, wing), cap(...P(...wingTip), ...P(wingTip[0] - 0.08, wingTip[1] + 0.02 + (lag - flap) * 0.1), 0.03 * S, 0.012 * S, this.paint([0.15, 0.16, 0.2]))], this.lighting, 0.6);
+    if (fly === 0)
+      this.add(...P(head[0] + 0.02, head[1] - 0.005), 0.25, 0.2, 0.02);
+  }
+  stepTanuki(dt) {
+    const k = this.tanuki;
+    if (k.t < 0) {
+      k.wait -= dt;
+      if (k.wait <= 0)
+        k.t = 0;
+      return;
+    }
+    k.t += dt;
+    if (k.t < TANUKI.gone)
+      return;
+    k.t = -1;
+    k.wait = eggWait(true) * TIME_SCALE14;
+  }
+  drawTanuki() {
+    const { A, H } = this;
+    const t = this.tanuki.t;
+    const seat = 0.42 * A;
+    const sitting = t >= TANUKI.arrive && t < TANUKI.leave;
+    const u0 = t < TANUKI.arrive ? lerp(-0.12, seat, t / TANUKI.arrive) : sitting ? seat : lerp(seat, A + 0.12, (t - TANUKI.leave) / (TANUKI.gone - TANUKI.leave));
+    const S = 0.12 * H;
+    groundShadow(this.hdr, this.W, H, this.shade, u0 * H, 0.965 * H, (sitting ? 0.4 : 0.65) * S, (sitting ? 0.6 : 0.4) * S);
+    const P = (u, v) => [u0 * H + u * S, 0.965 * H + v * S];
+    const fur = this.paint([0.5, 0.4, 0.28]);
+    const dark = this.paint([0.14, 0.11, 0.09]);
+    const pale = this.paint([0.78, 0.7, 0.55]);
+    const swing = sitting ? 0 : Math.sin(this.time * 4) * 0.07;
+    const sway2 = Math.sin(this.time * 0.8) * 0.03;
+    const head = sitting ? [0.08, -0.52 + Math.sin(this.time * 0.5) * 0.01] : [0.3, -0.3];
+    const tail = sitting ? [[-0.1, -0.05], [-0.42, -0.03 + sway2]] : [[-0.26, -0.22], [-0.5, -0.12 + sway2]];
+    const parts = sitting ? [cap(...P(0.08, -0.22), ...P(0.12, 0), 0.04 * S, 0.035 * S, dark), ell(...P(-0.02, -0.06), 0.15 * S, 0.07 * S, 0, dark), ell(...P(0, -0.26), 0.17 * S, 0.24 * S, 0.15, fur)] : [
+      ...[0.18, -0.16].flatMap((u) => [cap(...P(u, -0.14), ...P(u + swing, 0), 0.045 * S, 0.035 * S, dark), cap(...P(u + 0.03, -0.14), ...P(u + 0.03 - swing, 0), 0.045 * S, 0.035 * S, dark)]),
+      ell(...P(0, -0.2), 0.3 * S, 0.14 * S, 0, fur)
+    ];
+    parts.push(cap(...P(...tail[0]), ...P(...tail[1]), 0.08 * S, 0.07 * S, fur), ell(...P(...head), 0.13 * S, 0.11 * S, 0, fur), ell(...P(head[0] + 0.12, head[1] + 0.03), 0.065 * S, 0.045 * S, 0, pale), ell(...P(head[0] - 0.06, head[1] - 0.1), 0.045 * S, 0.05 * S, -0.3, dark));
+    this.shape(parts, this.lighting, 0.6);
+    const stripe = (k) => [lerp(tail[0][0], tail[1][0], k), lerp(tail[0][1], tail[1][1], k)];
+    this.shape([
+      ell(...P(head[0] + 0.04, head[1] - 0.01), 0.075 * S, 0.035 * S, 0, dark),
+      ell(...P(head[0] + 0.18, head[1] + 0.02), 0.022 * S, 0.02 * S, 0, dark),
+      ...[0.45, 0.7, 0.92].map((k) => ell(...P(...stripe(k)), 0.025 * S, 0.075 * S, 0, dark)),
+      ...sitting ? [ell(...P(0.08, -0.24), 0.09 * S, 0.15 * S, 0.15, pale)] : []
+    ], this.lighting, 0.4);
+    this.shape([ell(...P(head[0] - 0.01, head[1] - 0.14), 0.075 * S, 0.026 * S, -0.35, this.paint([0.3, 0.58, 0.16])), cap(...P(head[0] + 0.05, head[1] - 0.16), ...P(head[0] + 0.09, head[1] - 0.19), 0.006 * S, 0.004 * S, this.paint([0.3, 0.58, 0.16]))], this.lighting, 0.5);
+    if (this.look.lamps > 0)
+      this.add(...P(head[0] + 0.06, head[1] - 0.02), 0.7 * this.look.lamps, 0.4 * this.look.lamps, 0.05 * this.look.lamps);
+  }
+  koiAt(k, back) {
+    const a = k.a - k.dir * back * 0.2 * k.size / k.r;
+    const r = k.r + 0.06 * Math.sin(k.phase * 0.3 + k.r * 9);
+    const wiggle = Math.sin(k.phase * 7 - back * 4) * 0.025 * back;
+    return [Math.cos(a) * (r + wiggle), Math.sin(a) * (r + wiggle)];
+  }
+  drawKoi(k) {
+    const { H, pond: p, look } = this;
+    const depth2 = 0.25 + 0.2 * Math.sin(k.phase * 0.4 + k.a);
+    const mix3 = (c2) => {
+      const t = this.paint(c2);
+      return [lerp(t[0], look.water[0], depth2), lerp(t[1], look.water[1], depth2), lerp(t[2], look.water[2], depth2)];
+    };
+    const S = (u, v) => [(p.x + u * p.rx) * H, (p.y + v * p.ry) * H];
+    const points = [0, 0.25, 0.5, 0.75, 1].map((b) => S(...this.koiAt(k, b)));
+    const heading = k.a + k.dir * Math.PI / 2;
+    const width = 0.012 * k.size * H * (0.65 + 0.35 * Math.abs(Math.sin(heading)));
+    const body2 = mix3(k.colors[0]);
+    const radii = [0.8, 1, 0.85, 0.55, 0.3];
+    const parts = [];
+    for (let i = 0;i < 4; i++)
+      parts.push(cap(...points[i], ...points[i + 1], width * radii[i], width * radii[i + 1], body2));
+    const [tx, ty] = points[4];
+    const [px, py] = points[3];
+    const dx = tx - px;
+    const dy = ty - py;
+    const l = Math.hypot(dx, dy) || 1;
+    const swish = Math.sin(k.phase * 7 - 4) * 0.5;
+    for (const side of [-1, 1]) {
+      const a = Math.atan2(dy, dx) + side * 0.5 + swish;
+      parts.push(cap(tx, ty, tx + Math.cos(a) * width * 1.6, ty + Math.sin(a) * width * 1.6, width * 0.3, width * 0.45, body2));
+    }
+    for (const side of [-1, 1]) {
+      const [ax, ay] = points[1];
+      parts.push(cap(ax, ay, ax - dy / l * side * width * 1.3 - dx / l * width * 0.4, ay + dx / l * side * width * 1.3 - dy / l * width * 0.4, width * 0.35, width * 0.2, body2));
+    }
+    this.shape(parts, this.lighting, 0.5);
+    const spots = k.colors[1];
+    if (!spots)
+      return;
+    const c = mix3(spots);
+    this.shape([ell(...points[0], width * 0.6, width * 0.55, 0, c), ell(...points[2], width * 0.55, width * 0.5, 0, c)], this.lighting, 0.3);
+  }
+  stepFrog(dt) {
+    const f = this.frog;
+    if (f.croak >= 0) {
+      f.croak += dt;
+      if (f.croak > 2)
+        f.croak = -1;
+      return;
+    }
+    f.next -= dt;
+    if (f.next > 0)
+      return;
+    f.croak = 0;
+    f.next = rand(8, 16);
+    const pad = this.pads[3];
+    this.rings.push({ x: pad.x, y: pad.y, age: 0, life: 3, strength: 0.5 });
+  }
+  drawFrog() {
+    const H = this.H;
+    const pad = this.pads[3];
+    const S = 0.04 * H;
+    const x = pad.x * H;
+    const y = (pad.y + 0.003) * H;
+    groundShadow(this.hdr, this.W, H, this.shade, x, y, 0.6 * S, 0.6 * S);
+    const P = (u, v) => [x + u * S, y + v * S];
+    const green = this.paint([0.3, 0.58, 0.15]);
+    const sac = this.frog.croak >= 0 ? Math.max(0, Math.sin(this.frog.croak * Math.PI * 2)) : 0;
+    this.shape([
+      cap(...P(-0.35, -0.05), ...P(-0.1, 0), 0.12 * S, 0.08 * S, green),
+      ell(...P(-0.1, -0.3), 0.38 * S, 0.27 * S, -0.3, green),
+      ell(...P(0.25, -0.45), 0.24 * S, 0.18 * S, 0, green),
+      cap(...P(0.2, -0.3), ...P(0.3, 0), 0.06 * S, 0.05 * S, green),
+      ell(...P(0.18, -0.62), 0.09 * S, 0.09 * S, 0, green),
+      ell(...P(0.36, -0.6), 0.09 * S, 0.09 * S, 0, green)
+    ], this.lighting, 0.6);
+    const belly = this.paint([0.85, 0.85, 0.5]);
+    this.shape([ell(...P(0.36, -0.32), (0.08 + 0.12 * sac) * S, (0.06 + 0.1 * sac) * S, 0, belly)], this.lighting, 0.4);
+    for (const ex of [0.2, 0.38])
+      this.disc(...P(ex, -0.64), 0.04 * S, 0.02, 0.02, 0.02, 1);
+  }
+  stepDragonfly(d, dt) {
+    d.phase += dt;
+    if (d.rest > 0) {
+      d.rest -= dt;
+      return;
+    }
+    const dx = d.tx - d.x;
+    const dy = d.ty - d.y;
+    const l = Math.hypot(dx, dy);
+    if (l < 0.004) {
+      d.rest = rand(2, 5);
+      [d.tx, d.ty] = this.openSpot(this.pond.x - 0.9 * this.pond.rx, this.pond.x + 0.9 * this.pond.rx, 0.6, 0.82);
+      return;
+    }
+    if (Math.abs(dx) > 0.002)
+      d.face = Math.sign(dx);
+    const v = Math.min(l, 0.12 * dt);
+    d.x += dx / l * v;
+    d.y += dy / l * v;
+  }
+  drawDragonfly(d) {
+    const H = this.H;
+    const x = d.x * H;
+    const y = (d.y + Math.sin(d.phase * 2) * 0.003) * H;
+    const L = 0.04 * H;
+    const wing = this.paint([0.7, 0.82, 0.92]);
+    const lift2 = Math.sin(d.phase * 30) * 0.08;
+    for (const [u, a] of [[0.12, 0.4], [-0.02, 0.35]])
+      this.ellipse(x + u * L * d.face, y - (0.1 + lift2) * L, a * L, 0.07 * L, wing[0], wing[1], wing[2], 0.35);
+    this.shape([cap(x - 0.5 * L * d.face, y + 0.05 * L, x + 0.15 * L * d.face, y, 0.025 * L, 0.05 * L, this.paint(d.color)), ell(x + 0.22 * L * d.face, y, 0.07 * L, 0.06 * L, 0, this.paint(d.color))], this.lighting, 0.6);
+  }
+  drawFireflies() {
+    const H = this.H;
+    for (const f of this.fireflies) {
+      const k = Math.pow(Math.max(0, Math.sin(this.time * 1.3 + f.phase * 7)), 6);
+      if (k < 0.02)
+        continue;
+      fireflyLight(this.hdr, this.W, H, f.x * H, f.y * H, k);
+      this.disc(f.x * H, f.y * H, 1.3, 1.8 * k, 2.4 * k, 0.6 * k, 0.6);
+      this.splat(f.x * H, f.y * H, 0.9 * k, 1.2 * k, 0.3 * k);
+    }
+  }
+}
+var zen = {
+  id: "zen",
+  name: "Zen garden",
+  description: "A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then",
+  activity: {
+    calm: "Garden, pond ripples, petals and a bamboo fountain",
+    lively: "Adds koi circling under the lily pads",
+    teeming: "Adds more koi, a frog on a lily pad and dragonflies"
+  },
+  scrim: {
+    day: [
+      [20, 40, 70],
+      [24, 40, 22],
+      [30, 34, 26]
+    ],
+    sunset: [
+      [20, 14, 32],
+      [38, 24, 26],
+      [16, 11, 13]
+    ],
+    night: [
+      [4, 6, 16],
+      [4, 6, 14],
+      [2, 5, 10]
+    ]
+  },
+  create: (settings) => new Zen(settings)
+};
+
+// wallpapers/index.ts
+var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, rider, megacity, dome, hauntedHouse];
+
+// tui.tsx
+var tui_default = Plugin.define({
+  id: "wallpapers",
+  async setup(context) {
+    const [stored, update] = context.storage.store("wallpapers", {
+      initial: {
+        wallpaper: "",
+        activity: "calm",
+        time: "auto",
+        power: "saver"
+      }
+    });
+    const external = await loadWallpapers(context.options.wallpapers, WALLPAPERS);
+    if (external.skipped.length)
+      context.ui.toast.show({
+        message: `Skipped wallpapers:
+${external.skipped.join(`
+`)}`,
+        variant: "error"
+      });
+    const wallpapers = [...WALLPAPERS, ...external.wallpapers];
+    const engine = createEngine(context, {
+      dump: process.env.WALLPAPER_DUMP,
+      dumpFade: process.env.WALLPAPER_DUMP_FADE
+    });
+    const pinned = process.env.WALLPAPER;
+    const pinnedActivity = process.env.WALLPAPER_ACTIVITY;
+    const pinnedTime = process.env.WALLPAPER_TIME;
+    const pinnedSeason = SEASONS.find((s) => s === process.env.WALLPAPER_SEASON);
+    const pinnedWeather = WEATHER_SETTINGS.find((w) => w === process.env.WALLPAPER_WEATHER);
+    const activity = () => stored.activity ?? "calm";
+    const timeSetting = () => stored.time ?? "auto";
+    const power = () => stored.power ?? "saver";
+    const brightness = () => stored.brightness ?? "normal";
+    const shuffleSetting = () => stored.shuffle ?? "off";
+    const directory = () => context.location?.directory ?? context.data.location.default().directory;
+    const scope = (state) => state.perProject ? directory() : "";
+    const current = (state) => (state.perProject ? state.projects?.[directory()] : undefined) ?? state.wallpaper;
+    const choose = (draft, id) => {
+      if (draft.perProject)
+        draft.projects = {
+          ...draft.projects,
+          [directory()]: id
+        };
+      else
+        draft.wallpaper = id;
+      draft.changed = {
+        ...draft.changed,
+        [scope(draft)]: Date.now()
+      };
+    };
+    const due = (state) => Date.now() - (state.changed?.[scope(state)] ?? state.changed?.[""] ?? 0) >= HOUR;
+    const other = (id) => {
+      const others = wallpapers.filter((w) => w.id !== id);
+      return others[Math.floor(Math.random() * others.length)].id;
+    };
+    const shuffle = () => update((draft) => {
+      const id = current(draft);
+      if (id && due(draft))
+        choose(draft, other(id));
+    });
+    const [session, mark] = context.storage.memory("session", {
+      initial: {
+        shuffled: false
+      }
+    });
+    const [picked, setPicked] = createSignal();
+    if (!session.shuffled && shuffleSetting() === "session" && current(stored)) {
+      const id = other(current(stored));
+      setPicked(id);
+      update((draft) => choose(draft, id)).finally(() => setPicked(undefined));
+    }
+    mark((draft) => {
+      draft.shuffled = true;
+    });
+    const shown = () => picked() ?? current(stored);
+    const [hour, minute] = (process.env.WALLPAPER_CLOCK ?? "").split(":").map(Number);
+    const skew = process.env.WALLPAPER_CLOCK ? new Date().setHours(hour, minute, 0, 0) - Date.now() : 0;
+    const [now, setNow] = createSignal(new Date(Date.now() + skew));
+    const clock2 = setInterval(() => setNow(new Date(Date.now() + skew)), 60000);
+    const timeChoice = () => TIMES.find((t) => t === pinnedTime) ?? timeSetting();
+    const seasonSetting = () => stored.season ?? "auto";
+    const weatherSetting = () => stored.weather ?? "off";
+    const location = () => stored.location || process.env.WALLPAPER_LOCATION || "";
+    const [local, setLocal] = createSignal();
+    const south = () => (coordinatesOf(location())?.latitude ?? local()?.latitude ?? 0) < 0;
+    const season = () => {
+      const setting = pinnedSeason ?? seasonSetting();
+      return setting === "auto" ? seasonAt(now(), south()) : setting;
+    };
+    const weather = () => {
+      const setting = pinnedWeather ?? weatherSetting();
+      if (setting === "off")
+        return;
+      if (setting === "local")
+        return local()?.weather ?? "clear";
+      return setting;
+    };
+    const running = new Map;
+    let outcome = "idle";
+    const started = (sessionID) => {
+      if (![...running.values()].some(Boolean))
+        engine.react("busy");
+      running.set(sessionID, true);
+    };
+    const ended = (sessionID, result) => {
+      if (running.get(sessionID) === false)
+        return;
+      running.set(sessionID, false);
+      if (outcome !== "error" && !(result === "error" && context.data.session.get(sessionID)?.parentID))
+        outcome = result;
+      if ([...running.values()].some(Boolean))
+        return;
+      engine.react(outcome);
+      outcome = "idle";
+    };
+    const unlisten = [context.data.on("session.execution.started", (event) => started(event.data.sessionID)), context.data.on("session.execution.succeeded", (event) => ended(event.data.sessionID, "done")), context.data.on("session.execution.failed", (event) => ended(event.data.sessionID, "error")), context.data.on("session.execution.interrupted", (event) => ended(event.data.sessionID, "idle"))];
+    const simulated = parseEvents(process.env.WALLPAPER_EVENTS).map((e) => setTimeout(() => engine.react(e.event), e.at * 1000));
+    const notify = (message, variant = "info") => context.ui.toast.show({
+      message,
+      variant
+    });
+    const apply = async (arg) => {
+      if (arg === "off") {
+        await update((draft) => choose(draft, ""));
+        return {
+          message: "Wallpaper off"
+        };
+      }
+      const level2 = ACTIVITIES.find((a) => a === arg);
+      if (level2) {
+        await update((draft) => {
+          draft.activity = level2;
+        });
+        return {
+          message: `Wallpaper activity: ${level2}`
+        };
+      }
+      if (arg === "location" || arg.startsWith("location ")) {
+        const place = arg.slice("location".length).trim();
+        await update((draft) => {
+          draft.location = place;
+        });
+        return {
+          message: place ? `Wallpaper location: ${place}` : "Wallpaper location cleared"
+        };
+      }
+      const s = SEASONS.find((value) => value === arg || `season ${value}` === arg);
+      if (s || arg === "season auto") {
+        await update((draft) => {
+          draft.season = s ?? "auto";
+        });
+        return {
+          message: s ? `Wallpaper season: ${s}` : `Wallpaper season follows the calendar (${seasonAt(new Date, south())} now)`
+        };
+      }
+      const w = WEATHER_SETTINGS.find((value) => value === arg && value !== "off" || `weather ${value}` === arg);
+      if (w) {
+        await update((draft) => {
+          draft.weather = w;
+        });
+        if (w === "local" && !location())
+          return {
+            message: "Local weather needs a place: /wallpaper location <city or lat,lon>. Showing clear until then",
+            error: true
+          };
+        return {
+          message: w === "off" ? "Wallpaper weather: the wallpaper's own" : `Wallpaper weather: ${w}`
+        };
+      }
+      const t = TIMES.find((value) => value === arg);
+      if (t || arg === "auto") {
+        await update((draft) => {
+          draft.time = t ?? "auto";
+        });
+        return {
+          message: t ? `Wallpaper time: ${t}` : `Wallpaper time follows your clock (${timeAt(new Date)} now)`
+        };
+      }
+      const mode = POWERS.find((p) => p === arg);
+      if (mode) {
+        await update((draft) => {
+          draft.power = mode;
+        });
+        return {
+          message: `Wallpaper power: ${mode}`
+        };
+      }
+      const b = BRIGHTNESSES.find((value) => value === arg);
+      if (b) {
+        await update((draft) => {
+          draft.brightness = b;
+        });
+        return {
+          message: `Wallpaper brightness: ${b}`
+        };
+      }
+      const wallpaper = wallpapers.find((w2) => w2.id === arg);
+      if (!wallpaper)
+        return {
+          message: `No wallpaper "${arg}". Available: ${wallpapers.map((w2) => w2.id).join(", ")}`,
+          error: true
+        };
+      await update((draft) => choose(draft, arg));
+      return {
+        message: `${wallpaper.name} wallpaper on`
+      };
+    };
+    const run = async (input) => {
+      const arg = input?.trim().toLowerCase();
+      if (!arg)
+        return pick();
+      const result = await apply(arg);
+      notify(result.message, result.error ? "error" : "info");
+    };
+    const rows = [{
+      title: "Wallpaper",
+      values: () => ["off", ...wallpapers.map((w) => w.id)],
+      value: () => shown() || "off",
+      label: (v) => wallpapers.find((w) => w.id === v)?.name ?? "Off",
+      describe: (v) => wallpapers.find((w) => w.id === v)?.description ?? "No wallpaper",
+      set: apply
+    }, {
+      title: "Activity",
+      values: () => ACTIVITIES,
+      value: activity,
+      label: capitalize,
+      describe: (v) => (wallpapers.find((w) => w.id === shown()) ?? wallpapers[0]).activity[v],
+      set: apply
+    }, {
+      title: "Time of day",
+      values: () => ["auto", ...TIMES],
+      value: timeSetting,
+      label: (v) => v === "auto" ? `Auto (${timeAt(now())})` : capitalize(v),
+      describe: (v) => v === "auto" ? "Follows your clock: day from 7am, sunset from 6pm, night from 8pm" : `Always ${v}`,
+      set: apply
+    }, {
+      title: "Season",
+      values: () => ["season auto", ...SEASONS.map((s) => `season ${s}`)],
+      value: () => `season ${seasonSetting()}`,
+      label: (v) => v === "season auto" ? `Auto (${seasonAt(now(), south())})` : capitalize(v.slice(7)),
+      describe: (v) => v === "season auto" ? `Follows the calendar in the ${south() ? "southern" : "northern"} hemisphere: spring from ${south() ? "September" : "March"}, summer from ${south() ? "December" : "June"}, autumn from ${south() ? "March" : "September"}, winter from ${south() ? "June" : "December"}` : `Always ${v.slice(7)}. Farm, desert, jungle, beach and the zen garden change with the seasons`,
+      set: apply
+    }, {
+      title: "Weather",
+      values: () => ["off", "local", "clear", "rain", "snow", "fog"].map((w) => `weather ${w}`),
+      value: () => `weather ${weatherSetting()}`,
+      label: (v) => v === "weather local" ? `Local (${location() ? local()?.weather ?? "checking" : "no location"})` : capitalize(v.slice(8)),
+      describe: (v) => {
+        if (v === "weather off")
+          return "Each wallpaper's own: snow on the tundra, winter flurries, showers in the jungle's rainy season, rain on the city at night";
+        if (v !== "weather local")
+          return `Always ${v.slice(8)} on outdoor wallpapers`;
+        if (!location())
+          return "Set a place first: /wallpaper location <city or lat,lon>, or WALLPAPER_LOCATION";
+        return `Real weather for ${location()} from Open-Meteo, checked every 30 minutes`;
+      },
+      set: apply
+    }, {
+      title: "Brightness",
+      values: () => BRIGHTNESSES,
+      value: brightness,
+      label: capitalize,
+      describe: (v) => ({
+        subtle: "A dim scene that stays out of the way",
+        normal: "The standard look",
+        vivid: "A brighter scene, with firmer shade behind text"
+      })[v] + (context.themeMode === "light" ? ", washed out for your light theme" : ""),
+      set: apply
+    }, {
+      title: "Shuffle",
+      values: () => SHUFFLES,
+      value: shuffleSetting,
+      label: (v) => ({
+        off: "Off",
+        hourly: "Every hour",
+        session: "Every session"
+      })[v],
+      describe: (v) => ({
+        off: "Keep the wallpaper you chose",
+        hourly: "Switch to a different wallpaper every hour",
+        session: "Switch to a different wallpaper each time OpenCode starts"
+      })[v],
+      set: (v) => update((draft) => {
+        draft.shuffle = v;
+        draft.changed = {
+          ...draft.changed,
+          [scope(draft)]: Date.now()
+        };
+      })
+    }, {
+      title: "Per project",
+      values: () => ["off", "on"],
+      value: () => stored.perProject ? "on" : "off",
+      label: capitalize,
+      describe: (v) => v === "on" ? `Each project remembers its own wallpaper, starting from the global one. This project: ${context.ui.format.path(directory())}` : "The same wallpaper in every project",
+      set: (v) => update((draft) => {
+        draft.perProject = v === "on";
+      })
+    }, {
+      title: "Power",
+      values: () => POWERS,
+      value: power,
+      label: capitalize,
+      describe: (v) => v === "saver" ? "Slows to 5 fps after 30 seconds without typing, mouse or agent activity, and pauses while the terminal is in the background" : "Always 15 fps",
+      set: apply
+    }];
+    const Picker = () => {
+      const theme = context.theme.surface("dialog");
+      const [selected, setSelected] = createSignal(0);
+      let saving = false;
+      const change = async (index, direction) => {
+        if (saving)
+          return;
+        const row = rows[index];
+        const values = row.values();
+        const next = values[(values.indexOf(row.value()) + direction + values.length) % values.length];
+        saving = true;
+        await row.set(next).finally(() => {
+          saving = false;
+        });
+      };
+      const move = (direction) => {
+        setSelected((i) => (i + direction + rows.length) % rows.length);
+      };
+      context.keymap.layer(() => ({
+        mode: "modal",
+        commands: [{
+          bind: "up",
+          title: "Previous setting",
+          group: "Wallpaper",
+          run: () => move(-1)
+        }, {
+          bind: "ctrl+p",
+          title: "Previous setting",
+          group: "Wallpaper",
+          run: () => move(-1)
+        }, {
+          bind: "down",
+          title: "Next setting",
+          group: "Wallpaper",
+          run: () => move(1)
+        }, {
+          bind: "ctrl+n",
+          title: "Next setting",
+          group: "Wallpaper",
+          run: () => move(1)
+        }, {
+          bind: "right",
+          title: "Next value",
+          group: "Wallpaper",
+          run: () => void change(selected(), 1)
+        }, {
+          bind: "return",
+          title: "Next value",
+          group: "Wallpaper",
+          run: () => void change(selected(), 1)
+        }, {
+          bind: "left",
+          title: "Previous value",
+          group: "Wallpaper",
+          run: () => void change(selected(), -1)
+        }]
+      }));
+      return (() => {
+        var _el$ = _$createElement("box"), _el$2 = _$createElement("box"), _el$3 = _$createElement("text"), _el$5 = _$createElement("text"), _el$7 = _$createElement("box"), _el$8 = _$createElement("box"), _el$9 = _$createElement("text"), _el$0 = _$createElement("box"), _el$1 = _$createElement("text"), _el$10 = _$createElement("span"), _el$11 = _$createElement("b"), _el$13 = _$createTextNode(` `), _el$14 = _$createElement("span"), _el$16 = _$createElement("text"), _el$17 = _$createElement("span"), _el$18 = _$createElement("b"), _el$20 = _$createTextNode(` `), _el$21 = _$createElement("span");
+        _$insertNode(_el$, _el$2);
+        _$insertNode(_el$, _el$7);
+        _$insertNode(_el$, _el$8);
+        _$insertNode(_el$, _el$0);
+        _$setProp(_el$, "gap", 1);
+        _$setProp(_el$, "paddingBottom", 1);
+        _$insertNode(_el$2, _el$3);
+        _$insertNode(_el$2, _el$5);
+        _$setProp(_el$2, "paddingLeft", 4);
+        _$setProp(_el$2, "paddingRight", 4);
+        _$setProp(_el$2, "flexDirection", "row");
+        _$setProp(_el$2, "justifyContent", "space-between");
+        _$insertNode(_el$3, _$createTextNode(`Wallpaper settings`));
+        _$insertNode(_el$5, _$createTextNode(`esc`));
+        _$setProp(_el$5, "onMouseUp", () => context.ui.dialog.clear());
+        _$insert(_el$7, _$createComponent(For, {
+          each: rows,
+          children: (row, index) => {
+            const active = () => selected() === index();
+            const fg = () => active() ? theme.text.action.primary.focused : theme.text.base;
+            return (() => {
+              var _el$23 = _$createElement("box"), _el$24 = _$createElement("text"), _el$25 = _$createElement("text");
+              _$insertNode(_el$23, _el$24);
+              _$insertNode(_el$23, _el$25);
+              _$setProp(_el$23, "flexDirection", "row");
+              _$setProp(_el$23, "paddingLeft", 4);
+              _$setProp(_el$23, "paddingRight", 4);
+              _$setProp(_el$23, "onMouseUp", () => {
+                setSelected(index());
+                change(index(), 1);
+              });
+              _$setProp(_el$24, "flexGrow", 1);
+              _$insert(_el$24, () => row.title);
+              _$insert(_el$25, (() => {
+                var _c$ = _$memo(() => !!active());
+                return () => _c$() ? `\u2039 ${row.label(row.value())} \u203A` : row.label(row.value());
+              })());
+              _$effect((_p$) => {
+                var _v$9 = active() ? theme.background.action.primary.focused : RGBA.fromInts(0, 0, 0, 0), _v$0 = fg(), _v$1 = active() ? TextAttributes.BOLD : undefined, _v$10 = active() ? fg() : theme.text.muted;
+                _v$9 !== _p$.e && (_p$.e = _$setProp(_el$23, "backgroundColor", _v$9, _p$.e));
+                _v$0 !== _p$.t && (_p$.t = _$setProp(_el$24, "fg", _v$0, _p$.t));
+                _v$1 !== _p$.a && (_p$.a = _$setProp(_el$24, "attributes", _v$1, _p$.a));
+                _v$10 !== _p$.o && (_p$.o = _$setProp(_el$25, "fg", _v$10, _p$.o));
+                return _p$;
+              }, {
+                e: undefined,
+                t: undefined,
+                a: undefined,
+                o: undefined
+              });
+              return _el$23;
+            })();
+          }
+        }));
+        _$insertNode(_el$8, _el$9);
+        _$setProp(_el$8, "paddingLeft", 4);
+        _$setProp(_el$8, "paddingRight", 4);
+        _$setProp(_el$9, "wrapMode", "word");
+        _$insert(_el$9, () => rows[selected()].describe(rows[selected()].value()));
+        _$insertNode(_el$0, _el$1);
+        _$insertNode(_el$0, _el$16);
+        _$setProp(_el$0, "paddingLeft", 4);
+        _$setProp(_el$0, "flexDirection", "row");
+        _$setProp(_el$0, "gap", 2);
+        _$insertNode(_el$1, _el$10);
+        _$insertNode(_el$1, _el$14);
+        _$insertNode(_el$10, _el$11);
+        _$insertNode(_el$10, _el$13);
+        _$insertNode(_el$11, _$createTextNode(`\u2191/\u2193`));
+        _$insertNode(_el$14, _$createTextNode(`setting`));
+        _$insertNode(_el$16, _el$17);
+        _$insertNode(_el$16, _el$21);
+        _$insertNode(_el$17, _el$18);
+        _$insertNode(_el$17, _el$20);
+        _$insertNode(_el$18, _$createTextNode(`enter \u2190/\u2192`));
+        _$insertNode(_el$21, _$createTextNode(`change`));
+        _$effect((_p$) => {
+          var _v$ = theme.text.base, _v$2 = TextAttributes.BOLD, _v$3 = theme.text.muted, _v$4 = theme.text.muted, _v$5 = {
+            fg: theme.text.base
+          }, _v$6 = {
+            fg: theme.text.muted
+          }, _v$7 = {
+            fg: theme.text.base
+          }, _v$8 = {
+            fg: theme.text.muted
+          };
+          _v$ !== _p$.e && (_p$.e = _$setProp(_el$3, "fg", _v$, _p$.e));
+          _v$2 !== _p$.t && (_p$.t = _$setProp(_el$3, "attributes", _v$2, _p$.t));
+          _v$3 !== _p$.a && (_p$.a = _$setProp(_el$5, "fg", _v$3, _p$.a));
+          _v$4 !== _p$.o && (_p$.o = _$setProp(_el$9, "fg", _v$4, _p$.o));
+          _v$5 !== _p$.i && (_p$.i = _$setProp(_el$10, "style", _v$5, _p$.i));
+          _v$6 !== _p$.n && (_p$.n = _$setProp(_el$14, "style", _v$6, _p$.n));
+          _v$7 !== _p$.s && (_p$.s = _$setProp(_el$17, "style", _v$7, _p$.s));
+          _v$8 !== _p$.h && (_p$.h = _$setProp(_el$21, "style", _v$8, _p$.h));
+          return _p$;
+        }, {
+          e: undefined,
+          t: undefined,
+          a: undefined,
+          o: undefined,
+          i: undefined,
+          n: undefined,
+          s: undefined,
+          h: undefined
+        });
+        return _el$;
+      })();
+    };
+    const pick = () => context.ui.dialog.show(() => _$createComponent(Picker, {}));
+    const cycle = (options, value) => run(options[(options.indexOf(value) + 1) % options.length]);
+    const unslot = context.ui.slot({
+      append: "app",
+      render() {
+        let chosen = "";
+        createEffect(() => {
+          const wallpaper = wallpapers.find((w) => w.id === (pinned ?? shown()));
+          const level2 = ACTIVITIES.find((a) => a === pinnedActivity) ?? activity();
+          const choice = timeChoice();
+          const seasonChoice = pinnedSeason ?? seasonSetting();
+          const weatherChoice = pinnedWeather ?? weatherSetting();
+          const key2 = `${wallpaper?.id} ${level2} ${choice} ${seasonChoice} ${weatherChoice}`;
+          const slow = key2 === chosen;
+          chosen = key2;
+          if (!wallpaper)
+            return engine.stop();
+          try {
+            engine.start(wallpaper, {
+              activity: level2,
+              time: choice === "auto" ? timeAt(now()) : choice,
+              brightness: brightness(),
+              season: season(),
+              weather: weather()
+            }, slow ? CLOCK_FADE : undefined);
+          } catch (error) {
+            notify(`${wallpaper.name} wallpaper failed to start: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }
+        });
+        createEffect(() => engine.power(power()));
+        createEffect(() => {
+          now();
+          if (shuffleSetting() === "hourly" && current(stored) && due(stored))
+            shuffle();
+        });
+        createEffect(() => {
+          const place = location();
+          if ((pinnedWeather ?? weatherSetting()) !== "local" || !place)
+            return;
+          const refresh = () => void forecast(place).then(setLocal);
+          refresh();
+          const timer = setInterval(refresh, REFRESH);
+          onCleanup(() => clearInterval(timer));
+        });
+        context.keymap.layer(() => ({
+          mode: "global",
+          commands: [{
+            id: "wallpapers.choose",
+            title: "Choose wallpaper",
+            description: "Animated scene behind the UI. Args: wallpaper id, off, calm, lively, teeming, day, sunset, night, auto, a season, a weather, location <place>, subtle, normal, vivid, saver, smooth",
+            group: "Wallpapers",
+            palette: true,
+            slash: {
+              name: "wallpaper",
+              arguments: true
+            },
+            run
+          }, {
+            id: "wallpapers.off",
+            title: "Turn off wallpaper",
+            group: "Wallpapers",
+            palette: true,
+            run: () => run("off")
+          }, {
+            id: "wallpapers.activity",
+            title: "Cycle wallpaper activity",
+            description: "Calm, lively, teeming",
+            group: "Wallpapers",
+            palette: true,
+            run: () => cycle(ACTIVITIES, activity())
+          }, {
+            id: "wallpapers.time",
+            title: "Cycle wallpaper time of day",
+            description: "Auto, day, sunset, night",
+            group: "Wallpapers",
+            palette: true,
+            run: () => cycle(["auto", ...TIMES], timeSetting())
+          }]
+        }));
+        return null;
+      }
+    });
+    return () => {
+      clearInterval(clock2);
+      for (const stop of unlisten)
+        stop();
+      for (const timer of simulated)
+        clearTimeout(timer);
+      engine.stop();
+      unslot();
+    };
+  }
+});
+function capitalize(text) {
+  return text[0].toUpperCase() + text.slice(1);
+}
+var CLOCK_FADE = 45;
+var WEATHER_SETTINGS = ["off", "local", ...WEATHERS];
+function seasonAt(date, south) {
+  return SEASONS[(Math.floor((date.getMonth() + 10) % 12 / 3) + (south ? 2 : 0)) % 4];
+}
+function timeAt(date) {
+  const hour = date.getHours() + date.getMinutes() / 60;
+  if (hour >= 20 || hour < 6)
+    return "night";
+  if (hour < 7 || hour >= 18)
+    return "sunset";
+  return "day";
+}
+var SHUFFLES = ["off", "hourly", "session"];
+var HOUR = 3600000;
+export {
+  tui_default as default
+};

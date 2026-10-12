@@ -1,0 +1,14 @@
+export type RGB = [number, number, number];
+export declare const TAU: number;
+export declare function clamp(value: number, min: number, max: number): number;
+export declare function lerp(a: number, b: number, t: number): number;
+export declare function smoothstep(edge0: number, edge1: number, x: number): number;
+export declare function rand(min: number, max: number): number;
+export declare function hash(n: number): number;
+export declare function hash2(x: number, y: number): number;
+export declare function hashString(text: string): number;
+export declare function hsv(h: number, s: number, v: number): RGB;
+export declare function noise1(x: number, seed?: number): number;
+export declare function fbm1(x: number, seed?: number, octaves?: number): number;
+export declare function noise2(x: number, y: number): number;
+export declare function fbm2(x: number, y: number, octaves?: number): number;
