@@ -35,7 +35,7 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 ## Wallpapers
 
 `ocean` · `desert` · `jungle` · `space` · `farm` · `tundra` · `beach` · `city` · `zen` · `prehistoric` · `rider` ·
-`megacity` · `dome` · `haunted-house`
+`megacity` · `dome` · `haunted-house` · `flowerbox`
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -72,6 +72,7 @@ At teeming, played back at 3x speed:
 | ![Zen garden in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/zen.gif) | ![Prehistoric in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/prehistoric.gif) |
 | ![Rider in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/rider.gif) | ![Megacity in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/megacity.gif) |
 | ![Dome in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/dome.gif) | ![Haunted house in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house.gif) |
+| ![Flower Box in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox.gif) | |
 
 | | Day | Sunset | Night |
 | --- | --- | --- | --- |
@@ -89,6 +90,7 @@ At teeming, played back at 3x speed:
 | Megacity | ![Megacity by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/megacity.png) | ![Megacity at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/megacity-sunset.png) | ![Megacity at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/megacity-night.png) |
 | Dome | ![Dome by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/dome.png) | ![Dome at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/dome-sunset.png) | ![Dome at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/dome-night.png) |
 | Haunted house | ![Haunted house by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house.png) | ![Haunted house at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house-sunset.png) | ![Haunted house at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/haunted-house-night.png) |
+| Flower Box | ![Flower Box by day](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox.png) | ![Flower Box at sunset](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox-sunset.png) | ![Flower Box at night](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flowerbox-night.png) |
 
 ## License
 
