@@ -9657,6 +9657,7 @@ var LOOKS8 = {
     fogAlpha: 0.16,
     ghost: [0.6, 0.95, 0.78],
     zombie: [0.42, 0.56, 0.32],
+    bone: [0.72, 0.58, 0.34],
     skin: [0.85, 0.38, 0.06],
     tint: [0.55, 0.58, 0.52],
     night: false
@@ -9694,6 +9695,7 @@ var LOOKS8 = {
     fogAlpha: 0.3,
     ghost: [0.4, 1, 0.72],
     zombie: [0.45, 0.58, 0.36],
+    bone: [0.5, 0.24, 0.12],
     skin: [0.5, 0.14, 0.03],
     tint: [0.2, 0.065, 0.13],
     night: false
@@ -9730,6 +9732,7 @@ var LOOKS8 = {
     fogAlpha: 0.4,
     ghost: [0.22, 1.1, 0.78],
     zombie: [0.25, 0.55, 0.3],
+    bone: [0.15, 0.56, 0.44],
     skin: [0.32, 0.1, 0.02],
     tint: [0.07, 0.045, 0.14],
     night: true
@@ -9781,6 +9784,7 @@ class HauntedHouse extends Canvas {
   wisps = [];
   passer = { win: -1, t: 0, wait: rand(8, 20) };
   swing = { x: 0, y: 0, len: 0.12 };
+  rocker = [0, 0];
   grave = { x: 0.3, y: 0.92 };
   bats = [];
   stream = [];
@@ -9794,6 +9798,11 @@ class HauntedHouse extends Canvas {
   flash = { t: -1, wait: 0, x: 0.5 };
   witch = { t: -1, wait: rand(20, 50), dir: 1, y: 0.2 };
   dance = { wait: eggWait() * TIME_SCALE8, t: -1 };
+  perch = [0, 0];
+  open = { x: 0, y: 0 };
+  walkers = [];
+  dog = { x: 0.4, dir: 1, target: 0.6, wait: 1, gait: gait() };
+  pops = [];
   constructor(settings) {
     super();
     this.activity = settings.activity;
@@ -9807,6 +9816,8 @@ class HauntedHouse extends Canvas {
     const bats = { calm: 2, lively: 4, teeming: 6 }[settings.activity];
     this.bats = Array.from({ length: bats }, (_, i) => ({ ax: 0, ay: 0, rx: rand(0.05, 0.1), ry: rand(0.02, 0.05), w: rand(0.9, 1.4), phase: rand(0, TAU), size: rand(0.024, 0.034) + (i === 0 ? 0.008 : 0) }));
     this.flash.wait = rand(2, 6);
+    if (settings.activity === "teeming")
+      this.walkers = [0, 1].map((i) => ({ x: 0, y: 0, dir: 1, phase: 0, t: 2 + i * 9, mode: 3 }));
     if (settings.activity === "calm")
       return;
     const ghosts = settings.activity === "teeming" ? 2 : 1;
@@ -9837,6 +9848,11 @@ class HauntedHouse extends Canvas {
     this.stepWitch(dt, cdt);
     this.stepDance(dt);
     this.stepPasser(dt);
+    this.stepWalkers(dt, cdt);
+    this.stepDog(cdt);
+    for (const p of this.pops)
+      p.t += dt;
+    this.pops = this.pops.filter((p) => p.t < 4.6);
   }
   stepPasser(dt) {
     const p = this.passer;
@@ -9878,11 +9894,14 @@ class HauntedHouse extends Canvas {
       this.drawBat(b.x, b.y, 0.022, b.phase, Math.sign(b.vx));
     this.lights.clear(W, H);
     this.drawWindows();
+    this.drawRocker();
     for (const g of this.ghosts)
       this.drawGhost(g);
     this.drawSwing();
     if (this.activity !== "calm")
       this.drawSpider();
+    if (this.activity !== "calm")
+      this.drawSkeleton(this.sitPose(this.perch[0], this.perch[1], 0.11 * H, 1), 0.11 * H);
     if (this.ghoul.t >= 0)
       this.drawGhoul();
     if (this.hand.t >= 0)
@@ -9893,8 +9912,14 @@ class HauntedHouse extends Canvas {
     this.drawEyes();
     this.drawRaven();
     this.drawWisps();
+    if (this.activity !== "calm")
+      this.drawPeeker();
     if (this.activity === "teeming")
       this.drawZombie(this.zombie.x, this.zombie.y, this.zombie.dir, this.zombie.phase, 0, 1);
+    this.drawWalkers();
+    if (this.activity !== "calm")
+      this.drawDog();
+    this.drawPops();
     if (this.dance.t >= 0)
       this.drawDance();
     this.lights.apply(hdr);
@@ -9921,8 +9946,12 @@ class HauntedHouse extends Canvas {
       return;
     }
     const stone = this.stones.findIndex((s) => Math.abs(s.x - x) < s.s * 0.8 + 0.02 && y > s.y - s.s * 2.4 && y < s.y + 0.02);
-    if (stone >= 0 && this.ghoul.t < 0) {
+    if (stone >= 0 && this.ghoul.t < 0 && Math.random() < 0.5) {
       Object.assign(this.ghoul, { stone, t: 0, dur: 6 });
+      return;
+    }
+    if (y > FENCE + 0.02 && this.pops.length < 4) {
+      this.pops.push({ x, y: Math.min(y + 0.02, 0.99), t: 0 });
       return;
     }
     if (this.burst.length < 24)
@@ -10064,6 +10093,14 @@ class HauntedHouse extends Canvas {
     this.polygon([L(-0.12, 0), L(0.16, 0), L(0.16, 0.19), L(-0.12, 0.19)], walls);
     for (let v = 0.016;v < 0.185; v += 0.016)
       line([L(-0.12, v), L(0.16, v)], 0.0005, seam);
+    const bare = [walls[0] * 0.38, walls[1] * 0.36, walls[2] * 0.4];
+    for (const [u0, v0, u1, v1] of [
+      [0.136, 0.104, 0.156, 0.118],
+      [-0.118, 0.128, -0.104, 0.146],
+      [0.17, 0.12, 0.2, 0.134]
+    ])
+      this.polygon([L(u0, v0), L(u1, v0 + (u0 > 0.16 ? 0.004 : 0)), L(u1, v1 + (u0 > 0.16 ? 0.004 : 0)), L(u0, v1)], bare);
+    this.polygon([L(0.137, 0.174), L(0.158, 0.164), L(0.159, 0.158), L(0.138, 0.168)], [walls[0] * 1.15, walls[1] * 1.12, walls[2] * 1.1]);
     const ridgeV = (t) => 0.3 - 0.025 * Math.sin(t * Math.PI);
     const ridge = [];
     for (let i = 0;i <= 8; i++)
@@ -10080,6 +10117,11 @@ class HauntedHouse extends Canvas {
     this.polygon([L(0.088, 0.215), L(0.118, 0.22), L(0.124, 0.252), L(0.1, 0.262), L(0.084, 0.24)], [roof[0] * 0.3, roof[1] * 0.3, roof[2] * 0.3]);
     for (const u of [0.094, 0.108])
       line([L(u, 0.214), L(u + 0.006, 0.26)], 0.001, tile);
+    const iron = this.paint([0.05, 0.04, 0.06]);
+    const crest = ridge.map(([x, y]) => [x, y - 0.012 * S * H]);
+    line(crest, 0.0012, iron);
+    for (const [x, y] of ridge)
+      this.polygon([[x - 0.0025 * S * H, y], [x + 0.0025 * S * H, y], [x + 0.0012 * S * H, y - 0.012 * S * H], [x, y - 0.02 * S * H], [x - 0.0012 * S * H, y - 0.012 * S * H]], iron);
     this.polygon([L(-0.06, 0.18), L(0.08, 0.18), L(0.012, 0.34)], walls);
     for (let v = 0.196;v < 0.33; v += 0.016) {
       const t = (v - 0.18) / 0.16;
@@ -10088,7 +10130,27 @@ class HauntedHouse extends Canvas {
     this.edge(L(-0.075, 0.172), L(0.012, 0.345), 0.006 * S, roof);
     this.edge(L(0.012, 0.345), L(0.095, 0.172), 0.006 * S, roof);
     line([L(-0.055, 0.19), L(0.012, 0.318), L(0.077, 0.19)], 0.0012, trim);
+    const lace = [trim[0] * 2.2, trim[1] * 2.1, trim[2] * 2];
+    for (const [a, b] of [
+      [L(-0.068, 0.178), L(0.012, 0.336)],
+      [L(0.088, 0.178), L(0.012, 0.336)]
+    ])
+      for (let t = 0.08;t < 0.92; t += 0.14)
+        this.disc(lerp(a[0], b[0], t), lerp(a[1], b[1], t) + 0.004 * S * H, 0.0042 * S * H, lace[0], lace[1], lace[2], 1);
+    this.polygon([L(0.004, 0.33), L(0.02, 0.33), L(0.012, 0.3)], lace);
     this.edge(L(0.012, 0.345), L(0.012, 0.37), 0.0015 * S, roof);
+    this.disc(...L(0.012, 0.374), 0.005 * S * H, roof[0], roof[1], roof[2], 1);
+    const [ox, oy] = L(0.012, 0.293);
+    const dim = look.glow * 0.3;
+    this.disc(ox, oy, 0.013 * S * H, trim[0], trim[1], trim[2], 1);
+    this.disc(ox, oy, 0.0095 * S * H, look.window[0] * dim, look.window[1] * dim, look.window[2] * dim, 1);
+    if (!this.cells)
+      for (const [dx, dy] of [[1, 0], [0, 1]])
+        this.edge([ox - dx * 0.0095 * S * H, oy - dy * 0.0095 * S * H], [ox + dx * 0.0095 * S * H, oy + dy * 0.0095 * S * H], 0.0007, trim);
+    this.polygon([L(-0.1, 0.198), L(-0.07, 0.198), L(-0.07, 0.232), L(-0.1, 0.232)], walls);
+    this.polygon([L(-0.107, 0.228), L(-0.063, 0.228), L(-0.085, 0.258)], roof);
+    line([L(-0.107, 0.228), L(-0.085, 0.258), L(-0.063, 0.228)], 0.002, trim);
+    this.edge(L(-0.085, 0.258), L(-0.085, 0.27), 0.0012 * S, roof);
     const tw = 0.042;
     this.polygon([T(-tw, 0), T(tw, 0), T(tw, 0.27), T(-tw, 0.27)], walls);
     this.polygon([T(tw * 0.35, 0), T(tw, 0), T(tw, 0.27), T(tw * 0.35, 0.27)], [walls[0] * 0.75, walls[1] * 0.75, walls[2] * 0.78]);
@@ -10113,9 +10175,44 @@ class HauntedHouse extends Canvas {
     this.polygon([[tip[0] + 0.02 * S * H, vy - 0.007 * S * H], [tip[0] + 0.03 * S * H, vy - 0.003 * S * H], [tip[0] + 0.02 * S * H, vy + 0.003 * S * H]], roof);
     this.edge(L(-0.12, 0.1), L(0.16, 0.1), 0.004 * S, trim);
     this.edge(L(-0.14, 0.182), L(0.185, 0.182), 0.005 * S, trim);
+    const stone = look.stone;
+    const blocks = (pts, n) => {
+      for (let i = 0;i < n; i++) {
+        const k = 0.8 + 0.35 * hash(i * 3.7 + n);
+        this.polygon(pts(i / n, (i + 1) / n), [stone[0] * k, stone[1] * k, stone[2] * k]);
+      }
+    };
+    blocks((a, b) => [T(lerp(-tw - 0.004, tw + 0.004, a), -0.004), T(lerp(-tw - 0.004, tw + 0.004, b), -0.004), T(lerp(-tw - 0.004, tw + 0.004, b), 0.016), T(lerp(-tw - 0.004, tw + 0.004, a), 0.016)], 4);
+    blocks((a, b) => [L(lerp(0.16, 0.22, a), -0.004 + 0.02 * a), L(lerp(0.16, 0.22, b), -0.004 + 0.02 * b), L(lerp(0.16, 0.22, b), 0.014 + 0.02 * b), L(lerp(0.16, 0.22, a), 0.014 + 0.02 * a)], 3);
+    const stain = [walls[0] * 0.5, walls[1] * 0.5, walls[2] * 0.48];
+    for (const [i, u] of [-0.105, -0.045, 0.02, 0.085, 0.142].entries()) {
+      const len = 0.03 + 0.03 * hash(i * 5.3);
+      this.polygon([L(u - 0.004, 0.176), L(u + 0.004, 0.176), L(u + 0.0015, 0.176 - len), L(u - 0.0015, 0.176 - len)], stain, 0.45);
+    }
+    for (const u of [-0.025, 0.02])
+      this.polygon([T(u - 0.004, 0.262), T(u + 0.004, 0.262), T(u + 0.001, 0.215), T(u - 0.001, 0.215)], stain, 0.45);
     line([L(0.03, 0.19), L(0.036, 0.168), L(0.028, 0.15), L(0.04, 0.128), L(0.034, 0.112)], 0.001, crack);
     line([L(-0.11, 0.098), L(-0.1, 0.082), L(-0.106, 0.064)], 0.001, crack);
     line([T(-0.02, 0.26), T(-0.01, 0.24), T(-0.024, 0.22)], 0.001, crack);
+    const vine = this.paint([0.13, 0.12, 0.07]);
+    const leafC = this.paint([0.2, 0.24, 0.08]);
+    const vw = this.thick(0.0012 * S, 0.55);
+    const vines = [];
+    const leaves = [];
+    for (let j = 0;j < 3; j++) {
+      let p2 = T(-tw + 0.006 + j * 0.012, 0);
+      for (let i = 1;i <= 9; i++) {
+        const q = T(-tw + 0.006 + j * 0.012 + Math.sin(i * 1.3 + j * 2) * 0.008, i * (0.022 - j * 0.004));
+        vines.push(cap(...p2, ...q, vw, vw, vine));
+        if (hash(i * 3.1 + j) < 0.6)
+          leaves.push(ell(q[0] + (i % 2 ? 1 : -1) * 0.004 * S * H, q[1], 0.0035 * S * H, 0.0025 * S * H, i, leafC));
+        if (i % 3 === 0)
+          vines.push(cap(...q, q[0] + (j % 2 ? 1 : -1) * 0.012 * S * H, q[1] - 0.008 * S * H, vw * 0.8, vw * 0.6, vine));
+        p2 = q;
+      }
+    }
+    this.shape(vines, this.lighting, 0);
+    this.shape(leaves, this.lighting, 0.3);
     if (look.style === "rim")
       this.rimEdges([T(-tw, 0), T(-tw, 0.27), T(-tw - 0.01, 0.282), shoulderL, tip, ...ridge, L(0.185, 0.18)]);
     const plan = [
@@ -10123,10 +10220,10 @@ class HauntedHouse extends Canvas {
       [-0.05, 0.024, 0.012, 0.032, "dark"],
       [0.08, 0.024, 0.016, 0.032, "dark"],
       [0.128, 0.024, 0.013, 0.032, "boarded"],
-      [-0.08, 0.122, 0.016, 0.038, "dark"],
-      [-0.02, 0.122, 0.016, 0.038, "candle"],
-      [0.05, 0.122, 0.016, 0.038, "boarded"],
-      [0.115, 0.122, 0.015, 0.038, "glow"],
+      [-0.08, 0.12, 0.019, 0.046, "glow"],
+      [-0.02, 0.12, 0.019, 0.046, "candle"],
+      [0.05, 0.12, 0.018, 0.046, "boarded"],
+      [0.115, 0.12, 0.018, 0.046, "glow"],
       [0.012, 0.225, 0.014, 0.034, "dark"]
     ];
     const turret = [
@@ -10134,10 +10231,19 @@ class HauntedHouse extends Canvas {
       [0.13, 0.036],
       [0.21, 0.034]
     ];
+    const sideW = [walls[0] * 0.7, walls[1] * 0.7, walls[2] * 0.74];
+    this.polygon([L(0.084, 0.112), L(0.146, 0.112), L(0.146, 0.176), L(0.084, 0.176)], walls);
+    this.polygon([L(0.076, 0.116), L(0.084, 0.112), L(0.084, 0.176), L(0.076, 0.172)], sideW);
+    this.polygon([L(0.146, 0.112), L(0.154, 0.116), L(0.154, 0.172), L(0.146, 0.176)], sideW);
+    this.polygon([L(0.078, 0.112), L(0.152, 0.112), L(0.115, 0.094)], trim);
+    this.polygon([L(0.072, 0.174), L(0.158, 0.174), L(0.146, 0.188), L(0.084, 0.188)], roof);
+    this.edge(L(0.115, 0.188), L(0.115, 0.198), 0.0012 * S, roof);
+    this.disc(...L(0.115, 0.2), 0.003 * S * H, roof[0], roof[1], roof[2], 1);
     for (const [i, [u, v, w, h, kind]] of plan.entries())
       this.paintWindow(L(u, v), L(u, v + h), w * S * H, h * S * H, kind, i);
     for (const [i, [v, h]] of turret.entries())
       this.paintWindow(T(0, v), T(0, v + h), 0.012 * S * H, h * S * H, i === 2 ? "glow" : "dark", 20 + i);
+    this.paintWindow(L(-0.085, 0.204), L(-0.085, 0.224), 0.008 * S * H, 0.02 * S * H, "dark", 30);
     const order = this.windows.filter((w) => w.kind !== "boarded").sort((a, b) => b.y - a.y || a.x - b.x);
     for (const [i, w] of order.entries())
       w.room = i;
@@ -10147,6 +10253,11 @@ class HauntedHouse extends Canvas {
     for (const v of [0.008, 0.032])
       for (const u of [0.003, 0.018])
         this.polygon([L(u, v), L(u + 0.01, v), L(u + 0.01, v + 0.02), L(u, v + 0.02)], [door[0] * 0.7, door[1] * 0.7, door[2] * 0.7]);
+    line([L(0.024, 0.056), L(0.02, 0.04), L(0.026, 0.028), L(0.021, 0.012)], 0.0009, [door[0] * 0.35, door[1] * 0.35, door[2] * 0.35]);
+    this.shape([cap(...L(-0.004, 0.022), ...L(0.034, 0.04), this.thick(0.0028 * S, 0.8), this.thick(0.0028 * S, 0.8), this.paint([0.4, 0.31, 0.2]))], this.lighting, 0.5);
+    const brass = this.paint([0.55, 0.42, 0.16], look.night ? 2 : 1);
+    this.disc(...L(0.015, 0.033), 0.0045 * S * H, brass[0], brass[1], brass[2], 1);
+    this.disc(...L(0.015, 0.033), 0.0024 * S * H, door[0], door[1], door[2], 1);
     const fan = look.glow * 0.45;
     this.disc(...L(0.015, 0.06), 0.013 * S * H, trim[0], trim[1], trim[2], 1);
     this.disc(...L(0.015, 0.06), 0.01 * S * H, look.window[0] * fan, look.window[1] * fan, look.window[2] * fan, 1);
@@ -10157,16 +10268,50 @@ class HauntedHouse extends Canvas {
       posts.push(cap(...L(u, 0), ...L(u, 0.068), pr, pr, trim));
       for (const s of [-1, 1])
         posts.push(cap(...L(u + s * 0.014, 0.068), ...L(u, 0.054), pr * 0.6, pr * 0.6, trim));
+      for (const v of [0.012, 0.036])
+        posts.push(ell(...L(u, v), pr * 1.8, pr * 2.6, 0, trim));
     }
     this.shape(posts, this.lighting, 0.4);
+    const sp = [];
+    const sr = this.thick(0.001 * S, 0.45);
+    for (const [u0, u1] of [
+      [-0.135, -0.012],
+      [0.046, 0.17]
+    ]) {
+      sp.push(cap(...L(u0, 0.048), ...L(u1, 0.048), sr * 1.4, sr * 1.4, trim));
+      for (let u = u0 + 0.006;u < u1; u += this.cells ? 0.014 : 0.008)
+        sp.push(cap(...L(u, 0.048), ...L(u, 0.06), sr, sr, trim));
+    }
+    this.shape(sp, this.lighting, 0);
     const porch = [];
     for (let i = 0;i <= 6; i++)
       porch.push(L(lerp(-0.135, 0.17, i / 6), 0.074 - 0.009 * Math.sin(i / 6 * Math.PI) - (i === 6 ? 0.007 : 0)));
     this.polygon([...porch, L(0.175, 0.059), L(-0.14, 0.062)], roof);
     line(porch.map(([x, y]) => [x, y + 0.012 * S * H]), 0.0015, trim);
     this.polygon([L(-0.135, 0.008), L(0.175, 0.008), L(0.175, -0.004), L(-0.135, -0.004)], trim);
-    for (let s = 0;s < 3; s++)
-      this.polygon([L(-0.014 - s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.004 - s * 0.009), L(0.044 + s * 0.006, -0.013 - s * 0.009), L(-0.014 - s * 0.006, -0.013 - s * 0.009)], [trim[0] * 1.3, trim[1] * 1.3, trim[2] * 1.3]);
+    for (let s = 0;s < 3; s++) {
+      const u0 = -0.014 - s * 0.006;
+      const u1 = 0.044 + s * 0.006;
+      const v = -0.004 - s * 0.009;
+      this.polygon([L(u0, v), L(u1, v), L(u1, v - 0.009), L(u0, v - 0.009)], [stone[0] * 0.75, stone[1] * 0.75, stone[2] * 0.78]);
+      this.polygon([L(u0, v), L(u1, v), L(u1, v - 0.003), L(u0, v - 0.003)], [stone[0] * 1.15, stone[1] * 1.15, stone[2] * 1.15]);
+      if (s === 1)
+        line([L(0.01, v - 0.001), L(0.016, v - 0.005), L(0.013, v - 0.009)], 0.0008, [stone[0] * 0.4, stone[1] * 0.4, stone[2] * 0.4]);
+    }
+    this.rocker = L(-0.052, 0.008);
+    for (const u of [-0.135, 0.17]) {
+      const [fx, fy] = L(u, u > 0 ? 0.067 : 0.074);
+      this.edge([fx, fy], [fx, fy - 0.014 * S * H], 0.0014 * S, roof);
+      this.disc(fx, fy - 0.015 * S * H, 0.0035 * S * H, roof[0], roof[1], roof[2], 1);
+    }
+    const metal = this.paint([0.16, 0.16, 0.17]);
+    const gw = this.thick(0.0022 * S, 0.7);
+    const gutter = [];
+    for (let i = 0;i <= 8; i++)
+      gutter.push(L(lerp(-0.138, 0.17, i / 8), 0.177 - 0.007 * Math.sin(i / 8 * Math.PI)));
+    gutter.push(L(0.188, 0.158));
+    this.shape(gutter.slice(1).map((q, i) => cap(...gutter[i], ...q, gw, gw, metal)), this.lighting, 0);
+    this.shape([cap(...L(0.152, 0.172), ...L(0.152, 0.088), gw, gw, metal), cap(...L(0.152, 0.088), ...L(0.162, 0.08), gw, gw, metal), cap(...L(0.19, -0.002), ...L(0.214, 0.002), gw, gw, metal)], this.lighting, 0);
     const rr = this.thick(0.0012 * S, 0.5);
     const rail = [cap(...L(-0.12, 0.032), ...L(-0.06, 0.032), rr, rr, trim), cap(...L(-0.06, 0.032), ...L(-0.035, 0.012), rr, rr, trim), cap(...L(0.072, 0.032), ...L(0.158, 0.028), rr, rr, trim)];
     for (let u = -0.11;u < 0.158; u += this.cells ? 0.02 : 0.012)
@@ -10204,6 +10349,8 @@ class HauntedHouse extends Canvas {
     if (kind === "dark" && hash(seed * 3.3) < 0.6)
       this.polygon([[a[0] - w * 0.2, a[1] - h * 0.55], [a[0] + w * 0.7, a[1] - h * 0.9], [a[0] + w * 0.3, a[1] - h * 0.6], [a[0] + w * 0.8, a[1] - h * 0.3]], [g[0] * 0.3, g[1] * 0.3, g[2] * 0.3]);
     this.windows.push({ pts, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w, h, kind, room: -1, seed, flash: 0 });
+    if (kind === "dark")
+      this.drawCurtains(this.windows[this.windows.length - 1], [g[0] * 2.5 + 0.03, g[1] * 1.6, g[2] * 2], 0);
     if (seed === 0 || seed === 4 || seed === 7 || seed === 21) {
       const sx = a[0] + w + f * 1.5;
       const sw = w * 0.85;
@@ -10348,6 +10495,7 @@ class HauntedHouse extends Canvas {
       [-0.008, -0.13, -Math.PI / 2 - 1.2, 0.1, 0.007, 3, 23]
     ], 0.6, (P) => [cap(...P(-0.008, -0.15), ...P(0.08, -0.172), 0.009 * z * H, 0.007 * z * H, bark), cap(...P(0.08, -0.172), ...P(0.17, -0.16), 0.007 * z * H, 0.004 * z * H, bark), cap(...P(-0.006, -0.12), ...P(-0.09, -0.17), 0.007 * z * H, 0.004 * z * H, bark)]);
     this.swing = { x: x + 0.11 * z, y: y - 0.172 * z, len: 0.13 * z };
+    this.perch = [(x + 0.045 * z) * H, (y - 0.168 * z) * H];
     this.lanterns.push({ x: x - 0.075 * z, y: y - 0.162 * z, len: 0.035 * z, seed: 77 });
     this.paintMoss(tips, z, 0.22);
     this.paintWeb((x + 0.002 * z) * H, (y - 0.17 * z) * H, 0.03 * z * H, -Math.PI * 0.9, -Math.PI * 0.15);
@@ -10574,6 +10722,7 @@ class HauntedHouse extends Canvas {
     const gate = this.hx + 0.015 * S;
     const crypt = this.cryptX();
     const open = { x: this.hx - 0.3 * S, y: 0.955 };
+    this.open = open;
     this.grave = { x: this.hx + 0.28 * S, y: 0.955 };
     const stones = [];
     for (let i = 0;stones.length < 26 && i < 500; i++) {
@@ -10597,6 +10746,7 @@ class HauntedHouse extends Canvas {
     const reaper = this.activity === "calm" ? undefined : { x: Math.max(0.24, this.hx - 0.42 * S), y: 0.905 };
     this.stones = stones.filter((s) => !reaper || Math.abs(s.x - reaper.x) > 0.06 || s.y < reaper.y - 0.07 || s.y > reaper.y + 0.01).sort((a, b) => a.y - b.y);
     const mound = this.paint(look.dirt, 0.8);
+    const slumped = this.stones.filter((s) => s.x > this.hx + 0.3 * S && s.x < A - 0.12 && s.y > 0.88 && s.s > 0.035).sort((a, b) => a.x - b.x)[0];
     let stood = !reaper;
     for (const s of this.stones) {
       if (!stood && reaper && s.y > reaper.y) {
@@ -10606,6 +10756,8 @@ class HauntedHouse extends Canvas {
       if (hash(s.x * 13.1) < 0.6)
         this.ellipse(s.x * H, (s.y + s.s * 0.5) * H, s.s * 1.6 * H, s.s * 0.45 * H, mound[0], mound[1], mound[2], 0.6);
       this.drawStone(s);
+      if (s === slumped)
+        this.drawSkeleton(this.slumpPose((s.x + 0.012) * H, (s.y + 0.012) * H, 0.12 * H, 1), 0.12 * H);
     }
     if (!stood && reaper)
       this.paintReaper(reaper.x, reaper.y);
@@ -10732,13 +10884,19 @@ class HauntedHouse extends Canvas {
         continue;
       const g = look.window;
       this.polygon(w.pts, [lerp(look.glass[0], g[0] * k, Math.min(1, k * 2)), lerp(look.glass[1], g[1] * k, Math.min(1, k * 2)), lerp(look.glass[2], g[2] * k, Math.min(1, k * 2))]);
-      this.drawMuntins(w);
-      if (w.kind === "candle")
-        this.drawCandle(w, dim);
+      if (w.seed === 7)
+        this.drawPortrait(w, k);
+      if (w.seed === 4)
+        this.drawCandelabra(w, dim);
       if (w.flash > 0.7)
         this.drawFigure(w);
       if (this.windows[this.passer.win] === w)
         this.drawPasser(w, this.passer.t);
+      if (w.kind === "candle")
+        this.drawCandle(w, dim);
+      const stir = Math.sin(this.time * 0.9 + w.seed * 1.7) * (0.6 + gust(w.x / H, this.time));
+      this.drawCurtains(w, [0.05 + g[0] * k * 0.16, 0.008 + g[1] * k * 0.04, 0.012 + g[2] * k * 0.03], stir);
+      this.drawMuntins(w);
       if (look.style === "rim" || k > 0.4)
         this.lights.pool(w.x, w.y + w.h, w.w * 4, w.h * 1.5, [1, 0.55, 0.15], 1.2 * k, 0.006 * k);
     }
@@ -10753,6 +10911,81 @@ class HauntedHouse extends Canvas {
       this.ellipse(lx, ly, 0.005 * H, 0.009 * H, CANDLE[0] * lg, CANDLE[1] * lg, CANDLE[2] * lg, 1);
       this.lights.pool(lx, ly, 0.09 * H, 0.08 * H, [1, 0.5, 0.12], 2 * f * (look.style === "front" ? 0.5 : 1), 0.014 * f);
     }
+  }
+  drawCurtains(w, color, stir) {
+    const [a, b, c, d] = w.pts;
+    const min = this.cells ? 1.2 : 0.6;
+    for (const side of [-1, 1]) {
+      const top = side < 0 ? d : c;
+      const bottom = side < 0 ? a : b;
+      const width = Math.max(w.w * 0.42, min);
+      const sway2 = stir * w.w * 0.12 * (side < 0 ? 1 : 0.7);
+      const inner = (t) => -side * width * (1 - 0.45 * t);
+      const hem = [];
+      const n = 4;
+      for (let i = 0;i <= n; i++) {
+        const f = i / n;
+        const len = 0.72 + 0.22 * hash(w.seed * 3.1 + side + i);
+        hem.push([lerp(bottom[0], top[0], 1 - len) + inner(len) * f + sway2 * len, lerp(bottom[1], top[1], 1 - len)]);
+      }
+      this.polygon([top, [top[0] + inner(0), top[1]], ...hem.reverse(), [lerp(bottom[0], top[0], 0.2) + sway2, lerp(bottom[1], top[1], 0.2)]], color);
+    }
+  }
+  drawPortrait(w, k) {
+    const x = w.x;
+    const y = w.y - w.h * 0.1;
+    const fw = w.w * 0.5;
+    const fh = w.h * 0.34;
+    const gilt = [0.5 * k + 0.05, 0.32 * k + 0.03, 0.08 * k + 0.01];
+    this.polygon([[x - fw, y - fh], [x + fw, y - fh], [x + fw, y + fh], [x - fw, y + fh]], gilt);
+    const inside = [0.06 * k + 0.01, 0.03 * k + 0.005, 0.03 * k + 0.01];
+    this.polygon([[x - fw * 0.7, y - fh * 0.75], [x + fw * 0.7, y - fh * 0.75], [x + fw * 0.7, y + fh * 0.75], [x - fw * 0.7, y + fh * 0.75]], inside);
+    const sitter = this.paint([0.02, 0.015, 0.02]);
+    this.ellipse(x, y - fh * 0.15, fw * 0.32, fh * 0.32, sitter[0], sitter[1], sitter[2], 1);
+    this.polygon([[x - fw * 0.6, y + fh * 0.75], [x + fw * 0.6, y + fh * 0.75], [x + fw * 0.3, y + fh * 0.2], [x - fw * 0.3, y + fh * 0.2]], sitter);
+    if (Math.sin(this.time * 0.6 + 1.3) < 0.85)
+      return;
+    for (const e of [-1, 1])
+      this.disc(x + e * fw * 0.13, y - fh * 0.18, Math.max(fw * 0.07, 0.5), 1.8, 0.25, 0.08, 1);
+  }
+  drawCandelabra(w, dim) {
+    const H = this.H;
+    const x = w.x;
+    const base = w.y + w.h * 0.45;
+    const top = w.y - w.h * 0.05;
+    const metal = this.paint([0.06, 0.04, 0.03]);
+    const r = Math.max(0.0012 * this.S * H, this.cells ? 0.5 : 0.35);
+    const arm = w.w * 0.55;
+    this.shape([cap(x - arm * 0.4, base, x + arm * 0.4, base, r, r, metal), cap(x, base, x, top, r, r, metal), cap(x, top + w.h * 0.08, x - arm, top, r, r, metal), cap(x, top + w.h * 0.08, x + arm, top, r, r, metal)], this.lighting, 0);
+    for (const [i, dx] of [-arm, 0, arm].entries()) {
+      const f = firelight(this.time * 3, w.seed * 5 + i) * dim;
+      const fy = top - (i === 1 ? w.h * 0.06 : 0);
+      this.ellipse(x + dx, fy - w.h * 0.06, Math.max(w.w * 0.08, 0.6), Math.max(w.h * 0.06 * f, 0.6), CANDLE[0] * 1.3 * f, CANDLE[1] * 1.3 * f, CANDLE[2] * f, 1);
+    }
+  }
+  drawRocker() {
+    const H = this.H;
+    const [x, y] = this.rocker;
+    const sz = 0.045 * this.S * H;
+    const a = this.activity === "calm" ? 0 : Math.sin(this.time * 1.3) * 0.17 * (0.75 + 0.25 * Math.sin(this.time * 0.23));
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const R = (u, v) => [x + (u * ca - v * sa) * sz, y + (u * sa + v * ca) * sz];
+    const wood = this.paint([0.28, 0.18, 0.1]);
+    const w = this.thick(0.0016 * this.S, 0.6);
+    const parts = [];
+    const rock = [];
+    for (let i = 0;i <= 6; i++) {
+      const u = -0.55 + 1.1 * i / 6;
+      rock.push(R(u, -0.35 * u * u));
+    }
+    for (let i = 0;i < 6; i++)
+      parts.push(cap(...rock[i], ...rock[i + 1], w, w, wood));
+    parts.push(cap(...R(0.28, -0.03), ...R(0.28, -0.45), w, w, wood), cap(...R(-0.26, -0.03), ...R(-0.28, -0.45), w, w, wood));
+    parts.push(cap(...R(-0.3, -0.45), ...R(0.32, -0.45), w * 1.3, w * 1.3, wood));
+    parts.push(cap(...R(-0.28, -0.45), ...R(-0.42, -1.1), w, w, wood), cap(...R(-0.14, -0.45), ...R(-0.26, -1.08), w, w, wood), cap(...R(-0.45, -1.12), ...R(-0.22, -1.1), w * 1.2, w * 1.2, wood));
+    parts.push(cap(...R(-0.34, -0.74), ...R(0.3, -0.7), w, w, wood), cap(...R(0.28, -0.45), ...R(0.3, -0.7), w, w, wood));
+    this.shape(parts, this.lighting, 0.3);
   }
   drawCandle(w, dim) {
     const H = this.H;
@@ -11111,6 +11344,226 @@ class HauntedHouse extends Canvas {
     const eye = look.style === "front" ? [0.15, 0.12, 0.1] : [1.2, 0.9, 0.15];
     this.disc(head[0] + d * 0.04 * S, head[1] - 0.005 * S, Math.max(0.018 * S, 0.5), eye[0], eye[1], eye[2], 1);
   }
+  drawSkeleton(p, S, ground = Infinity) {
+    const look = this.look;
+    const bone = look.bone;
+    const dark = look.night ? [0.01, 0.03, 0.03] : this.paint([0.04, 0.03, 0.03]);
+    const r = Math.max(0.026 * S, this.cells ? 0.6 * this.px : 0.35 * this.px);
+    const knob = r * 1.5;
+    const parts = [];
+    const buried = ground < Infinity;
+    const hip = [p.hip[0], Math.min(p.hip[1], ground)];
+    const above2 = (q) => q[1] < ground;
+    if (!buried) {
+      for (const [h, k, f] of [
+        [p.hip, p.knL, p.ftL],
+        [p.hip, p.knR, p.ftR]
+      ])
+        parts.push(cap(...h, ...k, r * 1.1, r, bone), cap(...k, ...f, r, r * 0.9, bone), ell(...k, knob, knob, 0, bone), ell(f[0] + (f[0] - k[0]) * 0.15, f[1], r * 2.4, r * 1.1, 0, bone));
+      parts.push(ell(...p.hip, 0.07 * S, 0.04 * S, 0, bone));
+    }
+    if (above2(p.chest)) {
+      const mid = [lerp(hip[0], p.chest[0], 0.62), lerp(hip[1], p.chest[1], 0.62)];
+      parts.push(cap(...hip, ...p.chest, r * 1.2, r * 1.2, bone));
+      if (above2(mid))
+        parts.push(ell(...mid, 0.075 * S, 0.1 * S, Math.atan2(p.chest[0] - hip[0], hip[1] - p.chest[1]), bone));
+    }
+    for (const [e, h] of [
+      [p.elL, p.haL],
+      [p.elR, p.haR]
+    ]) {
+      if (!above2(p.chest) && !above2(h))
+        continue;
+      parts.push(cap(...p.chest, ...e, r, r, bone), cap(...e, ...h, r, r * 0.9, bone), ell(...e, knob, knob, 0, bone), ell(...h, r * 1.8, r * 1.8, 0, bone));
+    }
+    if (parts.length)
+      this.shape(parts, this.lighting, 0.35);
+    if (above2(p.chest) && S > (this.cells ? 30 : 16) * this.px) {
+      const mid = [lerp(hip[0], p.chest[0], 0.62), lerp(hip[1], p.chest[1], 0.62)];
+      for (const dy of [-0.035, 0.02])
+        if (mid[1] + dy * S < ground)
+          this.ellipse(mid[0], mid[1] + dy * S, 0.055 * S, Math.max(0.008 * S, 0.4), dark[0], dark[1], dark[2], 0.8);
+    }
+    if (!above2([p.head[0], p.head[1] - 0.05 * S]))
+      return;
+    const [hx, hy] = p.head;
+    const d = p.dir;
+    this.shape([ell(hx, hy, 0.072 * S, 0.075 * S, p.tilt, bone), ell(hx + d * 0.03 * S, hy + (0.06 + p.jaw * 0.04) * S, 0.042 * S, 0.026 * S, p.tilt, bone)], this.lighting, 0.4);
+    const so = Math.max(0.018 * S, 0.5 * this.px);
+    for (const e of [-1, 1])
+      this.disc(hx + d * 0.025 * S + e * 0.028 * S, hy - 0.005 * S, so, dark[0], dark[1], dark[2], 1);
+    this.disc(hx + d * 0.04 * S, hy + 0.03 * S, so * 0.6, dark[0], dark[1], dark[2], 1);
+    if (!p.glow)
+      return;
+    const g = look.ghost;
+    for (const e of [-1, 1])
+      this.disc(hx + d * 0.025 * S + e * 0.028 * S, hy - 0.005 * S, so * 0.5, g[0] * 1.2, g[1] * 1.2, g[2] * 1.2, 1);
+  }
+  walkPose(x, y, S, dir, phase, dance, glow) {
+    const [ra, la] = stride(phase, 0, 0.5);
+    const [rb, lb] = stride(phase, 0.5, 0.5);
+    const bounce = Math.abs(Math.sin(phase * TAU)) * 0.06 * S;
+    const jig = Math.sin(this.time * 4) * dance;
+    const hip = [x + jig * 0.05 * S, y - 0.5 * S - bounce * (1 - dance) + Math.abs(jig) * 0.04 * S];
+    const chest = [hip[0] + dir * 0.035 * S * (1 - dance), hip[1] - 0.27 * S];
+    const head = [chest[0] + dir * 0.03 * S + jig * 0.03 * S, chest[1] - 0.15 * S + Math.sin(phase * TAU * 2) * 0.01 * S];
+    const leg = (reach, lift2, kick) => {
+      const foot = [x + lerp(dir * reach * 0.14 * S, kick * 0.12 * S, dance), y - lerp(lift2 * 0.08 * S, Math.max(0, kick) * 0.1 * S, dance)];
+      return [joint(hip[0], hip[1], foot[0], foot[1], 0.27 * S, 0.27 * S, -dir), foot];
+    };
+    const [knL, ftL] = leg(ra, la, -0.6 - jig * 0.4);
+    const [knR, ftR] = leg(rb, lb, 0.6 + jig * 0.4);
+    const arm = (swing, side) => {
+      const down = [chest[0] + Math.sin(swing) * 0.26 * S, chest[1] + Math.cos(swing) * 0.26 * S];
+      const up = [chest[0] + side * (0.16 + 0.05 * jig) * S, chest[1] - 0.24 * S];
+      const hand = [lerp(down[0], up[0], dance), lerp(down[1], up[1], dance)];
+      return [joint(chest[0], chest[1], hand[0], hand[1], 0.14 * S, 0.14 * S, dir * (dance > 0.5 ? -side : 1)), hand];
+    };
+    const [elL, haL] = arm(dir * (rb - 0.2) * 0.5, -1);
+    const [elR, haR] = arm(dir * (ra - 0.2) * 0.5, 1);
+    return { head, chest, hip, elL, haL, elR, haR, knL, ftL, knR, ftR, tilt: dir * 0.1 + jig * 0.15, jaw: 0.5 + 0.5 * Math.sin(this.time * 9), dir, glow };
+  }
+  slumpPose(x, y, S, dir) {
+    const hip = [x, y - 0.04 * S];
+    const chest = [x - dir * 0.1 * S, y - 0.31 * S];
+    const knL = [x + dir * 0.2 * S, y - 0.14 * S];
+    const knR = [x + dir * 0.25 * S, y - 0.06 * S];
+    return { head: [chest[0] + dir * 0.07 * S, chest[1] - 0.1 * S], chest, hip, elL: [x + dir * 0.02 * S, y - 0.2 * S], haL: knL, elR: [chest[0] + dir * 0.03 * S, y - 0.13 * S], haR: [x + dir * 0.12 * S, y], knL, ftL: [x + dir * 0.38 * S, y], knR, ftR: [x + dir * 0.5 * S, y], tilt: dir * 0.5, jaw: 1, dir, glow: false };
+  }
+  sitPose(x, y, S, dir) {
+    const hip = [x, y - 0.03 * S];
+    const chest = [x + dir * 0.02 * S, hip[1] - 0.27 * S];
+    const swing = (o) => Math.sin(this.time * 1.4 + o) * 0.35;
+    const knL = [x + dir * 0.16 * S, y];
+    const knR = [x + dir * 0.13 * S, y + 0.02 * S];
+    const foot = (k, o) => [k[0] + Math.sin(swing(o)) * 0.25 * S, k[1] + Math.cos(swing(o)) * 0.25 * S];
+    const tilt = Math.sin(this.time * 0.5) * 0.25;
+    return { head: [chest[0] + Math.sin(tilt) * 0.12 * S, chest[1] - 0.14 * S], chest, hip, elL: [x - 0.08 * S, y - 0.15 * S], haL: [x - 0.1 * S, y], elR: [x + dir * 0.1 * S, y - 0.15 * S], haR: [x + dir * 0.06 * S, y], knL, ftL: foot(knL, 0), knR, ftR: foot(knR, 1.9), tilt, jaw: 0.3 + 0.3 * Math.sin(this.time * 0.7), dir, glow: this.look.night };
+  }
+  drawPeeker() {
+    const { H, look } = this;
+    const { x, y } = this.open;
+    const t = this.time % 30;
+    const up = smoothstep(2, 5, t) * (1 - smoothstep(20, 23, t));
+    if (up <= 0.01)
+      return;
+    const S = 0.13 * H;
+    const lip = (y + 0.018) * H;
+    const gx = x * H;
+    const look2 = Math.sin(this.time * 0.6) * 0.04 * S;
+    const head = [gx + look2, lip - (0.03 + 0.12 * up) * S];
+    const chest = [gx, head[1] + 0.15 * S];
+    const p = { head, chest, hip: [gx, chest[1] + 0.27 * S], elL: [gx - 0.16 * S, lip - 0.02 * S], haL: [gx - 0.22 * S, lip - 0.01 * S], elR: [gx + 0.16 * S, lip - 0.02 * S], haR: [gx + 0.2 * S, lip - 0.005 * S], knL: [gx, lip], ftL: [gx, lip], knR: [gx, lip], ftR: [gx, lip], tilt: Math.sin(this.time * 0.6) * 0.2, jaw: 0.5 + 0.5 * Math.sin(this.time * 7), dir: 1, glow: look.night };
+    this.drawSkeleton(p, S, lip);
+    const mound = this.paint(look.dirt, 0.8);
+    this.polygon([[(x - 0.075) * H, lip - 0.002 * H], [(x + 0.07) * H, lip - 0.002 * H], [(x + 0.07) * H, lip + 0.006 * H], [(x - 0.075) * H, lip + 0.006 * H]], [mound[0] * 1.2, mound[1] * 1.2, mound[2] * 1.2]);
+  }
+  drawRising(x, y, S, dir, phase, sink, dance) {
+    const H = this.H;
+    const p = this.walkPose(x * H, y * H, S, dir, phase, dance, this.look.night);
+    if (sink <= 0.01)
+      return this.drawSkeleton(p, S);
+    const dy = sink * 0.75 * S;
+    const move = (q) => [q[0], q[1] + dy];
+    const reach = smoothstep(0.1, 0.6, sink);
+    const raised = { ...p, head: move(p.head), chest: move(p.chest), hip: move(p.hip), elL: move(p.elL), elR: move(p.elR) };
+    raised.haL = [lerp(move(p.haL)[0], raised.chest[0] - 0.12 * S, reach), lerp(move(p.haL)[1], raised.chest[1] - 0.3 * S, reach)];
+    raised.haR = [lerp(move(p.haR)[0], raised.chest[0] + 0.14 * S, reach), lerp(move(p.haR)[1], raised.chest[1] - 0.26 * S, reach)];
+    this.drawSkeleton(raised, S, y * H - 0.002 * H);
+    const mound = this.paint(this.look.dirt, 1.1);
+    this.ellipse(x * H, y * H, 0.2 * S, 0.035 * S, mound[0], mound[1], mound[2], 1);
+  }
+  stepWalkers(dt, cdt) {
+    for (const w of this.walkers) {
+      w.t -= dt;
+      if (w.mode === 1) {
+        const d = 0.11 * cdt;
+        w.x += w.dir * d;
+        w.phase += d / 0.045;
+        if (w.x > this.A - 0.1 * this.k)
+          w.dir = -1;
+        if (w.x < 0.1 * this.k)
+          w.dir = 1;
+      }
+      if (w.t > 0)
+        continue;
+      w.mode = (w.mode + 1) % 4;
+      w.t = [3, rand(25, 45), 3, rand(8, 20)][w.mode];
+      if (w.mode !== 0)
+        continue;
+      [w.x, w.y] = this.openSpot(0.12 * this.k, this.A - 0.12 * this.k, WALK0, WALK1 + 0.02);
+      w.dir = w.x < this.A / 2 ? 1 : -1;
+    }
+  }
+  drawWalkers() {
+    const H = this.H;
+    for (const w of this.walkers) {
+      if (w.mode === 3)
+        continue;
+      const sink = w.mode === 0 ? clamp(w.t / 3, 0, 1) : w.mode === 2 ? 1 - clamp(w.t / 3, 0, 1) : 0;
+      this.drawRising(w.x, w.y, 0.13 * H * (0.85 + 0.3 * smoothstep(WALK0, 0.98, w.y)), w.dir, w.phase, sink, 0);
+    }
+  }
+  stepDog(cdt) {
+    const g = this.dog;
+    if (this.activity === "calm")
+      return;
+    const d = g.target - g.x;
+    if (g.wait > 0 || Math.abs(d) < 0.005) {
+      g.wait -= cdt;
+      stepGait(g.gait, 0, cdt, g.dir);
+      if (g.wait > 0)
+        return;
+      g.target = clamp(g.x + rand(0.25, 0.6) * (Math.random() < 0.5 ? -1 : 1), 0.1 * this.k, this.A - 0.1 * this.k);
+      g.wait = 0;
+      return;
+    }
+    g.dir = Math.sign(d);
+    const step = Math.min(Math.abs(d), 0.13 * cdt);
+    g.x += g.dir * step;
+    stepGait(g.gait, step / 0.04, cdt, g.dir);
+    if (Math.abs(g.target - g.x) < 0.005)
+      g.wait = rand(1.2, 3);
+  }
+  drawDog() {
+    const { H, look } = this;
+    const g = this.dog;
+    const S = 0.085 * H;
+    const P = body(g.x * H, 0.985 * H, S, g.gait.turn);
+    const bone = look.bone;
+    const r = Math.max(0.035, (this.cells ? 0.6 : 0.35) / S);
+    const sit = 1 - g.gait.go;
+    const legs = { fore: 0.24, hind: 0.24, top: 0.42, w: 0.06, a: 0.21, b: 0.21, reach: 0.14, lift: 0.08, r: [r * 1.2, r, r], color: bone };
+    const wag = Math.sin(this.time * (8 + 6 * sit)) * 0.25;
+    const spine = (t) => P(lerp(-0.26, 0.26, t), -0.46 + 0.04 * Math.sin(t * Math.PI) + sit * 0.12 * (1 - t));
+    const parts = [...quadruped(P, g.gait, true, legs), ...quadruped(P, g.gait, false, legs), ...chain(spine, 4, r * S * 1.3, r * S * 1.2, bone)];
+    for (let i = 0;i < 4; i++) {
+      const [x, y] = spine(0.45 + i * 0.13);
+      parts.push(cap(x, y, x - P.along * 0.01 * S, y + (0.15 - i * 0.02) * S, r * S, r * S * 0.8, bone));
+    }
+    parts.push(ell(...P(-0.26, -0.42 + sit * 0.1), 0.06 * S, 0.05 * S, 0, bone));
+    const neck = P(0.4, -0.66);
+    parts.push(cap(...spine(1), ...neck, r * S * 1.2, r * S, bone), ell(...P(0.48, -0.64), Math.max(P.len(0.1, 0.05), 0.05 * S), 0.055 * S, 0, bone), cap(...P(0.5, -0.62), ...P(0.62, -0.6), 0.03 * S, 0.025 * S, bone));
+    parts.push(...chain((t) => P(-0.28 - 0.18 * t, -0.48 - 0.2 * t + wag * t * t), 4, r * S, r * S * 0.7, bone));
+    this.shape(parts, this.lighting, 0.35);
+    const dark = look.night ? [0.01, 0.03, 0.03] : this.paint([0.04, 0.03, 0.03]);
+    this.disc(...P(0.5, -0.66), Math.max(0.018 * S, 0.5 * this.px), dark[0], dark[1], dark[2], 1);
+  }
+  drawPops() {
+    const { H, look } = this;
+    for (const p of this.pops) {
+      const up = smoothstep(0, 0.8, p.t) * (1 - smoothstep(3.5, 4.5, p.t));
+      if (up <= 0.01)
+        continue;
+      const S = 0.16 * H;
+      const ground = p.y * H;
+      const head = [p.x * H, ground - (0.02 + 0.09 * up) * S];
+      const q = { head, chest: [head[0], ground + S], hip: [head[0], ground + S], elL: head, haL: [head[0], ground + S], elR: head, haR: [head[0], ground + S], knL: head, ftL: head, knR: head, ftR: head, tilt: Math.sin(p.t * 5) * 0.2, jaw: 0.5 + 0.5 * Math.sin(p.t * 14), dir: p.x < this.A / 2 ? 1 : -1, glow: look.night };
+      this.drawSkeleton(q, S, ground);
+      const mound = this.paint(look.dirt, 1.1);
+      this.ellipse(p.x * H, ground, 0.06 * S * 1.6, 0.02 * S * 1.6, mound[0], mound[1], mound[2], 1);
+    }
+  }
   stepLightning(dt) {
     const f = this.flash;
     if (f.t >= 0) {
@@ -11217,6 +11670,8 @@ class HauntedHouse extends Canvas {
       const step = Math.sin(this.time * 2 + i * 0.3) * 0.02 * dance;
       this.drawZombie(x + step, 0.97, i === 1 ? -1 : 1, this.time * 2, dance, rise);
     }
+    for (const [i, x] of [this.hx - 0.38 * S, this.hx + 0.38 * S].entries())
+      this.drawRising(x, 0.975, 0.14 * this.H, i ? -1 : 1, this.time * 2, 1 - rise, dance);
   }
   unsky(x0, y0, x1, y1) {
     restoreFore(this.hdr, this.background, this.fore, this.W, x0, y0, x1, Math.min(this.H - 1, y1));
@@ -16413,10 +16868,10 @@ class Pipes extends Canvas {
     this.supersample = 1;
     this.activity = settings.activity;
     this.look = LOOKS13[settings.time];
-    this.speed = { calm: 0.8, lively: 1.5, teeming: 2.8 }[this.activity];
+    this.speed = { calm: 0.2, lively: 0.375, teeming: 0.7 }[this.activity];
     this.count = { calm: 1, lively: 3, teeming: 6 }[this.activity];
     this.bends = { calm: 0, lively: 0.1, teeming: 0.35 }[this.activity];
-    this.limit = { calm: 300, lively: 200, teeming: 130 }[this.activity];
+    this.limit = { calm: 1200, lively: 800, teeming: 520 }[this.activity];
     this.waits = Array.from({ length: this.count }, (_, i) => i === 0 ? 0 : rand(1, 4) * i);
   }
   step(dt) {
@@ -16505,7 +16960,7 @@ class Pipes extends Canvas {
     this.gx = Math.min(GXM, Math.max(4, Math.round(this.A * GY)));
     if (!this.grown) {
       this.grown = true;
-      for (let t = { calm: 100, lively: 30, teeming: 14 }[this.activity];t > 0; t -= 0.05)
+      for (let t = { calm: 400, lively: 120, teeming: 56 }[this.activity];t > 0; t -= 0.05)
         this.grow(0.05);
     }
     for (let y = 0;y < H; y++) {
