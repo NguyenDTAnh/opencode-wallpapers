@@ -27,7 +27,7 @@ const CALM_CYCLE = [CUBE, BALLS, PILLOW]
 const MORPH = 0.45
 // The egg, a starfield warp, lasts this many scene seconds.
 const WARP = 6
-const WARP_STARS = 140
+const WARP_STARS = 220
 // Teeming's phosphor trail: how many glows it leaves behind each object.
 const TRAIL = 8
 // One saturated color per cube face (+x, -x, +y, -y, +z, -z), and the star's spikes.
@@ -36,7 +36,7 @@ const PATCHES: RGB[] = [
   [0.8, 0.64, 0.04],
   [0.04, 0.6, 0.85],
   [0.1, 0.72, 0.1],
-  [0.09, 0.14, 0.9],
+  [0.14, 0.24, 1],
   [0.85, 0.3, 0.03],
 ]
 const SPIKE: RGB = [0.85, 0.035, 0.6]
@@ -164,6 +164,7 @@ class FlowerBox extends Canvas {
   private readonly look: Look
   private blobs: Blob[] = []
   private burst = 0
+  private placed = false
   private warp = { wait: eggWait() * TIME_SCALE, t: -1, stars: [] as { a: number; z: number; tint: RGB }[] }
   // Per vertex: model position, view position, normal, color and occlusion; and the screen position.
   private readonly model = new Float32Array(VERTS * 3)
@@ -191,8 +192,8 @@ class FlowerBox extends Canvas {
     const heading = rand(0, TAU)
     const spin = { calm: 0.22, lively: 0.32, teeming: 0.35 }[this.activity]
     return {
-      x: rand(0.3, 1.5),
-      y: rand(0.3, 0.7),
+      x: 0,
+      y: 0,
       vx: Math.cos(heading) * speed,
       vy: Math.sin(heading) * speed,
       kx: 0,
@@ -273,11 +274,12 @@ class FlowerBox extends Canvas {
     if (!main || this.blobs.length > 4) return
     for (const side of [-1, 1]) {
       const b = this.blob(main.r * 0.45, 1, 9)
-      b.x = main.x
+      b.x = main.x + side * main.r * 0.5
       b.y = main.y
       b.kx = side * 0.12
       b.ky = rand(-0.06, 0.06)
-      b.z = main.z + side * 0.5
+      // They come out from behind it.
+      b.z = main.z - 0.5
       this.blobs.push(b)
     }
   }
@@ -303,7 +305,15 @@ class FlowerBox extends Canvas {
   }
 
   protected override layout() {
-    const { W, H, hdr, look } = this
+    const { W, H, A, hdr, look } = this
+    // Spread the objects over the screen once its shape is known, and keep them on it after a resize.
+    for (const b of this.blobs) {
+      const m = b.r * 1.15
+      if (!this.placed) [b.x, b.y] = this.openSpot(m, Math.max(m, A - m), m, 1 - m)
+      b.x = clamp(b.x, m, Math.max(m, A - m))
+      b.y = clamp(b.y, m, 1 - m)
+    }
+    this.placed = true
     const stops = look.sky
     for (let y = 0; y < H; y++) {
       const v = (y + 0.5) / H
@@ -399,14 +409,14 @@ class FlowerBox extends Canvas {
     const reach = Math.hypot(W, H) * 0.08
     for (const s of w.stars) {
       const d = reach / s.z
-      const k = fade * smoothstep(1, 0.6, s.z) * 0.9
-      for (let i = 0; i < 3; i++) {
-        const di = d * (1 - i * 0.06 * (1 - s.z))
+      const k = fade * smoothstep(1, 0.6, s.z) * 1.6
+      for (let i = 0; i < 4; i++) {
+        const di = d * (1 - i * 0.08 * (1 - s.z))
         const x = cx + Math.cos(s.a) * di
         const y = cy + Math.sin(s.a) * di * 0.9
         if (x < 0 || y < 0 || x >= W - 1 || y >= H - 1) continue
         const t = s.tint
-        this.splat(x, y, t[0] * k * (1 - i * 0.3), t[1] * k * (1 - i * 0.3), t[2] * k * (1 - i * 0.3))
+        this.splat(x, y, t[0] * k * (1 - i * 0.22), t[1] * k * (1 - i * 0.22), t[2] * k * (1 - i * 0.22))
       }
     }
   }
@@ -624,7 +634,7 @@ function raster(hdr: Float32Array, W: number, screen: Float32Array, normals: Flo
         ny *= nl
         nz *= nl
         const occ = wa * occlusion[a / 3] + wb * occlusion[b / 3] + wc * occlusion[c / 3]
-        const diffuse = Math.max(0, nx * lx + ny * ly + nz * lz)
+        const diffuse = Math.max(0, (nx * lx + ny * ly + nz * lz + 0.3) / 1.3)
         const sp0 = Math.max(0, nx * hx + ny * hy + nz * hz)
         const sp2 = sp0 * sp0
         const sp8 = sp2 * sp2 * sp2 * sp2
