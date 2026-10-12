@@ -27,6 +27,7 @@ export const meadow: Wallpaper = {
   id: "meadow", // what /wallpaper takes: lowercase letters, digits and dashes
   name: "Meadow",
   description: "Rolling hills with a tree under drifting clouds",
+  collection: "Landscapes", // the menu's group; see Collections and fixed looks
   activity: { calm: "…", lively: "…", teeming: "…" }, // what each level shows, for the menu
   scrim: { day: [top, middle, bottom], sunset: […], night: […] }, // see Scrim
   create: (settings) => new Meadow(settings), // activity and time, and optionally season and weather
@@ -240,6 +241,17 @@ single `node()`s into its coarse grid, then `apply()` it once after the things i
 areas and dims itself behind the middle of the screen; `firelight()` there gives a slow flicker. Keep the area behind
 text no brighter or busier than before, and keep flicker slow.
 
+## Collections and fixed looks
+
+`collection` puts a wallpaper in one of the menu's groups: `Landscapes`, `Akira`, `Classics`, or a name of your own
+for a new group. The menu's Collection row picks one, and shuffle stays within it. Without one, a wallpaper joins
+Landscapes, or Classics if it has a fixed look.
+
+A wallpaper that only makes sense at one time of day, such as an old screensaver, sets `fixedTime: "night"` (or `day`
+or `sunset`). It then always gets that time and no season, whatever the settings, the menu hides its time and season
+rows, auto's crossfades pass it by, and the README and dev tools show it at that one time (`screenshots/<id>.png`).
+`scrim` still needs all three times, though only the fixed one is used.
+
 ## Seasons and weather
 
 `settings.season` is spring, summer, autumn or winter, or missing for the classic look. Change what the season would
@@ -381,8 +393,8 @@ bun dev/gif.ts all                                # re-renders the README's GIFs
 1. Put it in `wallpapers/<id>.ts` as a named export, and add it to `wallpapers/index.ts`.
 2. Run `bun run typecheck` and `bun dev/check.ts <id>`, and look at `dev/snap.ts` and `dev/preview.ts` output at every
    time of day.
-3. Add it to the README's wallpaper list, gallery and GIF grid. Add its best-looking time of day to `BEST` in
-   `dev/gif.ts`. CI publishes its screenshots once it's merged; a maintainer adds its GIF (see below).
+3. Add it to its collection's line in the README's wallpaper list and to that collection's gallery. Unless it has a
+   fixed time, add its best-looking time of day to `BEST` in `dev/gif.ts`. CI publishes its screenshots once it's merged; a maintainer adds its GIF (see below).
 
 ## README images
 
