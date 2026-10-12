@@ -1,7 +1,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { RGBA, TextAttributes } from "@opentui/core"
 import { For, createEffect, createSignal, onCleanup } from "solid-js"
-import { ACTIVITIES, BRIGHTNESSES, POWERS, SEASONS, TIMES, WEATHERS, createEngine, parseEvents, type Activity, type AgentEvent, type Brightness, type Power, type Season, type Time, type Weather } from "./src/engine"
+import { ACTIVITIES, BRIGHTNESSES, POWERS, SEASONS, TIMES, WEATHERS, collectionOf, createEngine, parseEvents, type Activity, type AgentEvent, type Brightness, type Power, type Season, type Time, type Weather } from "./src/engine"
 import { REFRESH, coordinatesOf, forecast, type Forecast } from "./src/forecast"
 import { loadWallpapers } from "./src/load"
 import { WALLPAPERS } from "./wallpapers"
@@ -15,6 +15,7 @@ export default Plugin.define({
     const external = await loadWallpapers(context.options.wallpapers, WALLPAPERS)
     if (external.skipped.length) context.ui.toast.show({ message: `Skipped wallpapers:\n${external.skipped.join("\n")}`, variant: "error" })
     const wallpapers = [...WALLPAPERS, ...external.wallpapers]
+    const collections = [...new Set(wallpapers.map(collectionOf))]
     const engine = createEngine(context, { dump: process.env.WALLPAPER_DUMP, dumpFade: process.env.WALLPAPER_DUMP_FADE })
     // Environment overrides for development; they win over the stored choice.
     const pinned = process.env.WALLPAPER
@@ -37,25 +38,28 @@ export default Plugin.define({
       else draft.wallpaper = id
       draft.changed = { ...draft.changed, [scope(draft)]: Date.now() }
     }
-    // A project without its own change time yet counts from the global one.
+    // A project without its own change time or collection yet counts from the global one.
     const due = (state: Stored) => Date.now() - (state.changed?.[scope(state)] ?? state.changed?.[""] ?? 0) >= HOUR
-    const other = (id: string) => {
-      const others = wallpapers.filter((w) => w.id !== id)
-      return others[Math.floor(Math.random() * others.length)].id
+    const collection = (state: Stored) => collections.find((c) => c === (state.collections?.[scope(state)] ?? state.collections?.[""])) ?? "all"
+    const inCollection = (state: Stored) => wallpapers.filter((w) => collection(state) === "all" || collectionOf(w) === collection(state))
+    // Shuffle stays within the chosen collection, and keeps the wallpaper when it is the collection's only one.
+    const other = (state: Stored, id: string) => {
+      const others = inCollection(state).filter((w) => w.id !== id)
+      return others.length ? others[Math.floor(Math.random() * others.length)].id : id
     }
     // Switches to a different wallpaper once an hour has passed. The check repeats under the storage lock, so several
     // running OpenCodes shuffle once between them.
     const shuffle = () =>
       update((draft) => {
         const id = current(draft)
-        if (id && due(draft)) choose(draft, other(id))
+        if (id && due(draft)) choose(draft, other(draft, id))
       })
     // Every-session shuffle runs once per OpenCode start; memory storage outlives plugin hot reloads. It picks before
     // the first frame and shows the pick while it saves, so the previous wallpaper never appears.
     const [session, mark] = context.storage.memory("session", { initial: { shuffled: false } })
     const [picked, setPicked] = createSignal<string>()
     if (!session.shuffled && shuffleSetting() === "session" && current(stored)) {
-      const id = other(current(stored))
+      const id = other(stored, current(stored))
       setPicked(id)
       void update((draft) => choose(draft, id)).finally(() => setPicked(undefined))
     }
@@ -63,6 +67,8 @@ export default Plugin.define({
       draft.shuffled = true
     })
     const shown = () => picked() ?? current(stored)
+    // Wallpapers with one look ignore the time and season settings, so the menu hides those rows for them.
+    const fixed = () => Boolean(wallpapers.find((w) => w.id === shown())?.fixedTime)
     // Auto follows the local clock, checked once a minute. WALLPAPER_CLOCK=HH:MM starts the clock there, for trying
     // auto's transitions.
     const [hour, minute] = (process.env.WALLPAPER_CLOCK ?? "").split(":").map(Number)
@@ -120,6 +126,17 @@ export default Plugin.define({
         await update((draft) => choose(draft, ""))
         return { message: "Wallpaper off" }
       }
+      if (arg.startsWith("collection ")) {
+        const name = arg.slice("collection ".length).trim()
+        const chosen = name === "all" ? "all" : collections.find((c) => c.toLowerCase() === name)
+        if (!chosen) return { message: `No collection "${name}". Available: all, ${collections.map((c) => c.toLowerCase()).join(", ")}`, error: true }
+        await update((draft) => {
+          draft.collections = { ...draft.collections, [scope(draft)]: chosen }
+          const members = inCollection(draft)
+          if (current(draft) && !members.some((w) => w.id === current(draft))) choose(draft, members[0].id)
+        })
+        return { message: chosen === "all" ? "Wallpapers from every collection" : `Wallpaper collection: ${chosen}` }
+      }
       const level = ACTIVITIES.find((a) => a === arg)
       if (level) {
         await update((draft) => {
@@ -172,7 +189,11 @@ export default Plugin.define({
       }
       const wallpaper = wallpapers.find((w) => w.id === arg)
       if (!wallpaper) return { message: `No wallpaper "${arg}". Available: ${wallpapers.map((w) => w.id).join(", ")}`, error: true }
-      await update((draft) => choose(draft, arg))
+      // A wallpaper from outside the chosen collection switches to its collection.
+      await update((draft) => {
+        if (!inCollection(draft).includes(wallpaper)) draft.collections = { ...draft.collections, [scope(draft)]: collectionOf(wallpaper) }
+        choose(draft, arg)
+      })
       return { message: `${wallpaper.name} wallpaper on` }
     }
     const run = async (input?: string) => {
@@ -185,8 +206,22 @@ export default Plugin.define({
     // keys change the highlighted row in place, and the dialog stays open until Escape.
     const rows: Row[] = [
       {
+        title: "Collection",
+        values: () => ["all", ...collections].map((c) => `collection ${c}`),
+        value: () => `collection ${collection(stored)}`,
+        label: (v) => (v === "collection all" ? "All" : v.slice(11)),
+        describe: (v) =>
+          v === "collection all"
+            ? "Every wallpaper"
+            : wallpapers
+                .filter((w) => collectionOf(w) === v.slice(11))
+                .map((w) => w.name)
+                .join(", "),
+        set: (v) => apply(v.toLowerCase()),
+      },
+      {
         title: "Wallpaper",
-        values: () => ["off", ...wallpapers.map((w) => w.id)],
+        values: () => ["off", ...inCollection(stored).map((w) => w.id)],
         value: () => shown() || "off",
         label: (v) => wallpapers.find((w) => w.id === v)?.name ?? "Off",
         describe: (v) => wallpapers.find((w) => w.id === v)?.description ?? "No wallpaper",
@@ -202,6 +237,7 @@ export default Plugin.define({
       },
       {
         title: "Time of day",
+        hidden: fixed,
         values: () => ["auto", ...TIMES],
         value: timeSetting,
         label: (v) => (v === "auto" ? `Auto (${timeAt(now())})` : capitalize(v)),
@@ -210,6 +246,7 @@ export default Plugin.define({
       },
       {
         title: "Season",
+        hidden: fixed,
         values: () => ["season auto", ...SEASONS.map((s) => `season ${s}`)],
         value: () => `season ${seasonSetting()}`,
         label: (v) => (v === "season auto" ? `Auto (${seasonAt(now(), south())})` : capitalize(v.slice(7))),
@@ -221,6 +258,7 @@ export default Plugin.define({
       },
       {
         title: "Weather",
+        hidden: fixed,
         values: () => ["off", "local", "clear", "rain", "snow", "fog"].map((w) => `weather ${w}`),
         value: () => `weather ${weatherSetting()}`,
         label: (v) => (v === "weather local" ? `Local (${location() ? (local()?.weather ?? "checking") : "no location"})` : capitalize(v.slice(8))),
@@ -288,11 +326,11 @@ export default Plugin.define({
     ]
     const Picker = () => {
       const theme = context.theme.surface("dialog")
-      const [selected, setSelected] = createSignal(0)
+      const visible = () => rows.filter((row) => !row.hidden?.())
+      const [selected, setSelected] = createSignal(rows[0])
       let saving = false
-      const change = async (index: number, direction: number) => {
+      const change = async (row: Row, direction: number) => {
         if (saving) return
-        const row = rows[index]
         const values = row.values()
         const next = values[(values.indexOf(row.value()) + direction + values.length) % values.length]
         saving = true
@@ -301,7 +339,8 @@ export default Plugin.define({
         })
       }
       const move = (direction: number) => {
-        setSelected((i) => (i + direction + rows.length) % rows.length)
+        const list = visible()
+        setSelected(list[(list.indexOf(selected()) + direction + list.length) % list.length])
       }
       context.keymap.layer(() => ({
         mode: "modal",
@@ -326,9 +365,9 @@ export default Plugin.define({
             </text>
           </box>
           <box>
-            <For each={rows}>
-              {(row, index) => {
-                const active = () => selected() === index()
+            <For each={visible()}>
+              {(row) => {
+                const active = () => selected() === row
                 const fg = () => (active() ? theme.text.action.primary.focused : theme.text.base)
                 return (
                   <box
@@ -337,8 +376,8 @@ export default Plugin.define({
                     paddingRight={4}
                     backgroundColor={active() ? theme.background.action.primary.focused : RGBA.fromInts(0, 0, 0, 0)}
                     onMouseUp={() => {
-                      setSelected(index())
-                      void change(index(), 1)
+                      setSelected(row)
+                      void change(row, 1)
                     }}
                   >
                     <text flexGrow={1} fg={fg()} attributes={active() ? TextAttributes.BOLD : undefined}>
@@ -352,7 +391,7 @@ export default Plugin.define({
           </box>
           <box paddingLeft={4} paddingRight={4}>
             <text fg={theme.text.muted} wrapMode="word">
-              {rows[selected()].describe(rows[selected()].value())}
+              {selected().describe(selected().value())}
             </text>
           </box>
           <box paddingLeft={4} flexDirection="row" gap={2}>
@@ -423,7 +462,7 @@ export default Plugin.define({
               id: "wallpapers.choose",
               title: "Choose wallpaper",
               description:
-                "Animated scene behind the UI. Args: wallpaper id, off, calm, lively, teeming, day, sunset, night, auto, a season, a weather, location <place>, subtle, normal, vivid, saver, smooth",
+                "Animated scene behind the UI. Args: wallpaper id, off, collection <name>, calm, lively, teeming, day, sunset, night, auto, a season, a weather, location <place>, subtle, normal, vivid, saver, smooth",
               group: "Wallpapers",
               palette: true,
               slash: { name: "wallpaper", arguments: true },
@@ -511,6 +550,8 @@ interface Stored {
   projects?: Record<string, string>
   // When the wallpaper last changed, by scope, for hourly shuffle.
   changed?: Record<string, number>
+  // The collection the menu and shuffle pick from, by scope; missing is all.
+  collections?: Record<string, string>
 }
 
 // A setting in the picker: its values in order, how to show each, a line explaining the current one, and how to save one.
@@ -521,4 +562,5 @@ interface Row {
   label: (value: string) => string
   describe: (value: string) => string
   set: (value: string) => Promise<unknown>
+  hidden?: () => boolean
 }

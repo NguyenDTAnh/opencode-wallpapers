@@ -799,6 +799,7 @@ export const jungle: Wallpaper = {
   id: "jungle",
   name: "Jungle",
   description: "A misty rainforest with a waterfall, light through the canopy, and a toucan flying by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Trees, vines, a waterfall and swaying leaves",
     lively: "Adds a swinging spider monkey and blue morpho butterflies",

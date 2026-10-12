@@ -14,8 +14,8 @@ const SPEED = 3
 const FPS = 12.5
 const START = 45
 const FADE = 1.5
-// The time of day each wallpaper looks best at in the README; others use day.
-const BEST: Record<string, Time> = { ocean: "day", desert: "sunset", jungle: "day", space: "sunset", farm: "sunset", tundra: "night", beach: "sunset", city: "night", zen: "sunset", prehistoric: "sunset", rider: "day", megacity: "night", dome: "night", "haunted-house": "night", flowerbox: "night" }
+// The time of day each wallpaper with times of day looks best at in the README; others use day.
+const BEST: Record<string, Time> = { ocean: "day", desert: "sunset", jungle: "day", space: "sunset", farm: "sunset", tundra: "night", beach: "sunset", city: "night", zen: "sunset", prehistoric: "sunset", "haunted-house": "night" }
 // Wallpapers in the hero GIF at the top of the README, each shown for HERO_SECONDS.
 const HERO = ["beach", "tundra", "jungle", "desert", "space"]
 const HERO_SECONDS = 2
@@ -31,20 +31,24 @@ mkdirSync("dev/out", { recursive: true })
 if (args[0] === "all") {
   assets()
   for (const wallpaper of WALLPAPERS) {
-    const settings = { activity: "teeming" as const, time: BEST[wallpaper.id] ?? "day" }
+    const settings = { activity: "teeming" as const, time: best(wallpaper) }
     await write(`screenshots/${wallpaper.id}.gif`, [{ wallpaper, settings, seconds: 8 }], 480, 268, FADE)
   }
   const hero = HERO.flatMap((id) => WALLPAPERS.filter((w) => w.id === id))
-  await write("screenshots/hero.gif", hero.map((wallpaper) => ({ wallpaper, settings: { activity: "teeming", time: BEST[wallpaper.id] ?? "day" }, seconds: HERO_SECONDS })), 720, 400, 0)
+  await write("screenshots/hero.gif", hero.map((wallpaper) => ({ wallpaper, settings: { activity: "teeming", time: best(wallpaper) }, seconds: HERO_SECONDS })), 720, 400, 0)
 }
 if (args[0] !== "all") {
   const wallpaper = wallpapers.find((w) => w.id === args[0])
   if (!wallpaper) throw new Error(`usage: bun dev/gif.ts <all|${wallpapers.map((w) => w.id).join("|")}> [activity] [time] [WxH] [seconds]`)
   const activity = ACTIVITIES.find((a) => args.includes(a)) ?? "teeming"
-  const time = TIMES.find((t) => args.includes(t)) ?? BEST[wallpaper.id] ?? "day"
+  const time = wallpaper.fixedTime ?? TIMES.find((t) => args.includes(t)) ?? best(wallpaper)
   const size = (args.find((arg) => /^\d+x\d+$/.test(arg)) ?? "480x268").split("x").map(Number)
   const seconds = Number(args.find((arg) => /^[\d.]+$/.test(arg)) ?? 8)
   await write(`dev/out/${wallpaper.id}-${activity}-${time}.gif`, [{ wallpaper, settings: { activity, time }, seconds }], size[0], size[1], FADE)
+}
+
+function best(wallpaper: Wallpaper) {
+  return wallpaper.fixedTime ?? BEST[wallpaper.id] ?? "day"
 }
 
 async function write(path: string, shots: Shot[], W: number, H: number, fadeSeconds: number) {

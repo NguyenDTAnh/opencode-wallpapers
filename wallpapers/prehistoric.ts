@@ -1224,6 +1224,7 @@ export const prehistoric: Wallpaper = {
   id: "prehistoric",
   name: "Prehistoric",
   description: "A smoking volcano over ferns and cycads, with a T. rex stomping by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Volcano, smoke, ferns and cycads",
     lively: "Adds a browsing sauropod and circling pterosaurs",

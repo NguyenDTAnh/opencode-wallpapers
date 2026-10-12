@@ -1860,6 +1860,7 @@ export const hauntedHouse: Wallpaper = {
   id: "haunted-house",
   name: "Haunted House",
   description: "A crooked Victorian haunted house on a rise above a foggy graveyard under a huge moon, with a witch flying by now and then",
+  collection: "Landscapes",
   activity: {
     calm: "The candle and jack-o'-lanterns flicker, fog creeps, a bat or two flits and the swing sways",
     lively: "Adds bats pouring from the turret, ghosts drifting by and a ghoul peeking out from behind a gravestone",

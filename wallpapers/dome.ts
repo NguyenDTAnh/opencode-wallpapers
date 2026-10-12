@@ -751,6 +751,8 @@ export const dome: Wallpaper = {
   id: "dome",
   name: "Dome",
   description: "A vast black energy dome over a ruined city, its foot blazing with light under a ring of clouds, with a gunship crossing now and then",
+  collection: "Akira",
+  fixedTime: "night",
   activity: {
     calm: "The dome, its slowly breathing light and the creeping cloud ring",
     lively: "Light pulses out along the streets, rubble floats up and the sky's ripples spread",

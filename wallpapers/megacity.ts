@@ -1279,6 +1279,8 @@ export const megacity: Wallpaper = {
   id: "megacity",
   name: "Megacity",
   description: "A canyon of towers over a neon avenue, where motorbikes ride off into the haze trailing red light",
+  collection: "Akira",
+  fixedTime: "night",
   activity: {
     calm: "The glowing city, windows coming and going, and a distant bike now and then",
     lively: "Adds bikes riding up the avenue with their light trails, and searchlights sweeping the sky",

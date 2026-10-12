@@ -816,6 +816,7 @@ export const tundra: Wallpaper = {
   id: "tundra",
   name: "Tundra",
   description: "Snowy peaks, a frozen lake, igloos and a snowman under falling snow, with a snowy owl now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Peaks, igloos, a snowman and falling snow",
     lively: "Adds waddling penguins and an arctic fox",

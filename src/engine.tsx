@@ -6,7 +6,7 @@ import { watchEgg } from "./egg"
 import { lerp, smoothstep, type RGB } from "./math"
 import { OCTANTS } from "./octants"
 import { FIRST, prepareEdges, refineEdge } from "./smooth"
-import { AGENT_EVENTS, type AgentEvent, type Brightness, type Power, type Scene, type Scrim, type Settings, type TextMap, type Wallpaper } from "./wallpaper"
+import { AGENT_EVENTS, settingsFor, type AgentEvent, type Brightness, type Power, type Scene, type Scrim, type Settings, type TextMap, type Wallpaper } from "./wallpaper"
 
 export {
   ACTIVITIES,
@@ -16,6 +16,8 @@ export {
   SEASONS,
   TIMES,
   WEATHERS,
+  collectionOf,
+  settingsFor,
   type Activity,
   type AgentEvent,
   type Brightness,
@@ -722,7 +724,8 @@ function createLayer(renderer: Context["renderer"], draw: (buffer: OptimizedBuff
 
 export interface Engine {
   readonly wallpaper: Wallpaper | undefined
-  // While running, the old scene crossfades into the new one over `fade` seconds.
+  // While running, the old scene crossfades into the new one over `fade` seconds. A wallpaper with a fixed time gets
+  // it in place of settings' time and season (see settingsFor).
   start(wallpaper: Wallpaper, settings: Settings, fade?: number): void
   stop(): void
   react(event: AgentEvent): void
@@ -1318,7 +1321,8 @@ export function createEngine(
     get wallpaper() {
       return wallpaper
     },
-    start(next, chosen, seconds = FADE) {
+    start(next, requested, seconds = FADE) {
+      const chosen = settingsFor(next, requested)
       const shows = (w?: Wallpaper, s?: Settings) => w === next && s?.activity === chosen.activity && s.time === chosen.time && s.season === chosen.season && s.weather === chosen.weather
       // Only brightness changed: restyle the running scene.
       if (shows(wallpaper, settings)) {
