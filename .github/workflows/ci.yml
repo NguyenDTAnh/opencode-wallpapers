@@ -109,3 +109,36 @@ jobs:
           git diff --cached --quiet && exit 0
           git -c user.name="github-actions[bot]" -c user.email="41898273+github-actions[bot]@users.noreply.github.com" commit -m "Update screenshots for ${GITHUB_SHA::7}"
           git push
+
+  # Updates the release branch that `opencode plugin add vaprdev/opencode-wallpapers#release` installs: the built plugin
+  # with a package.json that has no build scripts, so installing doesn't build it, and no sources, dev tools or images.
+  release:
+    needs: [build, check]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: release
+          path: release
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - working-directory: release
+        run: |
+          git rm -rq --ignore-unmatch .
+          cp -R ../dist ../README.md ../LICENSE ../CHANGELOG.md .
+          jq 'del(.scripts, .devDependencies)' ../package.json > package.json
+          git add -A
+          git diff --cached --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898273+github-actions[bot]@users.noreply.github.com" commit -m "Release ${GITHUB_SHA::7}"
+          git push

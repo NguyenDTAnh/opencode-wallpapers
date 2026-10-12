@@ -8,17 +8,18 @@ Animated wallpapers for the OpenCode terminal UI: slow, quiet scenes behind ever
 
 ## Install
 
-Requires OpenCode 2. Clone into OpenCode's plugin directory and restart OpenCode:
+Requires OpenCode 2:
 
 ```sh
-git clone --depth 1 https://github.com/vaprdev/opencode-wallpapers.git ~/.config/opencode/plugins/wallpapers
+opencode plugin add vaprdev/opencode-wallpapers#release
 ```
 
-Update with `git pull`.
+Update with `opencode plugin update`. Restart OpenCode after either. If you installed it with `git clone` before, delete
+`~/.config/opencode/plugins/wallpapers`.
 
 ## Use
 
-Type `/wallpaper` to open the menu. ↑/↓ picks a setting, Enter or ←/→ changes it, Escape closes it.
+Type `/wallpaper` to open the menu and pick a wallpaper; none shows until you do. ↑/↓ picks a setting, Enter or ←/→ changes it, Escape closes it.
 
 ![The wallpaper menu](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/menu.png)
 

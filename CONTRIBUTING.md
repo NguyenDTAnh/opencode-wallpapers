@@ -401,6 +401,13 @@ ignored on `main`) the first time they need it.
 
   Push after the change they show is on `main`. A new file needs `git -C screenshots add` first.
 
+## Releases
+
+`opencode plugin add vaprdev/opencode-wallpapers#release` installs the `release` branch, which CI rebuilds from every
+push to `main` once the checks pass: `dist/`, the README, the license, the changelog and a `package.json` without
+scripts, so installing doesn't build anything. Users get it with `opencode plugin update`. To run your checkout in
+OpenCode instead, put its absolute path in `plugins` in `~/.config/opencode/cli.json`.
+
 ## Your own package
 
 A wallpaper package imports the API from `opencode-wallpapers/api`, which has `Canvas`, `cap`, `ell`, `blade`, the
