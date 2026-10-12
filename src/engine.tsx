@@ -69,9 +69,9 @@ function level(gain: number, wash: number, scrim: number) {
   return { dark, light, scrim }
 }
 const LEVELS: Record<Brightness, ReturnType<typeof level>> = {
-  subtle: level(0.6, 0.65, 0.6),
-  normal: level(1, 0.5, 0.65),
-  vivid: level(1.6, 0.35, 0.7),
+  subtle: level(0.6, 0.65, 0.53),
+  normal: level(1, 0.5, 0.58),
+  vivid: level(1.6, 0.35, 0.63),
 }
 // Night scenes keep their color: it is what separates them from light text.
 const DESATURATE = { day: 0.22, sunset: 0.22, night: 0.04 }
