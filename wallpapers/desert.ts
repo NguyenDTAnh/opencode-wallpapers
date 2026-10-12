@@ -1038,6 +1038,7 @@ export const desert: Wallpaper = {
   id: "desert",
   name: "Desert",
   description: "Mesas and dunes with a saguaro, a cow skull, and a tumbleweed now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Mesas, a saguaro and a skull",
     lively: "Adds a soaring eagle (an owl at night) and a rattlesnake",

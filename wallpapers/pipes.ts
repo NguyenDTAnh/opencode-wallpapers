@@ -723,6 +723,8 @@ export const pipes: Wallpaper = {
   id: "pipes",
   name: "3D Pipes",
   description: "The old 3D screensaver: glossy pipes growing through the dark one length at a time, turning at ball joints",
+  collection: "Classics",
+  fixedTime: "day",
   activity: {
     calm: "One pipe growing slowly through the grid, over a long fill",
     lively: "Two or three pipes growing at once",

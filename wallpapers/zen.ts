@@ -1310,6 +1310,7 @@ export const zen: Wallpaper = {
   id: "zen",
   name: "Zen garden",
   description: "A koi pond under a red bridge, raked gravel, stone lanterns and falling cherry petals, with a heron now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Garden, pond ripples, petals and a bamboo fountain",
     lively: "Adds koi circling under the lily pads",

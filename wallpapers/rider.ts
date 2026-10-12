@@ -925,6 +925,8 @@ export const rider: Wallpaper = {
   id: "rider",
   name: "Rider",
   description: "A red capsule bike on pale cracked concrete, its rider walking up to it, with another of the gang speeding by now and then",
+  collection: "Akira",
+  fixedTime: "day",
   activity: {
     calm: "The bike, the rider standing by it, and drifting dust",
     lively: "He walks slowly up to the bike and back, and paper and pebbles skitter in the gusts",

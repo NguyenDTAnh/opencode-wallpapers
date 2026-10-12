@@ -900,6 +900,7 @@ export const beach: Wallpaper = {
   id: "beach",
   name: "Beach",
   description: "Waves washing up a sandy beach between swaying palms, with a sailboat on the horizon now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Sea, waves, sand and palm trees",
     lively: "Adds leaping dolphins and seagulls",

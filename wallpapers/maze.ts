@@ -901,6 +901,8 @@ export const maze: Wallpaper = {
   id: "maze",
   name: "3D Maze",
   description: "The old 3D maze screensaver: gliding through red brick corridors under a tiled ceiling, turning at every junction",
+  collection: "Classics",
+  fixedTime: "day",
   activity: {
     calm: "Long looks down each corridor between slow walks and turns",
     lively: "Gliding down the corridors, pausing to look along each new one",

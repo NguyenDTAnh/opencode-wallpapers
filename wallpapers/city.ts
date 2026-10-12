@@ -1113,6 +1113,7 @@ export const city: Wallpaper = {
   id: "city",
   name: "City",
   description: "A skyline over a river, traffic on an elevated highway, and a blimp drifting over now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Skyline, river and light traffic on the highway",
     lively: "Adds a train crossing the bridge and more traffic",

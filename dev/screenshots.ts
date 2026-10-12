@@ -1,7 +1,7 @@
-// Re-renders the README gallery (teeming at 45 s via dev/snap.ts) and fails if any screenshot differs from the
-// published one on the assets branch (see dev/assets.ts) beyond a tiny tolerance, copying the stale ones' fresh renders
-// to dev/out/screenshots/; --update writes the fresh renders into screenshots/ instead. Naming wallpapers limits it to
-// them: bun dev/screenshots.ts [--update] [wallpaper...]
+// Re-renders the README gallery (teeming at 45 s via dev/snap.ts, one shot for a wallpaper with a fixed time) and
+// fails if any screenshot differs from the published one on the assets branch (see dev/assets.ts) beyond a tiny
+// tolerance, copying the stale ones' fresh renders to dev/out/screenshots/; --update writes the fresh renders into
+// screenshots/ instead. Naming wallpapers limits it to them: bun dev/screenshots.ts [--update] [wallpaper...]
 import { availableParallelism } from "node:os"
 import { TIMES } from "../src/engine"
 import { WALLPAPERS } from "../wallpapers"
@@ -12,7 +12,7 @@ const update = process.argv.includes("--update")
 const ids = process.argv.slice(2).filter((arg) => !arg.startsWith("--"))
 const unknown = ids.filter((id) => !WALLPAPERS.some((w) => w.id === id))
 if (unknown.length) throw new Error(`unknown wallpaper ${unknown.join(", ")}`)
-const shots = (ids.length ? WALLPAPERS.filter((w) => ids.includes(w.id)) : WALLPAPERS).flatMap((w) => TIMES.map((time) => ({ id: w.id, time, file: `screenshots/${w.id}${time === "day" ? "" : `-${time}`}.png` })))
+const shots = (ids.length ? WALLPAPERS.filter((w) => ids.includes(w.id)) : WALLPAPERS).flatMap((w) => (w.fixedTime ? [w.fixedTime] : TIMES).map((time) => ({ id: w.id, time, file: `screenshots/${w.id}${time === "day" || w.fixedTime ? "" : `-${time}`}.png` })))
 assets()
 const queue = [...shots]
 const stale: string[] = []

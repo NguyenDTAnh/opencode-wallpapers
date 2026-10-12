@@ -49,6 +49,12 @@ export interface Wallpaper {
   readonly id: string
   readonly name: string
   readonly description: string
+  // The menu's group for it, such as "Landscapes" or "Classics". Defaults to Classics for a wallpaper with a fixed
+  // time and Landscapes otherwise.
+  readonly collection?: string
+  // For a wallpaper with one look: the time of day it always renders at, whatever the time setting, and without
+  // seasons. The menu hides its time and season rows.
+  readonly fixedTime?: Time
   // For each time of day, colors (0-255) that text scrims fade the scene toward at the top, middle and bottom of the
   // screen. Darker, more saturated versions of the scene's own colors at those depths read better than black.
   readonly scrim: Readonly<Record<Time, Scrim>>
@@ -58,6 +64,15 @@ export interface Wallpaper {
 }
 
 export type Scrim = readonly [RGB, RGB, RGB]
+
+export function collectionOf(wallpaper: Wallpaper) {
+  return wallpaper.collection ?? (wallpaper.fixedTime ? "Classics" : "Landscapes")
+}
+
+// The settings a wallpaper renders with: one with a fixed time ignores the time and season settings.
+export function settingsFor(wallpaper: Wallpaper, settings: Settings): Settings {
+  return wallpaper.fixedTime ? { ...settings, time: wallpaper.fixedTime, season: undefined } : settings
+}
 
 export interface Settings {
   readonly activity: Activity

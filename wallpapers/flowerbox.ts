@@ -691,6 +691,8 @@ export const flowerbox: Wallpaper = {
   id: "flowerbox",
   name: "Flower Box",
   description: "The old 3D screensaver: a glossy box of colored patches spinning and bouncing, morphing into balls, a star and a pillow",
+  collection: "Classics",
+  fixedTime: "night",
   activity: {
     calm: "One object drifting and turning slowly, morphing between a cube, a cluster of balls and a pillow",
     lively: "A little quicker, through the full morph cycle with the spiky star",

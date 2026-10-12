@@ -9,12 +9,13 @@ import { wallpapers } from "./wallpapers"
 
 const [id, ...rest] = process.argv.slice(2)
 const activity = ACTIVITIES.find((a) => rest.includes(a)) ?? "calm"
-const time = TIMES.find((t) => rest.includes(t)) ?? "day"
-const season = SEASONS.find((s) => rest.includes(s))
 const weather = WEATHERS.find((w) => rest.includes(w))
 const times = rest.filter((arg) => /^[\d.]+$/.test(arg))
 const wallpaper = wallpapers.find((w) => w.id === id)
 if (!wallpaper) throw new Error(`usage: bun dev/snap.ts <${wallpapers.map((w) => w.id).join("|")}> [seconds...]`)
+// A wallpaper with a fixed time renders only that, without seasons.
+const time = wallpaper.fixedTime ?? TIMES.find((t) => rest.includes(t)) ?? "day"
+const season = wallpaper.fixedTime ? undefined : SEASONS.find((s) => rest.includes(s))
 mkdirSync("dev/out", { recursive: true })
 const scene = wallpaper.create({ activity, time, season, weather })
 scene.resize(720, 400)

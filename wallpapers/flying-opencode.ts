@@ -344,6 +344,8 @@ export const flyingOpenCode: Wallpaper = {
   id: "flying-opencode",
   name: "Flying OpenCode",
   description: "The old flying-logos screensaver with OpenCode marks: colored marks stream out of the dark toward you, flapping as they fly",
+  collection: "Classics",
+  fixedTime: "night",
   activity: {
     calm: "A few marks drifting slowly out of the middle",
     lively: "The classic stream of colored marks flying past",

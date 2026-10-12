@@ -1089,6 +1089,7 @@ export const farm: Wallpaper = {
   id: "farm",
   name: "Farm",
   description: "Rolling fields with a red barn, a turning windmill and swaying corn, and a tractor now and then",
+  collection: "Landscapes",
   activity: {
     calm: "Barn, windmill, fields and corn",
     lively: "Adds grazing cows and pecking chickens",

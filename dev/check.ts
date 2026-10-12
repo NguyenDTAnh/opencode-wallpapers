@@ -37,7 +37,7 @@ let busiest = { flicker: -1, name: "" }
 // They play for two minutes instead, held to the same flicker limit; --verify-dirty, which keeps every frame of its
 // shorter scripted run, checks only their cells.
 const LONG = ["maze"]
-const runs = (ids.length ? wallpapers.filter((w) => ids.includes(w.id)) : wallpapers).flatMap((w) => ACTIVITIES.flatMap((activity) => TIMES.map((time) => ({ wallpaper: w, activity, time }))))
+const runs = (ids.length ? wallpapers.filter((w) => ids.includes(w.id)) : wallpapers).flatMap((w) => ACTIVITIES.flatMap((activity) => (w.fixedTime ? [w.fixedTime] : TIMES).map((time) => ({ wallpaper: w, activity, time }))))
 for (const { wallpaper, activity, time } of runs) {
   const long = LONG.includes(wallpaper.id)
   const frames = long && !verify ? 1800 : 240
@@ -129,7 +129,9 @@ function script(f: number, engine: Engine, wallpaper: Wallpaper, activity: Activ
   if (f === 150) engine.react("error")
   if (f === 200) engine.react("idle")
   if (f === 180) engine.start(wallpaper, { activity, time, season, weather, brightness: "vivid" })
-  if (f === 205) engine.start(wallpaper, { activity, time: time === "night" ? "day" : "night", season, weather, brightness: "vivid" })
+  if (f === 205 && !wallpaper.fixedTime) engine.start(wallpaper, { activity, time: time === "night" ? "day" : "night", season, weather, brightness: "vivid" })
+  // A wallpaper with a fixed time ignores a new time, so it crossfades to another activity instead.
+  if (f === 205 && wallpaper.fixedTime) engine.start(wallpaper, { activity: activity === "calm" ? "teeming" : "calm", time, season, weather, brightness: "vivid" })
 }
 
 // A wallpaper whose scenes check, after every render, that each pixel that differs from the cached background lies in

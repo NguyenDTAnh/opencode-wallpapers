@@ -10,7 +10,6 @@ import { wallpapers } from "./wallpapers"
 
 const [id, ...rest] = process.argv.slice(2)
 const activity = ACTIVITIES.find((a) => rest.includes(a)) ?? "calm"
-const time = TIMES.find((t) => rest.includes(t)) ?? "day"
 const season = SEASONS.find((s) => rest.includes(s))
 const weather = WEATHERS.find((w) => rest.includes(w))
 const layout = (["home", "session"] as const).find((l) => rest.includes(l))
@@ -19,6 +18,7 @@ const [w, h] = size ? size.split("x").map(Number) : [W, H]
 const seconds = rest.find((arg) => /^[\d.]+$/.test(arg)) ?? "20"
 const wallpaper = wallpapers.find((w) => w.id === id)
 if (!wallpaper) throw new Error(`usage: bun dev/preview.ts <${wallpapers.map((w) => w.id).join("|")}> [seconds]`)
+const time = wallpaper.fixedTime ?? TIMES.find((t) => rest.includes(t)) ?? "day"
 process.env.WALLPAPER_OCTANTS ??= "1"
 mkdirSync("dev/out", { recursive: true })
 const screen = mockScreen({ W: w, H: h })
