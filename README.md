@@ -34,7 +34,7 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 ## Wallpapers
 
 `ocean` · `desert` · `jungle` · `space` · `farm` · `tundra` · `beach` · `city` · `zen` · `prehistoric` · `rider` ·
-`megacity` · `dome` · `haunted-house`
+`megacity` · `dome` · `haunted-house` · `flowerbox`
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -71,6 +71,7 @@ At teeming, played back at 3x speed:
 | ![Zen garden in motion](screenshots/zen.gif) | ![Prehistoric in motion](screenshots/prehistoric.gif) |
 | ![Rider in motion](screenshots/rider.gif) | ![Megacity in motion](screenshots/megacity.gif) |
 | ![Dome in motion](screenshots/dome.gif) | ![Haunted house in motion](screenshots/haunted-house.gif) |
+| ![Flower Box in motion](screenshots/flowerbox.gif) | |
 
 | | Day | Sunset | Night |
 | --- | --- | --- | --- |
@@ -88,6 +89,7 @@ At teeming, played back at 3x speed:
 | Megacity | ![Megacity by day](screenshots/megacity.png) | ![Megacity at sunset](screenshots/megacity-sunset.png) | ![Megacity at night](screenshots/megacity-night.png) |
 | Dome | ![Dome by day](screenshots/dome.png) | ![Dome at sunset](screenshots/dome-sunset.png) | ![Dome at night](screenshots/dome-night.png) |
 | Haunted house | ![Haunted house by day](screenshots/haunted-house.png) | ![Haunted house at sunset](screenshots/haunted-house-sunset.png) | ![Haunted house at night](screenshots/haunted-house-night.png) |
+| Flower Box | ![Flower Box by day](screenshots/flowerbox.png) | ![Flower Box at sunset](screenshots/flowerbox-sunset.png) | ![Flower Box at night](screenshots/flowerbox-night.png) |
 
 ## License
 
