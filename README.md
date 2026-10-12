@@ -37,7 +37,7 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 
 - **Landscapes:** `ocean` · `desert` · `jungle` · `space` · `farm` · `tundra` · `beach` · `city` · `zen` · `prehistoric` · `haunted-house`
 - **Akira:** `rider` · `megacity` · `dome`
-- **Classics:** `flowerbox` · `maze` · `pipes` · `mystify` · `flying-opencode`
+- **Classics:** `flowerbox` · `maze` · `pipes` · `mystify` · `flying-opencode` · `matrix`
 
 | Spring | Summer | Autumn | Winter |
 | --- | --- | --- | --- |
@@ -107,6 +107,7 @@ At teeming; the GIFs play at 3x speed.
 | 3D Pipes | ![3D Pipes](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes.png) | ![3D Pipes in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/pipes.gif) |
 | Mystify | ![Mystify](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify.png) | ![Mystify in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/mystify.gif) |
 | Flying OpenCode | ![Flying OpenCode](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flying-opencode.png) | ![Flying OpenCode in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/flying-opencode.gif) |
+| Matrix | ![Matrix](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/matrix.png) | ![Matrix in motion](https://raw.githubusercontent.com/vaprdev/opencode-wallpapers/assets/matrix.gif) |
 
 ## License
 
