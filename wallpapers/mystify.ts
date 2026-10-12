@@ -157,8 +157,8 @@ class Mystify extends Canvas {
     dt = clamp(dt, 0, 0.1) * TIME_SCALE
     this.stepGloom(dt)
     this.flash = Math.max(0, this.flash - dt)
-    // After an error the lines slow; a finished task hurries them for a moment.
-    const pace = (1 - 0.6 * this.gloom) * (1 + 1.5 * smoothstep(0, 1, this.flash))
+    // After an error the lines slow.
+    const pace = 1 - 0.6 * this.gloom
     const decay = Math.exp(-dt / 2)
     const curve = this.bezier.t < 0 ? 0 : smoothstep(0, 2, this.bezier.t) * smoothstep(BEZIER, BEZIER - 2, this.bezier.t)
     const n = this.cast.echoes + 1
@@ -253,7 +253,7 @@ class Mystify extends Canvas {
     this.flash = 3
     if (this.polys.length > this.cast.count * 2) return
     for (const parent of this.polys.slice(0, this.cast.count)) {
-      const p = this.poly(this.polys.length, 11)
+      const p = this.poly(this.polys.length, 7)
       p.u.set(parent.u)
       for (let k = 0; k < CORNERS * 2; k++) p.v[k] = k & 1 ? parent.v[k] : -parent.v[k]
       p.hue = parent.hue + 0.5
