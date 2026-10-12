@@ -21,7 +21,7 @@ const SEAM = 0.07
 const DX = [1, 0, -1, 0]
 const DY = [0, 1, 0, -1]
 // Per screen column, what its ray hit (see castColumns).
-const COL = 10
+const COL = 12
 // The flip lasts this many scene seconds before the view rights itself.
 const FLIPPED = 25
 
@@ -61,7 +61,7 @@ const LOOKS: Record<Time, Look> = {
     lamp: 0,
     ambient: 1,
     side: 0.78,
-    solid: [0.09, 0.09, 0.1],
+    solid: [0.11, 0.11, 0.12],
     flip: [0.5, 0.03, 0.3],
     face: [0.62, 0.48, 0.02],
     ink: [0.03, 0.02, 0.01],
@@ -74,7 +74,7 @@ const LOOKS: Record<Time, Look> = {
     seam: [0.3, 0.17, 0.08],
     floor: [0.5, 0.2, 0.01],
     fog: [0.3, 0.1, 0.025],
-    haze: 0.32,
+    haze: 0.42,
     lamp: 0.12,
     ambient: 0.4,
     side: 0.74,
@@ -91,7 +91,7 @@ const LOOKS: Record<Time, Look> = {
     seam: [0.06, 0.08, 0.28],
     floor: [0.36, 0.17, 0.012],
     fog: [0.002, 0.004, 0.02],
-    haze: 0.15,
+    haze: 0.2,
     lamp: 1.4,
     ambient: 0.04,
     side: 0.72,
@@ -428,7 +428,7 @@ class Maze extends Canvas {
     for (const o of this.solids) {
       o.a += o.ra * dt
       o.b += o.rb * dt
-      o.grow = o.dying ? o.grow - dt * 3 : Math.min(1, o.grow + dt * 0.8)
+      o.grow = o.dying ? o.grow - dt * 3 : Math.min(1, o.grow + dt * 1.2)
       if (o.dying || Math.hypot(this.x - o.cx - 0.5, this.y - o.cy - 0.5) > 0.3) continue
       o.dying = true
       if (o.flip) this.flipTo = 1 - this.flipTo
@@ -451,8 +451,8 @@ class Maze extends Canvas {
     const sight: [number, number][] = []
     for (let x = Math.floor(this.x), y = Math.floor(this.y); sight.length < MAZE && this.open(x, y, h); x += DX[h], y += DY[h]) sight.push([x + DX[h], y + DY[h]])
     const free = (cells: [number, number][]) => cells.filter(([x, y]) => !this.solids.some((o) => o.cx === x && o.cy === y))
-    const view = free(sight.slice(1))
-    const pool = view.length && (near || Math.random() < 0.6) ? view : free(this.ahead(12).slice(2))
+    const view = free(sight.filter(([x, y]) => Math.hypot(x + 0.5 - this.x, y + 0.5 - this.y) > 0.9))
+    const pool = view.length && (near || Math.random() < 0.7) ? view : free(this.ahead(12).slice(2))
     const cell = pool[near ? 0 : Math.floor(Math.random() * Math.min(pool.length, 6))]
     if (!cell) return
     this.solids.push({ cx: cell[0], cy: cell[1], a: rand(0, TAU), b: rand(0, TAU), ra: rand(0.5, 0.8), rb: rand(0.3, 0.5), grow: 0, dying: false, flip })
@@ -479,7 +479,8 @@ class Maze extends Canvas {
     this.flip = this.flipTo > this.flip ? Math.min(this.flipTo, this.flip + dt / 1.5) : Math.max(this.flipTo, this.flip - dt / 1.5)
     if (this.flipLeft <= 0) return
     this.flipLeft -= dt
-    if (this.flipLeft > 0) return
+    // It rights itself while the camera stands looking down a corridor.
+    if (this.flipLeft > 0 || this.mode !== "pause") return
     this.flipTo = 0
     this.egg = eggWait(true) * TIME_SCALE
   }
@@ -549,7 +550,7 @@ class Maze extends Canvas {
     const roll = Math.cos(this.flip * Math.PI)
     const view = [this.x, this.y, this.angle, roll, light]
     const moved = view.some((v, i) => v !== this.last[i])
-    const f = Math.max(0.62 * H, 0.42 * W)
+    const f = Math.max(0.62 * H, 0.36 * W)
     const fy = f * (Math.abs(roll) < 0.02 ? 0.02 * Math.sign(roll || 1) : roll)
     const dirX = Math.cos(this.angle)
     const dirY = Math.sin(this.angle)
@@ -579,7 +580,7 @@ class Maze extends Canvas {
     const lat = (ox - this.x) * -dirY + (oy - this.y) * dirX
     if (Math.abs(lat / depth) * f > W / 2 + f * 0.3 / depth) return
     const shape = o.flip ? OCTAHEDRON : ICOSAHEDRON
-    const r = 0.13 * smoothstep(0, 1, o.grow) * (o.flip ? 1.2 : 1)
+    const r = 0.16 * smoothstep(0, 1, o.grow) * (o.flip ? 1.2 : 1)
     const ca = Math.cos(o.a)
     const sa = Math.sin(o.a)
     const cb = Math.cos(o.b)
@@ -604,7 +605,7 @@ class Maze extends Canvas {
     const ll = Math.hypot(lx, ly, lz)
     const dist = Math.hypot(ox - this.x, oy - this.y)
     const reach = (look.lamp ? look.ambient + (1 - look.ambient) / (1 + dist * dist * look.lamp) : 1) * light
-    const fogk = 1 - Math.exp(-dist * look.haze)
+    const fogk = veil(dist, look.haze)
     const base = o.flip ? look.flip : look.solid
     const faces = shape.faces
       .map(([a, b, c]) => {
@@ -665,7 +666,7 @@ function hull(verts: number[][]) {
         const nx = u[1] * v[2] - u[2] * v[1]
         const ny = u[2] * v[0] - u[0] * v[2]
         const nz = u[0] * v[1] - u[1] * v[0]
-        const sides = verts.map((p, i) => (i === a || i === b || i === c ? 0 : (p[0] - ax) * nx + (p[1] - ay) * ny + (p[2] - az) * nz))
+        const sides = verts.filter((_, i) => i !== a && i !== b && i !== c).map((p) => (p[0] - ax) * nx + (p[1] - ay) * ny + (p[2] - az) * nz)
         if (sides.every((s) => s < -1e-6)) faces.push([a, b, c])
         if (sides.every((s) => s > 1e-6)) faces.push([a, c, b])
       }
@@ -752,6 +753,8 @@ function shadeView(hdr: Float32Array, W: number, H: number, cols: Float32Array, 
     const b = horizon + (fy * EYE) / d
     cols[o + 1] = Math.min(a, b)
     cols[o + 2] = Math.max(a, b)
+    cols[o + 10] = lit(d * cols[o + 7], lamp, ambient) * light
+    cols[o + 11] = veil(d * cols[o + 7], haze)
   }
   for (let y = 0; y < H; y++) {
     const t = (y + 0.5 - horizon) / fy
@@ -786,9 +789,7 @@ function shadeView(hdr: Float32Array, W: number, H: number, cols: Float32Array, 
         const mortar = lerp(1 - (1 - mh) * (1 - ml), 1 - (1 - ch) * (1 - cv), crisp)
         // Each brick a little lighter or darker, and shaded toward its bottom, both fading out where bricks get small.
         const detail = clamp(1.5 - 2 * Math.max(wz, wu), 0, 1)
-        const id = Math.floor(su) * 7.1 + course * 13.7
-        const n = Math.sin(id * 12.9898) * 43758.5453
-        const tone = 1 + detail * (0.24 * (n - Math.floor(n)) - 0.12 + 0.16 * (z / COURSE - course) - 0.08)
+        const tone = 1 + detail * (0.24 * cellNoise(Math.floor(su), course) - 0.12 + 0.16 * (z / COURSE - course) - 0.08)
         const k = (1 - mortar) * tone
         const s = cols[o + 4] ? side : 1
         r = (p[0] * k + p[3] * mortar) * s
@@ -810,8 +811,8 @@ function shadeView(hdr: Float32Array, W: number, H: number, cols: Float32Array, 
           g = lerp(lerp(g, p[23], face), p[26], ink)
           bl = lerp(lerp(bl, p[24], face), p[27], ink)
         }
-        const k2 = lit(d * cols[o + 7], lamp, ambient) * light
-        const fog = 1 - Math.exp(-d * cols[o + 7] * haze)
+        const k2 = cols[o + 10]
+        const fog = cols[o + 11]
         r = (r * k2 * (1 - fog) + p[15] * fog * light) * cov
         g = (g * k2 * (1 - fog) + p[16] * fog * light) * cov
         bl = (bl * k2 * (1 - fog) + p[17] * fog * light) * cov
@@ -827,15 +828,14 @@ function shadeView(hdr: Float32Array, W: number, H: number, cols: Float32Array, 
           const w = Math.max((rd * cols[o + 7]) / f, step) * TILES
           const seam = 1 - (1 - lines(wx - w / 2 + SEAM / 2, wx + w / 2 + SEAM / 2, SEAM)) * (1 - lines(wy - w / 2 + SEAM / 2, wy + w / 2 + SEAM / 2, SEAM))
           // A faint stipple per tile, fading out where tiles get small.
-          const n = Math.sin(Math.floor(wx) * 12.9898 + Math.floor(wy) * 78.233) * 43758.5453
-          const tone = 1 + clamp(1 - w * 1.5, 0, 1) * 0.1 * (n - Math.floor(n) - 0.5)
+          const tone = 1 + clamp(1 - w * 1.5, 0, 1) * 0.1 * (cellNoise(Math.floor(wx), Math.floor(wy)) - 0.5)
           fr = lerp(p[6] * tone, p[9], seam)
           fg = lerp(p[7] * tone, p[10], seam)
           fb = lerp(p[8] * tone, p[11], seam)
         }
         const dd = rd * cols[o + 7]
         const k2 = lit(dd, lamp, ambient) * light
-        const fog = 1 - Math.exp(-dd * haze)
+        const fog = veil(dd, haze)
         const c = 1 - cov
         r += (fr * k2 * (1 - fog) + p[15] * fog * light) * c
         g += (fg * k2 * (1 - fog) + p[16] * fog * light) * c
@@ -847,6 +847,18 @@ function shadeView(hdr: Float32Array, W: number, H: number, cols: Float32Array, 
       hdr[i + 2] = bl
     }
   }
+}
+
+// How much of the fog shows at a distance: none up close, approaching all of it far away.
+function veil(dist: number, haze: number) {
+  return (dist * haze) / (1 + dist * haze)
+}
+
+// A stable 0..1 value per pair of integers, for brick and tile tones.
+function cellNoise(a: number, b: number) {
+  let h = Math.imul(a, 374761393) + Math.imul(b, 668265263)
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
 }
 
 // The camera lamp's light at a distance: falling off from full, down to the ambient light; even when there's no lamp.
