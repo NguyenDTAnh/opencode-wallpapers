@@ -248,8 +248,8 @@ for a new group. The menu's Collection row picks one, and shuffle stays within i
 Landscapes, or Classics if it has a fixed look.
 
 A wallpaper that only makes sense at one time of day, such as an old screensaver, sets `fixedTime: "night"` (or `day`
-or `sunset`). It then always gets that time and no season, whatever the settings, the menu hides its time and season
-rows, auto's crossfades pass it by, and the README and dev tools show it at that one time (`screenshots/<id>.png`).
+or `sunset`). It then always gets that time with no season or weather, whatever the settings, the menu hides its time,
+season and weather rows, auto's crossfades pass it by, and the README and dev tools show it at that one time (`screenshots/<id>.png`).
 `scrim` still needs all three times, though only the fixed one is used.
 
 ## Seasons and weather

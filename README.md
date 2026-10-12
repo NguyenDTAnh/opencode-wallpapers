@@ -25,8 +25,8 @@ Type `/wallpaper` to open the menu and pick a wallpaper; none shows until you do
 
 - **Collection:** Landscapes, Akira, Classics or all: which wallpapers the menu and shuffle pick from.
 - **Activity:** calm, lively or teeming: how much moves behind your work.
-- **Time:** day, sunset or night, or auto to follow your clock. Akira and Classics keep one look.
-- **Season and weather:** follow the calendar, or the real weather where you are (`/wallpaper location Berlin`).
+- **Time, season and weather:** for Landscapes. Time follows your clock or stays fixed, seasons follow the calendar,
+  and weather can be the real weather where you are (`/wallpaper location Berlin`). Akira and Classics keep one look.
 - **Brightness, shuffle, per project and power:** subtle to vivid, a new wallpaper every hour, one per project, and
   slowing down when idle.
 

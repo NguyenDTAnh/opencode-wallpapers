@@ -258,6 +258,7 @@ export default Plugin.define({
       },
       {
         title: "Weather",
+        hidden: fixed,
         values: () => ["off", "local", "clear", "rain", "snow", "fog"].map((w) => `weather ${w}`),
         value: () => `weather ${weatherSetting()}`,
         label: (v) => (v === "weather local" ? `Local (${location() ? (local()?.weather ?? "checking") : "no location"})` : capitalize(v.slice(8))),
