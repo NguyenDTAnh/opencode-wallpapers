@@ -6,7 +6,7 @@ import type { Activity, Settings, Time, Wallpaper } from "../src/wallpaper"
 
 // The scene runs slower than real time, which keeps it calm behind text.
 const TIME_SCALE = 0.35
-// Corners per polygon: each bounces on its own within its figure's box.
+// Corners per polygon: each moves on its own and bounces off the screen's edges.
 const CORNERS = 4
 // The egg, the old Bezier screensaver: the edges bow into curves for this many scene seconds.
 const BEZIER = 14
@@ -64,24 +64,21 @@ const LOOKS: Record<Time, Look> = {
   },
 }
 
-// Per activity: figures, each one's size (the box its corners bounce in, in screen heights), how fast the figure drifts
-// and its corners bounce within it (screen heights per scene second), echoes in each trail, and the distance between
-// echoes at a corner's usual speed. Every line moves a little each frame and the terminal redraws the cells it
-// crosses, so size, speed, echoes and their spacing (lines further apart flip more cells) set how much it redraws.
-const CAST: Record<Activity, { count: number; size: number; drift: number; wobble: number; echoes: number; spacing: number }> = {
-  calm: { count: 1, size: 0.38, drift: 0.016, wobble: 0.016, echoes: 4, spacing: 0.038 },
-  lively: { count: 2, size: 0.34, drift: 0.02, wobble: 0.019, echoes: 4, spacing: 0.03 },
-  teeming: { count: 3, size: 0.3, drift: 0.024, wobble: 0.022, echoes: 5, spacing: 0.03 },
+// Per activity: polygons, their corners' speed in screen heights per scene second, echoes in each stack, and the
+// distance between echoes at a corner's usual speed. Every line moves a little each frame and the terminal redraws
+// the cells it crosses; the lines reach across the screen, so the corners move slowly and the echoes stack closely.
+const CAST: Record<Activity, { count: number; speed: number; echoes: number; spacing: number }> = {
+  calm: { count: 1, speed: 0.012, echoes: 6, spacing: 0.026 },
+  lively: { count: 2, speed: 0.014, echoes: 6, spacing: 0.026 },
+  teeming: { count: 3, speed: 0.016, echoes: 7, spacing: 0.026 },
 }
-// History samples per echo gap; echoes read between samples, so the fan glides.
+// History samples per echo gap; echoes read between samples, so the stack glides.
 const SAMPLES = 4
-// The share of its figure's box each corner bounces across, from its own corner of the box.
-const REACH = 0.55
 
-// A figure: its middle and its corners within their box, unfolded (the screen position folds them back between the
-// edges, so bouncing is exact), their velocities and the decaying push of a click, a ring of past corner positions
-// for the echoes, its place on the color wheel, and a life for the copies a finished task brings.
-interface Figure {
+// A polygon: its corners unfolded (x, y per corner; the screen position folds them back between the screen's edges,
+// so bouncing is exact), their velocities and the decaying push of a click, a ring of past corner positions for the
+// echoes, its place on the color wheel, and a life for the copies a finished task brings.
+interface Poly {
   u: Float64Array
   v: Float64Array
   kick: Float64Array
@@ -92,8 +89,7 @@ interface Figure {
   age: number
 }
 
-// Unfolded values per figure: the middle (x, y), then each corner's offset within the box (x, y).
-const VALUES = 2 + CORNERS * 2
+const VALUES = CORNERS * 2
 
 class Mystify extends Canvas {
   private readonly look: Look
@@ -103,7 +99,7 @@ class Mystify extends Canvas {
   private readonly sample: number
   private time = 0
   private next = 0
-  private figures: Figure[] = []
+  private polys: Poly[] = []
   private flash = 0
   private placed = false
   private bezier = { wait: eggWait() * TIME_SCALE, t: -1 }
@@ -116,14 +112,13 @@ class Mystify extends Canvas {
     this.supersample = 1
     this.look = LOOKS[settings.time]
     this.cast = CAST[settings.activity]
-    this.gap = this.cast.spacing / (this.cast.drift + this.cast.wobble)
+    this.gap = this.cast.spacing / this.cast.speed
     this.sample = this.gap / SAMPLES
-    this.figures = Array.from({ length: this.cast.count }, (_, i) => this.figure(i))
+    this.polys = Array.from({ length: this.cast.count }, (_, i) => this.poly(i))
   }
 
-  private figure(i: number, life = Infinity): Figure {
-    const { size, drift, wobble } = this.cast
-    const f: Figure = {
+  private poly(i: number, life = Infinity): Poly {
+    const f: Poly = {
       u: new Float64Array(VALUES),
       v: new Float64Array(VALUES),
       kick: new Float64Array(VALUES),
@@ -133,25 +128,23 @@ class Mystify extends Canvas {
       life,
       age: 0,
     }
-    // Figures start spread along the screen (u[0] is a fraction of the open width until layout() knows it).
-    const heading = rand(0, TAU)
-    f.u[0] = (i + rand(0.2, 0.8)) / this.cast.count
-    f.u[1] = rand(0, 1)
-    f.v[0] = Math.cos(heading) * drift * rand(0.8, 1.2)
-    f.v[1] = Math.sin(heading) * drift * rand(0.8, 1.2)
+    // One corner in each quarter of the screen, so every polygon starts out spanning it (x is a fraction of the width
+    // until layout() knows it).
+    const turn = Math.floor(rand(0, CORNERS))
     for (let c = 0; c < CORNERS; c++) {
-      const turn = rand(0, TAU)
-      const speed = wobble * rand(0.7, 1.3)
-      f.u[2 + c * 2] = rand(0, REACH * size)
-      f.u[3 + c * 2] = rand(0, REACH * size)
-      f.v[2 + c * 2] = Math.cos(turn) * speed
-      f.v[3 + c * 2] = Math.sin(turn) * speed
+      const heading = rand(0, TAU)
+      const speed = this.cast.speed * rand(0.7, 1.3)
+      const q = (c + turn) % CORNERS
+      f.u[c * 2] = (q === 1 || q === 2 ? 0.5 : 0) + rand(0.04, 0.46)
+      f.u[c * 2 + 1] = (q >= 2 ? 0.5 : 0) + rand(0.04, 0.46)
+      f.v[c * 2] = Math.cos(heading) * speed
+      f.v[c * 2 + 1] = Math.sin(heading) * speed
     }
     return f
   }
 
-  // Fills a figure's history as if it had always moved at its present velocity.
-  private rewind(f: Figure) {
+  // Fills a polygon's history as if it had always moved at its present velocity.
+  private rewind(f: Poly) {
     const n = f.ring.length / (CORNERS * 2)
     f.head = 0
     for (let s = 0; s < n; s++) {
@@ -163,14 +156,7 @@ class Mystify extends Canvas {
 
   // Screen positions (in screen heights) of the corners for the unfolded values u, into out at o.
   private corners(u: Float64Array, out: Float64Array, o: number) {
-    const size = this.cast.size
-    const x = size / 2 + fold(u[0], Math.max(0.01, this.A - size))
-    const y = size / 2 + fold(u[1], 1 - size)
-    // Each corner bounces within its own corner of the box, so the shape stays open as it morphs.
-    for (let c = 0; c < CORNERS; c++) {
-      out[o + c * 2] = x - size / 2 + (c === 1 || c === 2 ? 1 - REACH : 0) * size + fold(u[2 + c * 2], REACH * size)
-      out[o + c * 2 + 1] = y - size / 2 + (c >= 2 ? 1 - REACH : 0) * size + fold(u[3 + c * 2], REACH * size)
-    }
+    for (let k = 0; k < VALUES; k++) out[o + k] = fold(u[k], k & 1 ? 1 : this.A)
   }
 
   step(dt: number) {
@@ -182,7 +168,7 @@ class Mystify extends Canvas {
     // After an error the lines slow.
     const pace = 1 - 0.6 * this.gloom
     const decay = Math.exp(-dt / 2)
-    for (const f of this.figures) {
+    for (const f of this.polys) {
       f.age += dt
       f.hue += (dt / 60) * (1 + 6 * smoothstep(0, 1, this.flash))
       for (let k = 0; k < VALUES; k++) {
@@ -193,14 +179,14 @@ class Mystify extends Canvas {
     // Samples at exact intervals, worked out between the positions before and after this step.
     for (; this.next <= this.time; this.next += this.sample) {
       const back = this.time - this.next
-      for (const f of this.figures) {
+      for (const f of this.polys) {
         const n = f.ring.length / (CORNERS * 2)
         f.head = (f.head + n - 1) % n
         for (let k = 0; k < VALUES; k++) this.prev[k] = f.u[k] - (f.v[k] + f.kick[k]) * back * pace
         this.corners(this.prev, f.ring, f.head * CORNERS * 2)
       }
     }
-    this.figures = this.figures.filter((f) => f.age < f.life)
+    this.polys = this.polys.filter((f) => f.age < f.life)
     this.stepBezier(dt)
   }
 
@@ -217,7 +203,7 @@ class Mystify extends Canvas {
     const echoes = this.cast.echoes
     // How far the newest sample is behind the present, in samples.
     const lag = clamp(1 - (this.next - this.time) / this.sample, 0, 1)
-    for (const f of this.figures) {
+    for (const f of this.polys) {
       const grow = f.life === Infinity ? 1 : smoothstep(0, 1, f.age) * smoothstep(f.life, f.life - 2, f.age)
       if (grow <= 0.01) continue
       const n = f.ring.length / (CORNERS * 2)
@@ -282,29 +268,26 @@ class Mystify extends Canvas {
     }
   }
 
-  // A finished task: the colors race through the rainbow and each figure splits off a copy for a while.
+  // A finished task: the colors race through the rainbow and each polygon splits off a copy for a while.
   protected override visit() {
     this.flash = 3
-    if (this.figures.length > this.cast.count * 2) return
-    for (const parent of this.figures.slice(0, this.cast.count)) {
-      const f = this.figure(this.figures.length, 7)
+    if (this.polys.length > this.cast.count * 2) return
+    for (const parent of this.polys.slice(0, this.cast.count)) {
+      const f = this.poly(this.polys.length, 7)
       f.u.set(parent.u)
-      f.v.set(parent.v)
-      f.v[0] = -parent.v[0]
-      f.v[1] = -parent.v[1]
+      for (let k = 0; k < VALUES; k++) f.v[k] = k & 1 ? parent.v[k] : -parent.v[k]
       f.hue = parent.hue + 0.5
       this.rewind(f)
-      this.figures.push(f)
+      this.polys.push(f)
     }
   }
 
-  // A click flings the nearest corner away from it, and nudges its figure the same way.
+  // A click flings the nearest corner away from it.
   poke(x: number, y: number) {
-    const size = this.cast.size
-    let best: Figure | undefined
+    let best: Poly | undefined
     let corner = 0
     let least = Infinity
-    for (const f of this.figures) {
+    for (const f of this.polys) {
       this.corners(f.u, this.at, 0)
       for (let c = 0; c < CORNERS; c++) {
         const d = Math.hypot(this.at[c * 2] - x, this.at[c * 2 + 1] - y)
@@ -319,23 +302,23 @@ class Mystify extends Canvas {
     const dx = this.at[corner * 2] - x
     const dy = this.at[corner * 2 + 1] - y
     const l = Math.hypot(dx, dy) || 1
-    // Screen directions map to unfolded ones through each fold's slope.
-    const k = 2 + corner * 2
+    // Screen directions map to unfolded ones through the fold's slope where the corner is.
+    const k = corner * 2
+    const sx = slope(best.u[k], this.A)
+    const sy = slope(best.u[k + 1], 1)
     const speed = Math.hypot(best.v[k], best.v[k + 1])
-    best.v[k] = (slope(best.u[k], REACH * size) * dx * speed) / l
-    best.v[k + 1] = (slope(best.u[k + 1], REACH * size) * dy * speed) / l
-    best.kick[k] = (slope(best.u[k], REACH * size) * dx * speed * 4) / l
-    best.kick[k + 1] = (slope(best.u[k + 1], REACH * size) * dy * speed * 4) / l
-    best.kick[0] += (slope(best.u[0], Math.max(0.01, this.A - size)) * dx * this.cast.drift * 3) / l
-    best.kick[1] += (slope(best.u[1], 1 - size) * dy * this.cast.drift * 3) / l
+    best.v[k] = (sx * dx * speed) / l
+    best.v[k + 1] = (sy * dy * speed) / l
+    best.kick[k] = (sx * dx * speed * 5) / l
+    best.kick[k + 1] = (sy * dy * speed * 5) / l
   }
 
   protected override layout() {
     const { W, H, hdr } = this
-    // Figures start spread across the width once the screen's shape is known.
+    // Corners start spread across the width once the screen's shape is known.
     if (!this.placed)
-      for (const f of this.figures) {
-        f.u[0] *= Math.max(0.01, this.A - this.cast.size)
+      for (const f of this.polys) {
+        for (let c = 0; c < CORNERS; c++) f.u[c * 2] *= this.A
         this.rewind(f)
       }
     this.placed = true
@@ -434,7 +417,7 @@ function stroke(hdr: Float32Array, W: number, H: number, ax: number, ay: number,
 export const mystify: Wallpaper = {
   id: "mystify",
   name: "Mystify",
-  description: "The old screensaver: bright polygons gliding and bouncing, morphing as they go, trailing fans of echoes",
+  description: "The old screensaver: bright polygons whose corners glide and bounce off the edges, trailing stacks of echoes",
   collection: "Classics",
   fixedTime: "day",
   activity: {
