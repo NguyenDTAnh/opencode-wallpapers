@@ -16,7 +16,14 @@ export default Plugin.define({
     if (external.skipped.length) context.ui.toast.show({ message: `Skipped wallpapers:\n${external.skipped.join("\n")}`, variant: "error" })
     const wallpapers = [...WALLPAPERS, ...external.wallpapers]
     const collections = [...new Set(wallpapers.map(collectionOf))]
-    const engine = createEngine(context, { dump: process.env.WALLPAPER_DUMP, dumpFade: process.env.WALLPAPER_DUMP_FADE })
+    // The theme's own page color: what the UI paints where nothing covers it, so the scene can leave every other
+    // surface - a dialog, a menu, a message or a code block - to the UI.
+    const page = context.theme.background.base
+    const engine = createEngine(context, {
+      dump: process.env.WALLPAPER_DUMP,
+      dumpFade: process.env.WALLPAPER_DUMP_FADE,
+      background: page ? [page.r, page.g, page.b] : undefined,
+    })
     // Environment overrides for development; they win over the stored choice.
     const pinned = process.env.WALLPAPER
     const pinnedActivity = process.env.WALLPAPER_ACTIVITY

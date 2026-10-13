@@ -42,6 +42,14 @@ export function mockScreen(options: { kitty?: boolean; W?: number; H?: number } 
       }
       post?.(buf)
     },
+    // Same pass, but the caller paints every cell itself, so a test can hand the engine a full UI (a popup) with its
+    // own per-cell colors and see what the engine gives back.
+    ui(paint: (i: number, x: number, y: number, buffers: typeof buffers) => void) {
+      const buf = { width: w, height: h, buffers }
+      layer?.(buf)
+      for (let i = 0; i < w * h; i++) paint(i, i % w, (i / w) | 0, buffers)
+      post?.(buf)
+    },
   }
 }
 

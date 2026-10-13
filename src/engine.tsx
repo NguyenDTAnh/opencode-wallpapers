@@ -742,6 +742,10 @@ export function createEngine(
     dump?: string
     // Writes the first frame past the middle of a crossfade, likewise.
     dumpFade?: string
+    // The theme's own page background: the color the UI paints where nothing covers it. Passed in rather than guessed,
+    // because the most common color in a frame is a widget's surface whenever a screenful of dialogs, messages or code
+    // covers the page, and painting the scene there is what makes those widgets flicker.
+    background?: RGB
     layer?: (renderer: Context["renderer"], draw: (buffer: OptimizedBuffer) => void) => { dispose(): void }
   } = {},
 ): Engine {
@@ -767,6 +771,9 @@ export function createEngine(
   let dumped = false
   let fadeDumped = false
   let base = -2
+  // The theme's page background, when the caller knows it: the scene paints only where the UI used it, so a dialog,
+  // a menu, a message or a code block keeps its own surface. -2 means "not known", and the most common color is used.
+  const pageBase = options.background ? ((options.background[0] & 255) << 16) | ((options.background[1] & 255) << 8) | (options.background[2] & 255) : -2
   let mask = new Float32Array(0)
   const quad = new Float32Array(24)
   const order = new Uint8Array(8)
@@ -1112,13 +1119,17 @@ export function createEngine(
         const k = key(bg, i * 4)
         counts.set(k, (counts.get(k) ?? 0) + 1)
       }
-      base = -2
-      let best = 0
-      for (const [k, n] of counts) if (n > best) ((best = n), (base = k))
+      const known = pageBase !== -2
+      base = known ? pageBase : -2
+      if (!known) {
+        let best = 0
+        for (const [k, n] of counts) if (n > best) ((best = n), (base = k))
+      }
       surfaces.clear()
       tints.clear()
       surfaces.add(base)
-      for (const [k, n] of counts) if (k !== base && n > cells * 0.002 && isSurface(k, light)) surfaces.add(k)
+      // When the page color is known, every other surface is a widget's, not the page: none of them shows the scene.
+      if (!known) for (const [k, n] of counts) if (k !== base && n > cells * 0.002 && isSurface(k, light)) surfaces.add(k)
     }
     const look = LEVELS[settings!.brightness ?? "normal"]
     const curve = light ? look.light : look.dark
@@ -1139,9 +1150,12 @@ export function createEngine(
     for (let i = 0; i < cells; i++) {
       const k = key(bg, i * 4)
       const tint = tintOf(k)
-      const on = tint !== NO_TINT
+      // The scene shows only where the UI painted the page's own background. A cell whose background is some other
+      // color - a dialog, a menu, a message or tool block, the prompt - belongs to the UI, and tinting it or fitting
+      // scene glyphs into it makes the wallpaper show through that widget and flicker as the scene moves.
+      const on = tint !== NO_TINT && k === base
       surface[i] = on ? 1 : 0
-      cellTint[i] = tint
+      cellTint[i] = on ? tint : NO_TINT
       // 1 for text, 2 for a blank cell of a panel (a surface other than the base, such as a dialog), else 0.
       const shape = !on ? 0 : char[i] !== SPACE && !(isBlock(char[i]) && tintOf(fgKey(fg, i * 4)) !== NO_TINT) ? 1 : k !== base && tint === TINT_ZERO ? 2 : 0
       if (shapes[i] !== shape) ((shapes[i] = shape), (reshaped = true))
