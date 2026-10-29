@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- An OpenCode Desktop part: the same wallpapers, as a panel the plugin owns in the session's side region. Open it from
+  the command palette or `/wallpaper`, with the settings in the panel itself.
+- The desktop part reuses every scene unchanged and replaces only the renderer: a canvas needs real pixels, not the
+  terminal's two colours per cell.
+- Desktop leaves out what needs a terminal or a filesystem: the `WALLPAPER_*` variables, kitty pixel mode, wallpapers
+  from other packages, and the per-project setting.
+
 ## 0.1.0
 
 First release.
