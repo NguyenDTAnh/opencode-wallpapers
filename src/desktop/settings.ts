@@ -54,9 +54,11 @@ export function currentCollection(state: Stored): string {
   return state.collections?.[""] ?? "all"
 }
 
-// A change that happened far enough back to shuffle. One scope: the app, keyed by "".
+// A change that happened far enough back to shuffle. One scope: the app, keyed by "". Before any change there is no
+// hour to measure from, so nothing is due.
 export function due(state: Stored): boolean {
-  return Date.now() - (state.changed?.[""] ?? 0) >= HOUR
+  const at = state.changed?.[""]
+  return at !== undefined && Date.now() - at >= HOUR
 }
 
 // Wallpapers in the chosen collection, in menu order.
