@@ -38,9 +38,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun dev/build.ts",
+    "build": "bun dev/build.ts && vite build",
     "prepack": "bun run build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.gui.json --noEmit",
     "check": "bun dev/check.ts",
     "screenshots": "bun dev/screenshots.ts",
     "screenshots:update": "bun dev/screenshots.ts --update",
@@ -68,6 +68,8 @@
     "@opentui/core": "0.5.14",
     "@opentui/solid": "0.5.14",
     "@types/bun": "latest",
+    "@types/node": "^26.6.6",
+    "electron": "^45.1.0",
     "solid-js": "1.9.9",
     "typescript": "^5.9.0",
     "vite": "^8.3.5",

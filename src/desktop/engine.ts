@@ -1,4 +1,4 @@
-import { AGENT_EVENTS, settingsFor, type AgentEvent, type Brightness, type Power, type Scene, type Settings, type Wallpaper } from "../wallpaper"
+import { settingsFor, type AgentEvent, type Brightness, type Power, type Scene, type Settings, type Wallpaper } from "../wallpaper"
 
 // The canvas engine for the desktop panel. The TUI engine (src/engine.tsx) exists to turn a scene's pixels into
 // terminal cells: two colours per cell, octant glyphs, a scrim behind text. A canvas has real pixels, so all of that
@@ -23,6 +23,10 @@ export function brightnessCurve(brightness: Brightness): Uint8Array {
   return curve
 }
 
+// How much faster a scene runs while the agent works, by activity level. From the TUI engine.
+const BUSY_PACE = { calm: 1.12, lively: 1.25, teeming: 1.4 } as const
+// How long a failure keeps a scene overcast before it eases back. From the TUI engine.
+const GLOOM_MS = 120_000
 // The crossfade between two wallpapers, in seconds of real time.
 const FADE = 1.5
 // Scenes clamp a step at 0.1 s; longer gaps are split, so a stalled tab does not jump the scene forward.
@@ -86,6 +90,9 @@ export function createEngine(options: EngineOptions): Engine {
   let height = 0
   let interval = 1000 / fps
   let power: Power = "saver"
+  let busy = false
+  let pace = 1
+  let lifting: ReturnType<typeof setTimeout> | undefined
   let frame: number | undefined
   let lastStep = 0
   let lastActivity = 0
@@ -171,6 +178,11 @@ export function createEngine(options: EngineOptions): Engine {
         blended[i + 3] = 255
       }
       context.putImageData(new ImageData(blended, source.width, source.height), 0, 0)
+      // The outgoing scene is done fading; release it so only one scene is kept between changes.
+      if (fading >= 1) {
+        outgoing = undefined
+        outgoingData = undefined
+      }
     } else {
       context.drawImage(source, 0, 0, canvas.width, canvas.height)
     }
@@ -188,8 +200,11 @@ export function createEngine(options: EngineOptions): Engine {
     lastStep = at
     if (power === "saver" && at - lastActivity > idleAfter) interval = 1000 / idleFps
     try {
+      // A scene runs faster while the agent works, easing toward its activity level's pace as the TUI does.
+      const target = busy && current.settings.activity ? BUSY_PACE[current.settings.activity] : 1
+      pace += (target - pace) * 0.08
       // Long gaps are split, so a scene never takes a step it would clamp anyway.
-      const seconds = Math.min(elapsed / 1000, 1)
+      const seconds = Math.min(elapsed / 1000, 1) * pace
       for (let remaining = seconds; remaining > 0; remaining -= MAX_STEP) current.scene.step(Math.min(MAX_STEP, remaining))
       if (outgoing && fading < 1) {
         for (let remaining = seconds; remaining > 0; remaining -= MAX_STEP) outgoing.scene.step(Math.min(MAX_STEP, remaining))
@@ -237,7 +252,13 @@ export function createEngine(options: EngineOptions): Engine {
       if (current && current.wallpaper.id === wallpaper.id && fade === undefined && sameScene(current.settings, resolved)) {
         current.settings = resolved
         touched()
-        blit()
+        try {
+          blit()
+        } catch (error) {
+          report(error)
+          stop()
+          return
+        }
         start()
         return
       }
@@ -257,12 +278,23 @@ export function createEngine(options: EngineOptions): Engine {
       current = { scene, wallpaper, settings: resolved }
       frameData = undefined
       touched()
-      blit()
+      // The first frame renders outside the loop, so a scene that throws on its first render must not escape here.
+      try {
+        blit()
+      } catch (error) {
+        report(error)
+        stop()
+        return
+      }
       start()
     },
     stop,
     react(event) {
       touched()
+      busy = event === "busy"
+      clearTimeout(lifting)
+      // A failure dims the scene for a couple of minutes, then it eases back on its own.
+      if (event === "error") lifting = setTimeout(() => engine.react("idle"), GLOOM_MS)
       try {
         current?.scene.react?.(event)
         outgoing?.scene.react?.(event)
@@ -286,6 +318,7 @@ export function createEngine(options: EngineOptions): Engine {
     destroy() {
       stop()
       destroyed = true
+      clearTimeout(lifting)
       observer.disconnect()
       document.removeEventListener("visibilitychange", onVisibility)
     },
@@ -307,6 +340,3 @@ export function createEngine(options: EngineOptions): Engine {
   resize()
   return engine
 }
-
-// The agent events a scene reacts to, re-exported so the panel does not import src/wallpaper for one constant.
-export { AGENT_EVENTS }

@@ -80,6 +80,16 @@ export function rowsFor(state: Stored, now: Date): Row[] {
         ({ subtle: "A dim scene that stays out of the way", normal: "The standard look", vivid: "A brighter scene" })[v as (typeof BRIGHTNESSES)[number]],
     },
     {
+      title: "Power",
+      values: POWERS,
+      value: state.power ?? "saver",
+      label: capitalize,
+      describe: (v) =>
+        v === "saver"
+          ? "Slows down after 30 seconds without activity, and pauses while the window is hidden"
+          : "Always the full frame rate",
+    },
+    {
       title: "Shuffle",
       values: SHUFFLES,
       value: state.shuffle ?? "off",
@@ -89,6 +99,3 @@ export function rowsFor(state: Stored, now: Date): Row[] {
   ]
   return fixed ? rows.filter((r) => r.title !== "Time of day" && r.title !== "Season" && r.title !== "Weather") : rows
 }
-
-// Re-exported for the controls, so they do not import the settings module for one word.
-export { POWERS }

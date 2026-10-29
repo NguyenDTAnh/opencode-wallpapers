@@ -19,8 +19,8 @@ export function Controls(props: {
   return (
     <>
       <For each={rows()}>
-        {(row) => (
-          <label class="wallpapers-row" onMouseEnter={() => setFocused(rows().indexOf(row))} onFocus={() => setFocused(rows().indexOf(row))}>
+        {(row, index) => (
+          <label class="wallpapers-row" onMouseEnter={() => setFocused(index())} onFocus={() => setFocused(index())}>
             <span class="wallpapers-row-label">{row.title}</span>
             <select value={row.value} onChange={(event) => props.onChange(apply(props.state, event.currentTarget.value).state)}>
               <For each={row.values}>{(value) => <option value={value}>{row.label(value)}</option>}</For>

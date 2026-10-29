@@ -34,12 +34,21 @@ export const css = `
   line-height: 1.5;
 }
 
+.wallpapers-bottom {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: auto;
+  min-height: 0;
+}
+
 .wallpapers-settings {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin: auto 0.5rem 0.5rem;
+  margin: 0 0.5rem;
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   background: color-mix(in srgb, var(--color-background-200, #1d2026) 88%, transparent);

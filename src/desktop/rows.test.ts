@@ -14,6 +14,7 @@ test("every row offers a current value it can label and describe", () => {
     "Season",
     "Weather",
     "Brightness",
+    "Power",
     "Shuffle",
   ])
   for (const row of rows) {

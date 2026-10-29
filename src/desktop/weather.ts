@@ -1,6 +1,6 @@
 import { settingsFor, type Settings } from "../wallpaper"
 import { coordinatesOf, type Forecast } from "../forecast"
-import { currentCollection, due, inCollection, seasonAt, timeAt, type Stored } from "./settings"
+import { due, inCollection, seasonAt, timeAt, type Stored } from "./settings"
 import { findWallpaper } from "./scenes"
 
 // Turns stored settings into what a scene renders with. The panel calls this on every change and on every minute
@@ -32,9 +32,4 @@ export function nextShuffle(state: Stored): string | undefined {
   const members = inCollection(state).filter((w) => w.id !== state.wallpaper)
   if (!members.length) return undefined
   return members[Math.floor(Math.random() * members.length)].id
-}
-
-// The collection menu offers "all" plus every named collection, which the panel shows as-is.
-export function collectionName(state: Stored): string {
-  return currentCollection(state)
 }

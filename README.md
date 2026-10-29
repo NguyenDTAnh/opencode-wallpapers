@@ -39,8 +39,8 @@ The same package also has a desktop part. In OpenCode Desktop the wallpaper is a
 the window background: the side region's **Wallpaper** tab, or the bottom pane if you drag it there.
 
 Open it from the command palette (**Choose wallpaper**) or by typing `/wallpaper` in the composer. `/wallpaper beach`
-still works, with the same arguments as the terminal. Settings live in the panel's own row under the scene, and
-brightness changes restyle the running scene instead of restarting it.
+still works, with the same arguments as the terminal. Settings live behind the panel's own **Settings** button, which
+toggles a row of choices above the bar; brightness changes restyle the running scene instead of restarting it.
 
 Three things differ from the terminal:
 
