@@ -9,7 +9,8 @@ const clock = ((globalThis as { [EGG]?: { viewed: number; due: number } })[EGG] 
 // Returns real seconds; scenes count it down in their own slowed time, so they multiply by TIME_SCALE. Pass next once
 // the egg is over, to start the following wait.
 export function eggWait(next = false) {
-  if (process.env.WALLPAPER_EGG === "1") return 3
+  // Guarded: the desktop GUI renders scenes in a browser window, which has no process global.
+  if (globalThis.process?.env?.WALLPAPER_EGG === "1") return 3
   // Drawn on every call, used or not, so seeded dev renders don't depend on what ran before.
   const wait = 1800 - Math.log(1 - Math.random()) * 3600
   if (next || clock.due < 0) clock.due = clock.viewed + wait
