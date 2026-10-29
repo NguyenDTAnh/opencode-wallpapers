@@ -11,5 +11,6 @@
     "lib": ["ESNext", "DOM"],
     "types": ["bun"]
   },
-  "include": ["tui.tsx", "src", "wallpapers", "dev"]
+  "include": ["tui.tsx", "src", "wallpapers", "dev"],
+  "exclude": ["src/gui.tsx", "src/gui", "src/desktop"]
 }

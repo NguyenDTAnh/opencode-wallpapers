@@ -14,7 +14,7 @@ test("auto time follows the clock", () => {
 test("a fixed wallpaper ignores the time setting", () => {
   const fixed = findWallpaper("matrix")!
   expect(fixed.fixedTime).toBeDefined()
-  expect(resolveSettings({ ...INITIAL, wallpaper: "matrix", time: "day" }, midnight, undefined).time).toBe(fixed.fixedTime)
+  expect(resolveSettings({ ...INITIAL, wallpaper: "matrix", time: "day" }, midnight, undefined).time).toBe(fixed.fixedTime!)
 })
 
 test("weather off is undefined, local falls back to clear without a forecast", () => {

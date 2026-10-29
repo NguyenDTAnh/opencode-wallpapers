@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": ["bun", "node"]
+  },
+  "include": ["src/gui.tsx", "src/gui", "src/desktop", "vite.config.ts"]
+}

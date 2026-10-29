@@ -7,7 +7,7 @@ import solidPlugin from "@opentui/solid/bun-plugin"
 
 rmSync("dist", { recursive: true, force: true })
 const result = await Bun.build({
-  entrypoints: ["tui.tsx", "src/api.ts"],
+  entrypoints: ["tui.tsx", "src/api.ts", "src/index.ts"],
   outdir: "dist",
   naming: "[name].[ext]",
   target: "bun",
