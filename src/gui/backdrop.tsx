@@ -44,6 +44,8 @@ export const backdropCss = `
   width: 100%;
   height: 100%;
   display: block;
+  /* The scene sits behind a scrim, so lift it a little to keep the colours from going muddy. */
+  filter: brightness(1.15);
 }
 .wallpapers-backdrop-scrim {
   position: absolute;
