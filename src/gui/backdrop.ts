@@ -20,20 +20,33 @@ export interface BackdropHandle {
 // alpha colour, and the opaque fill comes from --surface-raised-stronger-non-alpha.
 const OVERRIDE = `
 html, body, #root { background: transparent !important; }
+
+/* The app declares its fills under [data-color-scheme], which outranks :root, so the override matches that selector.
+   Only the background layers go transparent: they are what the window paints behind the interface. */
+[data-color-scheme], [data-color-scheme][data-color-scheme],
 :root, :root[data-theme], body {
-  --surface-base: transparent !important;
-  --surface-raised-base: transparent !important;
-  --surface-raised-stronger-non-alpha: transparent !important;
-  --surface-stronger-non-alpha: transparent !important;
-  --color-v2-background-bg-base: transparent !important;
-  --v2-background-bg-base: transparent !important;
   --v2-background-bg-deep: transparent !important;
+  --v2-background-bg-base: transparent !important;
+  --v2-background-bg-layer-02: transparent !important;
+  --color-v2-background-bg-base: transparent !important;
   --color-v2-background-bg-layer-02: transparent !important;
+}
+
+/* Overlays read the same background variables, so they are pinned back to the app's own elevation colour: a dialog,
+   popover, menu or dropdown must stay opaque, or its content would sit on the moving scene. */
+[data-component="dialog"],
+[data-component="popover"],
+[data-component="menu"],
+[data-component="context-menu"],
+[data-component="select"],
+[data-component="tooltip"] {
+  background-color: var(--surface-raised-stronger-non-alpha) !important;
+  backdrop-filter: none !important;
 }
 `
 
 // The variable whose value proves the override reached the app.
-const WITNESS = "--surface-raised-stronger-non-alpha"
+const WITNESS = "--v2-background-bg-deep"
 
 export function overridePassed(before: string, after: string): boolean {
   // A pass is an opaque fill turning fully transparent. Anything else proves nothing: a surface that was already
@@ -106,6 +119,7 @@ export function openBackdrop(options: {
   document.body.prepend(root)
 
   let engine: Engine | undefined = createEngine({ canvas, onError: options.onError })
+
 
   return {
     setWallpaper(wallpaper, settings, fade) {
