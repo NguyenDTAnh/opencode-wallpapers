@@ -120,26 +120,25 @@ export const backdropCss = `
   top: auto !important;
 }
 
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is([data-home-row], button):not(
-  [data-selected], [aria-selected=true], [data-state=active]
+/* App tabs paint their surface from these two variables, not from background-color, so a colour rule never reaches
+   them. Clearing the base removes the resting surface; the overlay still carries hover and the active tab. */
+#root:has(.wallpapers-backdrop) :is([data-titlebar-tab], [data-titlebar-tab-action]) {
+  --tab-base: transparent !important;
+}
+
+/* Project rows in the sidebar keep the same resting behaviour. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] [data-home-row]:not(
+  :hover, :focus-within, [data-selected], :has([data-menu=true])
 ) {
   background-color: transparent !important;
   background-image: none !important;
 }
 
-/* Each row paints its surface on the div inside its button, not on the button itself, so target that child. Hover and
-   the current session keep their surface; the rest reveal the wallpaper. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button:not(:hover, :focus-within) > div:not(
-  [data-selected], [aria-selected=true], [data-state=active]
-) {
-  background-color: transparent !important;
-  background-image: none !important;
+#root:has(.wallpapers-backdrop) [data-titlebar-tab]:is(:hover, :has(:focus-visible), [data-state=pressed], [data-status]) {
+  --tab-overlay: var(--v2-overlay-simple-overlay-hover) !important;
 }
 
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-selected] > div,
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[aria-selected=true] > div,
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-state=active] > div {
-  background-color: var(--v2-background-bg-layer-02) !important;
-  background-image: none !important;
+#root:has(.wallpapers-backdrop) [data-titlebar-tab][data-active=true] {
+  --tab-overlay: var(--v2-background-bg-layer-02) !important;
 }
 `

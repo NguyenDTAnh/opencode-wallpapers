@@ -68,8 +68,8 @@ render(() => <>
             <div id="sidebar-div-row-selected-wrap" data-selected="">
               <button id="sidebar-div-row-selected"><div id="sidebar-div-selected-inside" class="bg-v2-background-bg-base" data-selected="">Selected row</div></button>
             </div>
-            <button id="sidebar-tab" data-slot="tabs-trigger" class="bg-v2-background-bg-base">Session tab</button>
-            <button id="sidebar-tab-selected" data-slot="tabs-trigger" data-selected="true" class="bg-v2-background-bg-layer-03">Selected tab</button>
+            <div data-titlebar-tab id="sidebar-tab" style={{ "--tab-base": "var(--v2-background-bg-deep)", "--tab-overlay": "transparent", background: "linear-gradient(var(--tab-overlay), var(--tab-overlay)), var(--tab-base)" }}>Session tab</div>
+            <div data-titlebar-tab data-active="true" id="sidebar-tab-selected" style={{ "--tab-base": "var(--v2-background-bg-deep)", "--tab-overlay": "transparent", background: "linear-gradient(var(--tab-overlay), var(--tab-overlay)), var(--tab-base)" }}>Selected tab</div>
             <div data-home-row class="bg-v2-background-bg-base"><button>Default Project</button></div>
             <div role="menu" />
           </div>

@@ -107,16 +107,11 @@ with sync_playwright() as p:
         assert paint == "none", paint
         page.screenshot(path=str(fixture.parent / "home.png"))
         assert background("[data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
-        # Sidebar session rows and tab buttons have no resting surface; the selected one keeps its highlight.
-        assert background("#sidebar-tab") == "rgba(0, 0, 0, 0)"
-        assert background("[data-slot=vertical-tabs-mount] [data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
-        # A row whose surface sits on the div inside its button (with an added gradient) clears.
-        assert background("#sidebar-div-inside") == "rgba(0, 0, 0, 0)"
-        assert page.locator("#sidebar-div-inside").evaluate("e => getComputedStyle(e).backgroundImage") == "none"
-        # Selected rows keep a readable surface.
-        selected = background("#sidebar-div-selected-inside")
-        assert selected != "rgba(0, 0, 0, 0)", "selected sidebar row lost its surface"
-        assert background("#sidebar-tab-selected") != "rgba(0, 0, 0, 0)"
+        # Sidebar session tabs paint from --tab-base, not background-color.
+        assert page.locator("#sidebar-tab").evaluate("e => getComputedStyle(e).getPropertyValue('--tab-base').trim()") == "transparent"
+        assert page.locator("#sidebar-tab").evaluate("e => getComputedStyle(e).backgroundImage").startswith("linear-gradient")
+        overlay = page.locator("#sidebar-tab-selected").evaluate("e => getComputedStyle(e).getPropertyValue('--tab-overlay').trim()")
+        assert overlay not in ("", "transparent"), f"active tab lost its overlay: {overlay!r}"
         assert background("[data-home-row][data-selected]") == "rgb(38, 38, 38)"
         page.locator("[data-slot=home-projects-viewport] [data-home-row] button").first.hover()
         assert background("[data-slot=home-projects-viewport] [data-home-row]:not([data-selected])") == "rgb(38, 38, 38)"
