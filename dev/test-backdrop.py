@@ -42,7 +42,7 @@ with sync_playwright() as p:
         # The dark scrim is a single 36% black layer now, not a gradient.
         scrim = page.locator(".wallpapers-backdrop-scrim-dark")
         assert scrim.count() == 1
-        assert scrim.evaluate("e => getComputedStyle(e).backgroundColor") == "rgba(0, 0, 0, 0.36)"
+        assert scrim.evaluate("e => getComputedStyle(e).backgroundColor") == "rgba(0, 0, 0, 0.5)"
         assert scrim.evaluate("e => getComputedStyle(e).backgroundImage") == "none"
 
         page.get_by_text("Toggle theme", exact=True).click()
@@ -94,7 +94,11 @@ with sync_playwright() as p:
         assert background("#home-header") == "rgba(0, 0, 0, 0)"
         assert background("[data-component=home-session-search] > label") == "rgb(38, 38, 38)"
         assert page.locator("[data-component=home-session-search] > label").evaluate("e => getComputedStyle(e).boxShadow") == "none"
-        assert page.locator("canvas.wallpapers-backdrop-canvas").evaluate("e => getComputedStyle(e).filter") == "brightness(1.9)"
+        assert page.locator("canvas.wallpapers-backdrop-canvas").evaluate("e => getComputedStyle(e).filter") == "brightness(1.6)"
+        page.get_by_text("Cycle brightness", exact=True).click()
+        assert page.locator("canvas.wallpapers-backdrop-canvas").evaluate("e => getComputedStyle(e).filter") == "brightness(2)"
+        page.get_by_text("Cycle brightness", exact=True).click()
+        assert page.locator("canvas.wallpapers-backdrop-canvas").evaluate("e => getComputedStyle(e).filter") == "brightness(1.2)"
         assert background("#home-date") == "rgba(0, 0, 0, 0)"
         assert page.locator("#home-header").evaluate("e => getComputedStyle(e).position") == "relative"
         assert page.locator("#home-date").evaluate("e => getComputedStyle(e).position") == "relative"

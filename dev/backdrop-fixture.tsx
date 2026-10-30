@@ -50,7 +50,8 @@ const [engine, setEngine] = createSignal<Engine>()
 const [theme, setTheme] = createSignal<"light" | "dark">("dark")
 const [home, setHome] = createSignal(false)
 const [scene, setScene] = createSignal("ocean")
-createEffect(() => engine()?.start(findWallpaper(scene())!, { activity: "calm", time: "day", season: "summer", weather: "clear" }, 1.5))
+const [brightness, setBrightness] = createSignal<"subtle" | "normal" | "vivid">("normal")
+createEffect(() => engine()?.start(findWallpaper(scene())!, { activity: "calm", time: "day", season: "summer", weather: "clear", brightness: brightness() }, 1.5))
 
 render(() => <>
   <style>{hostCss + backdropCss}</style>
@@ -78,7 +79,7 @@ render(() => <>
       </main>
     </div>
     <Show when={enabled()}>
-      <Backdrop theme={theme()} onReady={setEngine} onError={(e) => { throw e }} />
+      <Backdrop theme={theme()} brightness={brightness()} onReady={setEngine} onError={(e) => { throw e }} />
     </Show>
   </div>
   <div role="dialog" />
@@ -106,5 +107,6 @@ render(() => <>
     <button onClick={() => setTheme(theme() === "dark" ? "light" : "dark")}>Toggle theme</button>
     <button onClick={() => setHome(!home())}>Toggle home</button>
     <button onClick={() => setScene(scene() === "ocean" ? "city" : "ocean")}>Toggle scene</button>
+    <button onClick={() => setBrightness(brightness() === "vivid" ? "subtle" : brightness() === "subtle" ? "normal" : "vivid")}>Cycle brightness</button>
   </div>
 </>, document.getElementById("root")!)

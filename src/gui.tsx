@@ -36,6 +36,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
       <Show when={findWallpaper(prefs().wallpaper)}>
         <Backdrop
           theme={ctx.appearance.mode()}
+          brightness={prefs().brightness ?? "normal"}
           onReady={(engine) => {
             painted = ""
             setBackdrop(engine)

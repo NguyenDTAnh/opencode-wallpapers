@@ -1,16 +1,26 @@
 import { createEngine, type Engine } from "../desktop/engine"
-import { onCleanup, onMount } from "solid-js"
+import { createEffect, onCleanup, onMount } from "solid-js"
+import type { Brightness } from "../wallpaper"
 
 export interface BackdropProps {
   theme: "light" | "dark"
+  brightness: Brightness
   onReady(engine: Engine | undefined): void
   onError(error: unknown): void
 }
+
+// The scene sits behind a scrim, so the canvas is lifted before the scrim dims it. The level follows the chosen
+// brightness setting instead of one fixed number.
+export const BRIGHTNESS_FILTER: Record<Brightness, number> = { subtle: 1.2, normal: 1.6, vivid: 2 }
 
 // The canvas is plugin-owned. OpenCode only mounts this component through Slot; it is never located or appended by script.
 export function Backdrop(props: BackdropProps) {
   let canvas!: HTMLCanvasElement
   let engine: Engine | undefined
+
+  createEffect(() => {
+    if (canvas) canvas.style.filter = `brightness(${BRIGHTNESS_FILTER[props.brightness]})`
+  })
 
   onMount(() => {
     engine = createEngine({ canvas, onError: props.onError })
@@ -44,15 +54,13 @@ export const backdropCss = `
   width: 100%;
   height: 100%;
   display: block;
-  /* The scene sits behind a scrim, so lift it a little to keep the colours from going muddy. */
-  filter: brightness(1.9);
 }
 .wallpapers-backdrop-scrim {
   position: absolute;
   inset: 0;
 }
 .wallpapers-backdrop-scrim-dark {
-  background: rgb(0 0 0 / 0.36);
+  background: rgb(0 0 0 / 0.5);
 }
 .wallpapers-backdrop-scrim-light {
   background: linear-gradient(180deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0.75) 50%, rgb(255 255 255 / 0.65) 100%);
