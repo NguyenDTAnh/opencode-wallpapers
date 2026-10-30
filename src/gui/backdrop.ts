@@ -32,16 +32,26 @@ html, body, #root { background: transparent !important; }
   --color-v2-background-bg-layer-02: transparent !important;
 }
 
-/* Overlays read the same background variables, so they are pinned back to the app's own elevation colour: a dialog,
-   popover, menu or dropdown must stay opaque, or its content would sit on the moving scene. */
-[data-component="dialog"],
-[data-component="popover"],
-[data-component="menu"],
-[data-component="context-menu"],
-[data-component="select"],
-[data-component="tooltip"] {
-  background-color: var(--surface-raised-stronger-non-alpha) !important;
-  backdrop-filter: none !important;
+/* Overlays read the same background variables, so each overlay scope restores them to the app's own grey ramp. Pinning
+   a colour would not survive an overlay that nests another surface (a list inside a dialog reads bg-base, not the
+   dialog's own layer), so the variables are restored instead of the paint. */
+[data-component="dialog-v2"],
+[data-component="dialog-overlay"],
+[data-component="popover-content"],
+[data-component="menu-v2-content"],
+[data-component="context-menu-content"],
+[data-component="context-menu-sub-content"],
+[data-component="hover-card-content"],
+[data-component="session-tab-popover"],
+[data-component="list"],
+[data-component="search-list"] {
+  --v2-background-bg-deep: var(--v2-grey-1200) !important;
+  --v2-background-bg-base: var(--v2-grey-1100) !important;
+  --v2-background-bg-layer-01: var(--v2-grey-1000) !important;
+  --v2-background-bg-layer-02: var(--v2-grey-900) !important;
+  --v2-background-bg-layer-03: var(--v2-grey-800) !important;
+  --color-v2-background-bg-base: var(--v2-grey-1100) !important;
+  --color-v2-background-bg-layer-02: var(--v2-grey-900) !important;
 }
 `
 
