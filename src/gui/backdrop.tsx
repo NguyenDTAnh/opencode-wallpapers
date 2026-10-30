@@ -120,13 +120,7 @@ export const backdropCss = `
   top: auto !important;
 }
 
-/* App tabs paint their surface from these two variables, not from background-color, so a colour rule never reaches
-   them. Clearing the base removes the resting surface; the overlay still carries hover and the active tab. */
-#root:has(.wallpapers-backdrop) :is([data-titlebar-tab], [data-titlebar-tab-action]) {
-  --tab-base: transparent !important;
-}
-
-/* Project rows in the sidebar keep the same resting behaviour. */
+/* Project rows and home rows in the sidebar: no resting surface. */
 #root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] [data-home-row]:not(
   :hover, :focus-within, [data-selected], :has([data-menu=true])
 ) {
@@ -134,11 +128,23 @@ export const backdropCss = `
   background-image: none !important;
 }
 
+/* App tabs paint their surface as a gradient built from these two variables, not from background-color, so a colour
+   rule never reached them. Override the gradient itself. */
+#root:has(.wallpapers-backdrop) :is([data-titlebar-tab], [data-titlebar-tab-action]) {
+  background: transparent !important;
+}
+
+/* Hover and the open tab still read. */
 #root:has(.wallpapers-backdrop) [data-titlebar-tab]:is(:hover, :has(:focus-visible), [data-state=pressed], [data-status]) {
-  --tab-overlay: var(--v2-overlay-simple-overlay-hover) !important;
+  background: var(--v2-overlay-simple-overlay-hover) !important;
 }
 
 #root:has(.wallpapers-backdrop) [data-titlebar-tab][data-active=true] {
-  --tab-overlay: var(--v2-background-bg-layer-02) !important;
+  background: var(--v2-background-bg-layer-02) !important;
+}
+
+/* The close affordance inside a row inherits the tab's surface; leave it alone so its own hover still shows. */
+#root:has(.wallpapers-backdrop) [data-titlebar-tab] > [data-slot=tab-close] {
+  background: none !important;
 }
 `
