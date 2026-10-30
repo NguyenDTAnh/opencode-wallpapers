@@ -52,7 +52,7 @@ export const backdropCss = `
   inset: 0;
 }
 .wallpapers-backdrop-scrim-dark {
-  background: linear-gradient(180deg, rgb(0 0 0 / 0.55) 0%, rgb(0 0 0 / 0.72) 50%, rgb(0 0 0 / 0.62) 100%);
+  background: rgb(0 0 0 / 0.36);
 }
 .wallpapers-backdrop-scrim-light {
   background: linear-gradient(180deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0.75) 50%, rgb(255 255 255 / 0.65) 100%);

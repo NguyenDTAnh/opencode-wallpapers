@@ -39,6 +39,11 @@ with sync_playwright() as p:
         assert second.getpixel((400, 590)) == (28, 28, 28), "composer not opaque"
         assert second.getpixel((700, 420)) == (38, 38, 38), "dialog not opaque"
         page.screenshot(path=str(fixture.parent / "enabled.png"))
+        # The dark scrim is a single 36% black layer now, not a gradient.
+        scrim = page.locator(".wallpapers-backdrop-scrim-dark")
+        assert scrim.count() == 1
+        assert scrim.evaluate("e => getComputedStyle(e).backgroundColor") == "rgba(0, 0, 0, 0.36)"
+        assert scrim.evaluate("e => getComputedStyle(e).backgroundImage") == "none"
 
         page.get_by_text("Toggle theme", exact=True).click()
         assert page.locator(".wallpapers-backdrop-scrim-light").count() == 1
