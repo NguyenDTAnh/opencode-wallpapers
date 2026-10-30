@@ -35,17 +35,22 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 
 ## OpenCode Desktop
 
-The same package also has a desktop part. In OpenCode Desktop the wallpaper is a panel the plugin owns rather than
-the window background: the side region's **Wallpaper** tab, or the bottom pane if you drag it there.
+The same package also has a desktop part. By default the wallpaper fills the **whole window**, behind the sidebar, the
+timeline and the composer, dimmed by a scrim so text stays readable. Pick **Panel** in the Backdrop setting to keep it
+inside the plugin's own panel instead.
 
 Open it from the command palette (**Choose wallpaper**) or by typing `/wallpaper` in the composer. `/wallpaper beach`
 still works, with the same arguments as the terminal. Settings live behind the panel's own **Settings** button, which
 toggles a row of choices above the bar; brightness changes restyle the running scene instead of restarting it.
 
+The window backdrop is a layer below the app's own surfaces, never on top of them: nothing the plugin draws covers a
+label, a button or the composer, and dialogs paint their own background as usual. It survives closing the panel tab,
+collapsing the side region and switching sessions.
+
 Three things differ from the terminal:
 
-- The scene fills the panel, not the window. The desktop app exposes no surface behind its interface, so a wallpaper
-  behind the whole window is not available.
+- If the desktop app changes the internal style variables the backdrop relies on, the wallpaper moves to the panel and
+  a notice says so, rather than leaving a black window.
 - Wallpapers from other packages through the `wallpapers` option are not loaded. A window has no filesystem to import
   them from. The built-in wallpapers all work.
 - The terminal-only environment variables below and the per-project setting do not apply. One wallpaper serves every
