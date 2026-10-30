@@ -22,6 +22,9 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
   let backdrop: BackdropHandle | undefined
   // What the running scene was built from, so a brightness-only change restyles instead of restarting.
   let painted = ""
+  // The override failed in this window. Nothing can paint in the backdrop, so the panel paints instead, and the stored
+  // mode is left alone so the next window boot tries again.
+  let failed = false
 
   const store = ctx.stores.prefs
   const prefs = () => store.value
@@ -34,12 +37,15 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
 
   // Opens or closes the layer as the mode changes. `null` means the override failed, so the panel keeps painting.
   createEffect(() => {
-    const action = nextAction(prefs().backdrop ?? "window", backdrop !== undefined)
+    const action = nextAction(prefs().backdrop ?? "window", backdrop !== undefined, failed)
     if (action === "close") close()
     if (action !== "open") return
     backdrop = openBackdrop({
       onError: (error) => notify(ctx, error),
-      onFallback: () => ctx.toast.show({ title: ctx.t("fallback"), variant: "error" }),
+      onFallback: () => {
+        failed = true
+        ctx.toast.show({ title: ctx.t("fallback"), variant: "error" })
+      },
       theme: ctx.appearance.mode(),
     })
   })
@@ -51,7 +57,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
   // that changes the picture.
   createEffect(() => {
     const current = prefs()
-    if (ownerFor(current.backdrop ?? "window") !== "backdrop" || !backdrop) return
+    if (ownerFor(current.backdrop ?? "window", failed) !== "backdrop" || !backdrop) return
     backdrop.power(current.power ?? "saver")
     const settings = resolveSettings(current, new Date(), undefined)
     const wallpaper = findWallpaper(current.wallpaper)
@@ -131,7 +137,9 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
       icon: "photo",
     },
     list: (input: { readonly open: readonly string[] }) => (input.open.includes(TAB) ? [tab] : []),
-    render: (props: PanelProps) => <Scene session={props.session} store={store} servers={ctx.servers} onError={(error) => notify(ctx, error)} />,
+    render: (props: PanelProps) => (
+      <Scene session={props.session} store={store} servers={ctx.servers} fallback={() => failed} onError={(error) => notify(ctx, error)} />
+    ),
   })
 
   ctx.add(Command, () => ({

@@ -6,6 +6,7 @@ import { findWallpaper } from "../desktop/scenes"
 import { resolveSettings, nextShuffle } from "../desktop/weather"
 import { forecast, REFRESH, type Forecast } from "../forecast"
 import { Controls } from "./controls"
+import { ownerFor } from "./ownership"
 
 // How long the old scene takes to fade into a newly chosen one.
 const FADE = 1.5
@@ -19,6 +20,8 @@ export function Scene(props: {
   readonly session: MountedSession
   readonly store: Persisted<Stored>
   readonly servers: Servers
+  // True while the window backdrop cannot be painted, so the panel takes over the scene.
+  readonly fallback: () => boolean
   readonly onError: (error: unknown) => void
 }) {
   let surface!: HTMLDivElement
@@ -31,8 +34,9 @@ export function Scene(props: {
   let started: string | undefined
   let startedKey = ""
   const panel = usePanel()
-  // The backdrop owns the engine in window mode; the panel then paints nothing.
-  const mine = () => (state(props.store).backdrop ?? "window") === "panel"
+  // The backdrop owns the engine in window mode; the panel paints only when it is the owner, which includes the case of
+  // a window backdrop that failed to paint.
+  const mine = () => ownerFor(state(props.store).backdrop ?? "window", props.fallback()) === "panel"
 
   onMount(() => {
     if (!state(props.store).wallpaper) setOpen(true)

@@ -21,3 +21,14 @@ test("a mode switch always moves ownership to exactly one layer", () => {
   expect([nextAction("window", true), nextAction("panel", true)]).toEqual(["none", "close"])
   expect([nextAction("panel", false), nextAction("window", false)]).toEqual(["none", "open"])
 })
+
+test("a failed override hands the painting back to the panel", () => {
+  // The store still says window, but nothing can paint there: the panel must take over or the window goes blank.
+  expect(ownerFor("window", true)).toBe("panel")
+  expect(ownerFor("window", false)).toBe("backdrop")
+  expect(ownerFor("panel", true)).toBe("panel")
+})
+
+test("a failed override never opens the layer again in the same window", () => {
+  expect(nextAction("window", false, true)).toBe("none")
+})
