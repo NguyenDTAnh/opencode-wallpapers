@@ -120,20 +120,26 @@ export const backdropCss = `
   top: auto !important;
 }
 
-/* Sidebar rows paint a surface on an inner div whose class list is long and easy to misread, so match by structure:
-   a row is a div wrapping a button that carries the session title. Hover, focus and the current item keep a highlight. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div:has(> button),
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button,
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] [data-home-row] {
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is([data-home-row], button):not(
+  [data-selected], [aria-selected=true], [data-state=active]
+) {
   background-color: transparent !important;
   background-image: none !important;
 }
 
-/* The current session stays distinct: the row that contains the selected tab keeps a surface. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div[data-selected],
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div[aria-selected=true],
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-selected],
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[aria-selected=true] {
+/* Each row paints its surface on the div inside its button, not on the button itself, so target that child. Hover and
+   the current session keep their surface; the rest reveal the wallpaper. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button:not(:hover, :focus-within) > div:not(
+  [data-selected], [aria-selected=true], [data-state=active]
+) {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-selected] > div,
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[aria-selected=true] > div,
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-state=active] > div {
   background-color: var(--v2-background-bg-layer-02) !important;
+  background-image: none !important;
 }
 `
