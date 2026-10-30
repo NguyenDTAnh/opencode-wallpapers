@@ -128,22 +128,13 @@ export const backdropCss = `
   background-image: none !important;
 }
 
-/* App tabs paint their surface as a gradient built from these two variables, not from background-color, so a colour
-   rule never reached them. Override the gradient itself. */
+/* App tabs paint their surface as a gradient, and the active one also carries data-state="pressed". Every state is
+   cleared, so the wallpaper shows through; the title text already marks which tab is open. */
 #root:has(.wallpapers-backdrop) :is([data-titlebar-tab], [data-titlebar-tab-action]) {
   background: transparent !important;
+  background-image: none !important;
 }
 
-/* Hover and the open tab still read. */
-#root:has(.wallpapers-backdrop) [data-titlebar-tab]:is(:hover, :has(:focus-visible), [data-state=pressed], [data-status]) {
-  background: var(--v2-overlay-simple-overlay-hover) !important;
-}
-
-#root:has(.wallpapers-backdrop) [data-titlebar-tab][data-active=true] {
-  background: var(--v2-background-bg-layer-02) !important;
-}
-
-/* The close affordance inside a row inherits the tab's surface; leave it alone so its own hover still shows. */
 #root:has(.wallpapers-backdrop) [data-titlebar-tab] > [data-slot=tab-close] {
   background: none !important;
 }

@@ -107,11 +107,11 @@ with sync_playwright() as p:
         assert paint == "none", paint
         page.screenshot(path=str(fixture.parent / "home.png"))
         assert background("[data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
-        # Sidebar session tabs paint a gradient from --tab-base; the rule now overrides the gradient itself.
+        # Sidebar session tabs paint a gradient; every state clears, including the active tab.
         assert page.locator("#sidebar-tab").evaluate("e => getComputedStyle(e).backgroundImage") == "none"
         assert background("#sidebar-tab") == "rgba(0, 0, 0, 0)"
         assert page.locator("#sidebar-tab-selected").evaluate("e => getComputedStyle(e).backgroundImage") == "none"
-        assert background("#sidebar-tab-selected") != "rgba(0, 0, 0, 0)"
+        assert background("#sidebar-tab-selected") == "rgba(0, 0, 0, 0)"
         assert background("[data-home-row][data-selected]") == "rgb(38, 38, 38)"
         page.locator("[data-slot=home-projects-viewport] [data-home-row] button").first.hover()
         assert background("[data-slot=home-projects-viewport] [data-home-row]:not([data-selected])") == "rgb(38, 38, 38)"
