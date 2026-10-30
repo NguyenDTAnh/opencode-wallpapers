@@ -9,11 +9,11 @@ export const definition = Plugin.define({
     en: {
       title: "Wallpaper",
       choose: "Choose wallpaper",
-      open: "Open the wallpaper panel",
+      off: "Turn the wallpaper off",
       activity: "Cycle wallpaper activity",
       time: "Cycle wallpaper time of day",
       external: "External wallpapers are not loaded in the desktop app; using the built-in ones",
-      fallback: "The window backdrop could not be painted, so the wallpaper is showing in the panel",
+      fallback: "The desktop app's styles changed, so the wallpaper cannot paint behind it. It is off until a plugin update",
     },
   },
 })

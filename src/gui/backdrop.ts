@@ -5,8 +5,6 @@ import type { AgentEvent, Power, Settings, Wallpaper } from "../wallpaper"
 // than a rectangle on top of it. The app paints its base colour, so the layer also overrides the variables that colour
 // comes from — the names are internal to the app, which is why every open verifies its own override.
 
-export type BackdropMode = "window" | "panel"
-
 export interface BackdropHandle {
   setWallpaper(wallpaper: Wallpaper | undefined, settings: Settings, fade?: number): void
   react(event: AgentEvent): void

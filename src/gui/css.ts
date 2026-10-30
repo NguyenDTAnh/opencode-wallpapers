@@ -1,60 +1,22 @@
 // Injected into the desktop app's window while the plugin is active. Class names are prefixed so they cannot collide
 // with the app's own styles.
 export const css = `
-.wallpapers-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  /* Settings only: the scene is the window's background, so the panel must not paint over it. */
-  background: transparent;
-}
-
-.wallpapers-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  image-rendering: auto;
-}
-
-.wallpapers-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  text-align: center;
-  color: var(--color-text-300, #8b909a);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-.wallpapers-bottom {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: auto;
-  min-height: 0;
-}
-
-.wallpapers-settings {
-  position: relative;
+/* The settings, rendered into one of the app's dialogs. It paints its own surface, so it reads the same way over a
+   moving scene as any other dialog. */
+.wallpapers-dialog {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin: 0 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--color-background-200, #1d2026) 88%, transparent);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  min-width: 22rem;
+  max-width: 30rem;
+  padding: 0.25rem 0;
+}
+
+.wallpapers-dialog-title {
+  margin-bottom: 0.5rem;
+  color: var(--v2-text-text-base, #e6e9ee);
+  font-size: 0.9375rem;
+  font-weight: 550;
 }
 
 .wallpapers-row {
@@ -62,76 +24,50 @@ export const css = `
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 0.75rem;
+  padding: 0.125rem 0;
 }
 
 .wallpapers-row-label {
-  color: var(--color-text-200, #b9bfc9);
+  color: var(--v2-text-text-base, #b9bfc9);
   font-size: 0.8125rem;
 }
 
 .wallpapers-row select {
-  min-width: 8rem;
-  max-width: 11rem;
-  padding: 0.125rem 0.25rem;
-  border: 1px solid var(--color-border-200, #31353d);
+  min-width: 10rem;
+  max-width: 14rem;
+  padding: 0.1875rem 0.375rem;
+  border: 1px solid var(--v2-border-border-base, #31353d);
   border-radius: 0.25rem;
-  background: var(--color-background-300, #242830);
-  color: var(--color-text-100, #e6e9ee);
+  background: var(--v2-background-bg-layer-02, #242830);
+  color: var(--v2-text-text-base, #e6e9ee);
   font-size: 0.8125rem;
 }
 
 .wallpapers-describe {
-  margin-top: 0.25rem;
-  color: var(--color-text-400, #767c87);
+  margin-top: 0.5rem;
+  min-height: 2.25rem;
+  color: var(--v2-text-text-muted, #767c87);
   font-size: 0.75rem;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-.wallpapers-bar {
-  position: relative;
+.wallpapers-dialog-actions {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0.5rem;
-  padding: 0.375rem 0.625rem;
-  border-radius: 0.375rem;
-  background: color-mix(in srgb, var(--color-background-200, #1d2026) 88%, transparent);
-  backdrop-filter: blur(6px);
-  color: var(--color-text-200, #b9bfc9);
-  font-size: 0.8125rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
 }
 
-.wallpapers-bar-name {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wallpapers-bar button {
-  padding: 0.125rem 0.5rem;
-  border: 1px solid var(--color-border-200, #31353d);
+.wallpapers-dialog-actions button {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--v2-border-border-base, #31353d);
   border-radius: 0.25rem;
-  background: var(--color-background-300, #242830);
-  color: var(--color-text-100, #e6e9ee);
-  font-size: 0.75rem;
+  background: var(--v2-background-bg-layer-02, #242830);
+  color: var(--v2-text-text-base, #e6e9ee);
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
-.wallpapers-bar button:hover {
-  border-color: var(--color-border-300, #44494f);
-}
-
-.wallpapers-notice {
-  margin: 0.5rem;
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, var(--color-background-200, #1d2026) 88%, transparent);
-  color: var(--color-text-300, #8b909a);
-  font-size: 0.75rem;
-  line-height: 1.4;
+.wallpapers-dialog-actions button:hover {
+  background: var(--v2-background-bg-layer-03, #2e3238);
 }
 `
-
-// The window backdrop. Lives below #root, so it never covers the app's own text, buttons or composer; the scrim keeps
-// them readable over a moving scene. Its own styles ship from src/gui/backdrop.ts, next to the code that applies them.
