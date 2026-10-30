@@ -11,6 +11,10 @@ export type WeatherSetting = (typeof WEATHER_SETTINGS)[number]
 export const SHUFFLES = ["off", "hourly"] as const
 export type Shuffle = (typeof SHUFFLES)[number]
 
+// Where the wallpaper is painted: behind the whole window, or inside the plugin's own panel.
+export const BACKDROPS = ["window", "panel"] as const
+export type BackdropMode = (typeof BACKDROPS)[number]
+
 // The desktop GUI keeps one settings object for the app: a panel is a view, not a per-project surface, so the TUI's
 // per-project map and its "new wallpaper each launch" shuffle mode have no meaning here.
 export interface Stored {
@@ -28,9 +32,11 @@ export interface Stored {
   collections?: Record<string, string>
   // When the wallpaper last changed, by scope, for hourly shuffle.
   changed?: Record<string, number>
+  // Where the wallpaper is painted. Defaults to the window.
+  backdrop?: BackdropMode
 }
 
-export const INITIAL: Stored = { wallpaper: "" }
+export const INITIAL: Stored = { wallpaper: "", backdrop: "window" }
 
 export const StoredSchema = Schema.Struct({
   wallpaper: Schema.String,
@@ -44,6 +50,7 @@ export const StoredSchema = Schema.Struct({
   shuffle: Schema.optional(Schema.Literals(SHUFFLES)),
   collections: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   changed: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  backdrop: Schema.optional(Schema.Literals(BACKDROPS)),
 })
 
 export function current(state: Stored): string {
@@ -73,6 +80,10 @@ export function apply(state: Stored, raw: string): { state: Stored; message: str
   // the menu and a typed "/wallpaper collection classics" work.
   const arg = raw.trim().toLowerCase()
   if (arg === "off") return { state: choose(state, ""), message: "Wallpaper off" }
+  // Where the wallpaper is painted is a separate question from which wallpaper and from whether one is chosen, so this
+  // branch leaves both alone.
+  const backdrop = BACKDROPS.find((value) => value === arg)
+  if (backdrop) return { state: { ...state, backdrop }, message: backdrop === "window" ? "Wallpaper behind the window" : "Wallpaper in the panel" }
   if (arg.startsWith("collection ")) {
     const name = arg.slice("collection ".length).trim()
     const chosen = name === "all" ? "all" : COLLECTIONS.find((c) => c.toLowerCase() === name)
