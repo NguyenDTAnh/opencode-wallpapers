@@ -35,9 +35,8 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 
 ## OpenCode Desktop
 
-The same package also has a desktop part. By default the wallpaper fills the **whole window**, behind the sidebar, the
-timeline and the composer, dimmed by a scrim so text stays readable. Pick **Panel** in the Backdrop setting to keep it
-inside the plugin's own panel instead.
+The same package also has a desktop part. The wallpaper fills the **window**, behind the sidebar, the timeline and the
+composer, dimmed by a scrim so text stays readable. The plugin's panel holds the settings and nothing else.
 
 Open it from the command palette (**Choose wallpaper**) or by typing `/wallpaper` in the composer. `/wallpaper beach`
 still works, with the same arguments as the terminal. Settings live behind the panel's own **Settings** button, which

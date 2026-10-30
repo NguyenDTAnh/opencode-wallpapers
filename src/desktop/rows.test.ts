@@ -7,7 +7,6 @@ const noon = new Date(2026, 5, 1, 12, 0)
 test("every row offers a current value it can label and describe", () => {
   const rows = rowsFor({ ...INITIAL, wallpaper: "beach" }, noon)
   expect(rows.map((r) => r.title)).toEqual([
-    "Backdrop",
     "Collection",
     "Wallpaper",
     "Activity",
@@ -56,15 +55,4 @@ test("the collection row lists all plus every named collection", () => {
   const collection = rowsFor(INITIAL, noon).find((r) => r.title === "Collection")!
   expect(collection.values[0]).toBe("collection all")
   expect(collection.values).toContain("collection Landscapes")
-})
-
-test("the Backdrop row comes first and offers the two modes", () => {
-  const rows = rowsFor(INITIAL, noon)
-  expect(rows[0].title).toBe("Backdrop")
-  expect(rows[0].values).toEqual(["window", "panel"])
-  expect(rows[0].label("window")).toBe("Window")
-})
-
-test("the backdrop row reflects the stored mode", () => {
-  expect(rowsFor({ ...INITIAL, backdrop: "panel" }, noon)[0].value).toBe("panel")
 })

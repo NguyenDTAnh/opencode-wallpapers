@@ -9,7 +9,8 @@ export const css = `
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--color-background-100, #16181d);
+  /* Settings only: the scene is the window's background, so the panel must not paint over it. */
+  background: transparent;
 }
 
 .wallpapers-canvas {
@@ -119,11 +120,6 @@ export const css = `
 
 .wallpapers-bar button:hover {
   border-color: var(--color-border-300, #44494f);
-}
-
-/* In window mode the backdrop owns the scene, so the panel's own frame must not paint over it. */
-.wallpapers-panel-clear {
-  background: transparent;
 }
 
 .wallpapers-notice {

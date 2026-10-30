@@ -1,4 +1,4 @@
-import { ACTIVITIES, BACKDROPS, BRIGHTNESSES, POWERS, SEASONS, SHUFFLES, TIMES, WEATHER_SETTINGS, current, currentCollection, inCollection, seasonAt, timeAt, type Stored } from "./settings"
+import { ACTIVITIES, BRIGHTNESSES, POWERS, SEASONS, SHUFFLES, TIMES, WEATHER_SETTINGS, current, currentCollection, inCollection, seasonAt, timeAt, type Stored } from "./settings"
 import { COLLECTIONS, findWallpaper } from "./scenes"
 import { coordinatesOf } from "../forecast"
 
@@ -20,16 +20,6 @@ export function rowsFor(state: Stored, now: Date): Row[] {
   const south = (coordinatesOf(state.location ?? "")?.latitude ?? 0) < 0
   const shown = findWallpaper(current(state))
   const rows: Row[] = [
-    {
-      title: "Backdrop",
-      values: BACKDROPS,
-      value: state.backdrop ?? "window",
-      label: capitalize,
-      describe: (v) =>
-        v === "window"
-          ? "The scene fills the window behind the interface, dimmed so text stays readable"
-          : "The scene fills the plugin's own panel instead",
-    },
     {
       title: "Collection",
       values: ["collection all", ...COLLECTIONS.map((c) => `collection ${c}`)],

@@ -13,7 +13,7 @@ export const definition = Plugin.define({
       activity: "Cycle wallpaper activity",
       time: "Cycle wallpaper time of day",
       external: "External wallpapers are not loaded in the desktop app; using the built-in ones",
-      fallback: "The window backdrop could not be painted, so the wallpaper moved to the panel",
+      fallback: "The window backdrop could not be painted, so the wallpaper is showing in the panel",
     },
   },
 })

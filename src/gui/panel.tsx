@@ -13,14 +13,14 @@ const FADE = 1.5
 // A stored global is loaded before setup runs, so a missing value means the store is not ready yet.
 const state = (store: Persisted<Stored>): Stored => store.value ?? INITIAL
 
-// The panel. In panel mode it owns the engine and paints the scene in its own canvas. In window mode the backdrop owns
-// the engine, so the panel renders the settings only — two canvases stepping one scene would double the cost and let
-// the copies drift.
+// The panel holds the wallpaper's settings. It paints the scene only as a fallback, when the window backdrop could not
+// be painted: the wallpaper belongs to the window, and a second canvas stepping the same scene would double the cost
+// and let the copies drift.
 export function Scene(props: {
   readonly session: MountedSession
   readonly store: Persisted<Stored>
   readonly servers: Servers
-  // True while the window backdrop cannot be painted, so the panel takes over the scene.
+  // True while the window backdrop cannot be painted, so the panel takes the scene over.
   readonly fallback: () => boolean
   readonly onError: (error: unknown) => void
 }) {
@@ -34,9 +34,8 @@ export function Scene(props: {
   let started: string | undefined
   let startedKey = ""
   const panel = usePanel()
-  // The backdrop owns the engine in window mode; the panel paints only when it is the owner, which includes the case of
-  // a window backdrop that failed to paint.
-  const mine = () => ownerFor(state(props.store).backdrop ?? "window", props.fallback()) === "panel"
+  // The panel paints only while the window backdrop failed, so only one engine ever runs.
+  const mine = () => ownerFor(props.fallback()) === "panel"
 
   onMount(() => {
     if (!state(props.store).wallpaper) setOpen(true)
@@ -150,14 +149,15 @@ export function Scene(props: {
   }
 
   return (
-    <div class={`wallpapers-panel${mine() ? "" : " wallpapers-panel-clear"}`} ref={surface}>
+    <div class="wallpapers-panel" ref={surface}>
+      {/* The scene paints in the window; the panel's own canvas exists only for the fallback. */}
       <Show when={mine()}>
         <canvas ref={canvas} class="wallpapers-canvas" onClick={poke} />
       </Show>
       <Show when={mine() && !state(props.store).wallpaper}>
         <div class="wallpapers-empty">No wallpaper chosen yet. Pick one from the settings below.</div>
       </Show>
-      <Show when={ownerFor("window", props.fallback()) === "panel" && state(props.store).backdrop === "window"}>
+      <Show when={props.fallback()}>
         <div class="wallpapers-notice">The window backdrop could not be painted, so the wallpaper is showing here.</div>
       </Show>
       <div class="wallpapers-bottom">

@@ -41,9 +41,10 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
     painted = ""
   }
 
-  // Opens or closes the layer as the mode changes.
+  // Opens the layer once, unless the override failed. The wallpaper is the window's background; the panel is only the
+  // place its settings live, and the fallback surface when nothing can paint in the window.
   createEffect(() => {
-    const action = nextAction(prefs().backdrop ?? "window", backdrop !== undefined, fallback())
+    const action = nextAction(backdrop !== undefined, fallback())
     if (action === "close") close()
     if (action !== "open") return
     backdrop = openBackdrop({
@@ -86,7 +87,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
   createEffect(() => {
     const current = prefs()
     const at = now()
-    if (ownerFor(current.backdrop ?? "window", fallback()) !== "backdrop" || !backdrop) return
+    if (ownerFor(fallback()) !== "backdrop" || !backdrop) return
     backdrop.power(current.power ?? "saver")
     const settings = resolveSettings(current, at, local())
     const wallpaper = findWallpaper(current.wallpaper)

@@ -1,34 +1,26 @@
 import { expect, test } from "bun:test"
 import { nextAction, ownerFor } from "./ownership"
 
-test("the window mode makes the backdrop the owner, the rest the panel", () => {
-  expect(ownerFor("window")).toBe("backdrop")
-  expect(ownerFor("panel")).toBe("panel")
+test("the backdrop owns the scene unless the override failed", () => {
+  expect(ownerFor(false)).toBe("backdrop")
+  expect(ownerFor(true)).toBe("panel")
 })
 
-test("setup opens a handle only when the window mode has none", () => {
-  expect(nextAction("window", false)).toBe("open")
-  expect(nextAction("window", true)).toBe("none")
+test("setup opens the layer once, and never while the fallback is in effect", () => {
+  expect(nextAction(false, false)).toBe("open")
+  expect(nextAction(true, false)).toBe("none")
+  expect(nextAction(false, true)).toBe("none")
 })
 
-test("setup closes the handle when the mode leaves the window", () => {
-  expect(nextAction("panel", true)).toBe("close")
-  expect(nextAction("panel", false)).toBe("none")
+test("a failed override closes the layer and hands the scene to the panel", () => {
+  expect(nextAction(true, true)).toBe("close")
+  // And it stays closed for the rest of the window: the fallback flag is not cleared by another attempt.
+  expect(nextAction(false, true)).toBe("none")
 })
 
-test("a mode switch always moves ownership to exactly one layer", () => {
-  // window -> panel with a live handle closes it, and panel -> window with none opens one. Neither leaves two owners.
-  expect([nextAction("window", true), nextAction("panel", true)]).toEqual(["none", "close"])
-  expect([nextAction("panel", false), nextAction("window", false)]).toEqual(["none", "open"])
-})
-
-test("a failed override hands the painting back to the panel", () => {
-  // The store still says window, but nothing can paint there: the panel must take over or the window goes blank.
-  expect(ownerFor("window", true)).toBe("panel")
-  expect(ownerFor("window", false)).toBe("backdrop")
-  expect(ownerFor("panel", true)).toBe("panel")
-})
-
-test("a failed override never opens the layer again in the same window", () => {
-  expect(nextAction("window", false, true)).toBe("none")
+test("only one layer ever owns the scene", () => {
+  // With a handle and no failure the backdrop paints; with a failure and no handle the panel does. The two conditions
+  // are never both satisfied, so the owners never overlap.
+  expect([ownerFor(false), nextAction(false, false)]).toEqual(["backdrop", "open"])
+  expect([ownerFor(true), nextAction(false, true)]).toEqual(["panel", "none"])
 })

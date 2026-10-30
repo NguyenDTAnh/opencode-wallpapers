@@ -57,15 +57,3 @@ test("timeAt switches at 6, 7, 18 and 20", () => {
   expect(timeAt(new Date(2026, 0, 1, 18, 0))).toBe("sunset")
   expect(timeAt(new Date(2026, 0, 1, 20, 0))).toBe("night")
 })
-
-test("backdrop defaults to window and apply switches it", () => {
-  expect(INITIAL.backdrop).toBe("window")
-  expect(apply(INITIAL, "panel").state.backdrop).toBe("panel")
-  expect(apply(INITIAL, "panel").state.wallpaper).toBe(INITIAL.wallpaper)
-})
-
-test("backdrop is not cleared by wallpaper off, and off does not clear the backdrop", () => {
-  const state: Stored = { ...INITIAL, wallpaper: "beach", backdrop: "panel" }
-  expect(apply(state, "off").state.backdrop).toBe("panel")
-  expect(apply(state, "window").state.wallpaper).toBe("beach")
-})

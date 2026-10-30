@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-- The wallpaper fills the OpenCode Desktop window by default, behind the interface, with a scrim that follows the light
-  or dark theme so text stays readable. A **Backdrop** setting switches it back to the plugin's own panel.
+- The wallpaper fills the OpenCode Desktop window, behind the interface, with a scrim that follows the light or dark
+  theme so text stays readable. The plugin's panel holds the settings; it paints the scene only if the window backdrop
+  cannot be.
 - The backdrop is a layer below the app's own surfaces, so nothing it draws covers a label, a button or the composer.
 - If an app update changes the style variables the backdrop relies on, the wallpaper moves to the panel with a notice,
   instead of leaving a black window.
-- An OpenCode Desktop part: the same wallpapers, as a panel the plugin owns in the session's side region. Open it from
-  the command palette or `/wallpaper`, with the settings in the panel itself.
+- An OpenCode Desktop part: the same wallpapers behind the window. Open its settings from the command palette or
+  `/wallpaper`; the panel in the session's side region holds them.
 - The desktop part reuses every scene unchanged and replaces only the renderer: a canvas needs real pixels, not the
   terminal's two colours per cell.
 - Desktop leaves out what needs a terminal or a filesystem: the `WALLPAPER_*` variables, kitty pixel mode, wallpapers
