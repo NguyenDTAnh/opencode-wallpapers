@@ -1,8 +1,27 @@
-import { settingsFor, type AgentEvent, type Power, type Scene, type Settings, type Wallpaper } from "../wallpaper"
+import { settingsFor, type AgentEvent, type Brightness, type Power, type Scene, type Settings, type Wallpaper } from "../wallpaper"
 
 // The canvas engine for the desktop panel. The TUI engine (src/engine.tsx) exists to turn a scene's pixels into
 // terminal cells: two colours per cell, octant glyphs, a scrim behind text. A canvas has real pixels, so all of that
-// goes away and this stays a loop and a blit. Brightness is a CSS filter on the canvas, not a per-pixel pass here.
+// goes away and this stays a loop, a blit, and a brightness LUT.
+
+// The TUI's brightness levels, copied so the panel dims the same way: gain lifts the scene, and the soft knee keeps
+// the top end under 255 so a scene never competes with the interface on top of it.
+const LEVELS: Record<Brightness, number> = { subtle: 0.6, normal: 1, vivid: 1.6 }
+
+const curves = new Map<Brightness, Uint8Array>()
+
+export function brightnessCurve(brightness: Brightness): Uint8Array {
+  const cached = curves.get(brightness)
+  if (cached) return cached
+  const gain = LEVELS[brightness]
+  const curve = new Uint8Array(256)
+  for (let v = 0; v < 256; v++) {
+    const x = (v / 255) * gain
+    curve[v] = Math.round((x / (1 + x * 0.9)) * 255)
+  }
+  curves.set(brightness, curve)
+  return curve
+}
 
 // How much faster a scene runs while the agent works, by activity level. From the TUI engine.
 const BUSY_PACE = { calm: 1.12, lively: 1.25, teeming: 1.4 } as const
@@ -12,10 +31,6 @@ const GLOOM_MS = 120_000
 const FADE = 1.5
 // Scenes clamp a step at 0.1 s; longer gaps are split, so a stalled tab does not jump the scene forward.
 const MAX_STEP = 0.1
-// The lowest rate the adaptive frame rate falls to before it lowers the resolution instead.
-const MIN_FPS = 10
-// The smallest fraction of the window's pixels the adaptive resolution will draw. Below this the scene reads blurry.
-const MIN_RESOLUTION = 0.5
 
 // Whether two settings produce the same running scene. Brightness is excluded: it is applied at blit time.
 function sameScene(a: Settings, b: Settings): boolean {
@@ -53,8 +68,8 @@ interface Layer {
 export function createEngine(options: EngineOptions): Engine {
   const { canvas } = options
   const now = options.now ?? (() => performance.now())
-  const fps = options.fps ?? 30
-  const idleFps = options.idleFps ?? 8
+  const fps = options.fps ?? 15
+  const idleFps = options.idleFps ?? 5
   const idleAfter = options.idleAfter ?? 30_000
   const pixelBudget = options.pixelBudget ?? 640_000
 
@@ -86,9 +101,6 @@ export function createEngine(options: EngineOptions): Engine {
   let frameData: ImageData | undefined
   let outgoingData: ImageData | undefined
   let mixed: Uint8ClampedArray<ArrayBuffer> | undefined
-  // Scenes that cannot hit the target at full size run at a smaller resolution. The canvas upscales it, which is soft
-  // but cheap, and it is what keeps a heavy scene smooth instead of dropping frames.
-  let resolution = 1
 
   const report = (error: unknown) => options.onError?.(error)
 
@@ -99,7 +111,7 @@ export function createEngine(options: EngineOptions): Engine {
     const cssHeight = Math.max(1, canvas.clientHeight)
     let w = Math.round(cssWidth * ratio)
     let h = Math.round(cssHeight * ratio)
-    const scale = Math.min(1, Math.sqrt(pixelBudget / (w * h))) * resolution
+    const scale = Math.min(1, Math.sqrt(pixelBudget / (w * h)))
     w = Math.max(64, Math.round(w * scale))
     h = Math.max(36, Math.round(h * scale))
     return { w, h, cssWidth, cssHeight }
@@ -142,12 +154,11 @@ export function createEngine(options: EngineOptions): Engine {
     const pixels = layer.scene.pixels
     const image = cache && cache.width === layer.scene.W && cache.height === layer.scene.H ? cache : new ImageData(new Uint8ClampedArray(layer.scene.W * layer.scene.H * 4), layer.scene.W, layer.scene.H)
     const data = image.data
-    // The scene's brightness is applied by the canvas's CSS filter, so the pixels go out unchanged. The per-pixel LUT
-    // this used to run cost 2-18 ms a frame, which was most of the budget at 30 fps.
+    const curve = brightnessCurve(layer.settings.brightness ?? "normal")
     for (let i = 0; i < pixels.length; i += 4) {
-      data[i] = pixels[i]
-      data[i + 1] = pixels[i + 1]
-      data[i + 2] = pixels[i + 2]
+      data[i] = curve[pixels[i]]
+      data[i + 1] = curve[pixels[i + 1]]
+      data[i + 2] = curve[pixels[i + 2]]
       data[i + 3] = 255
     }
     context.putImageData(image, 0, 0)
@@ -182,11 +193,6 @@ export function createEngine(options: EngineOptions): Engine {
     context.drawImage(source, 0, 0, canvas.width, canvas.height)
   }
 
-  // The frame rate follows what the machine can actually do. The engine asks for `targetFps` and backs off when frames
-  // take longer than the budget, so a heavy scene degrades to a steady slower rate instead of stuttering.
-  let targetFps = fps
-  let frameCost = 0
-
   const step = (at: number) => {
     frame = undefined
     if (destroyed || !current) return
@@ -198,7 +204,6 @@ export function createEngine(options: EngineOptions): Engine {
     }
     lastStep = at
     if (power === "saver" && at - lastActivity > idleAfter) interval = 1000 / idleFps
-    const started = now()
     try {
       // A scene runs faster while the agent works, easing toward its activity level's pace as the TUI does.
       const target = busy && current.settings.activity ? BUSY_PACE[current.settings.activity] : 1
@@ -215,22 +220,6 @@ export function createEngine(options: EngineOptions): Engine {
       report(error)
       stop()
       return
-    }
-    // Ease the measured cost so one slow frame does not drop the rate, then lower the target when frames no longer fit.
-    frameCost += (now() - started - frameCost) * 0.1
-    const budget = 1000 / targetFps
-    if (frameCost > budget) {
-      if (targetFps > MIN_FPS) {
-        targetFps = Math.max(MIN_FPS, targetFps - 5)
-        interval = 1000 / Math.max(idleFps, targetFps)
-      } else if (resolution > MIN_RESOLUTION) {
-        // At the floor rate the scene still misses its budget: draw fewer pixels rather than fewer frames.
-        resolution = Math.max(MIN_RESOLUTION, resolution - 0.15)
-        resize()
-      }
-    } else if (frameCost < budget * 0.5 && targetFps < fps) {
-      targetFps = Math.min(fps, targetFps + 1)
-      interval = 1000 / (power === "saver" && at - lastActivity > idleAfter ? idleFps : targetFps)
     }
     frame = requestAnimationFrame(step)
   }
