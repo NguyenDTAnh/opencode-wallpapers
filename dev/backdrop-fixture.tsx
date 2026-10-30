@@ -19,6 +19,7 @@ html, body, #root { margin: 0; height: 100%; }
 .shell { position: relative; height: 100%; display: flex; flex-direction: column; }
 .bg-v2-background-bg-deep { background: var(--color-v2-background-bg-deep); }
 .bg-v2-background-bg-base { background: var(--color-v2-background-bg-base); }
+.bg-v2-background-bg-layer-03 { background: rgb(38, 38, 38); }
 .row { position: relative; display: flex; flex: 1; min-height: 0; }
 [data-slot=vertical-tabs-sidebar] { position: relative; z-index: 10; width: 200px; }
 [data-slot=vertical-tabs-panel] { position: absolute; inset: 0; overflow: hidden; contain: layout style paint; }
@@ -61,6 +62,9 @@ render(() => <>
         <div data-slot="vertical-tabs-panel">
           <div data-slot="vertical-tabs-peek-surface" class="bg-v2-background-bg-deep" />
           <div data-slot="vertical-tabs-mount" class="bg-v2-background-bg-deep">
+            <button id="sidebar-tab" data-slot="tabs-trigger" class="bg-v2-background-bg-base">Session tab</button>
+            <button id="sidebar-tab-selected" data-slot="tabs-trigger" data-selected="true" class="bg-v2-background-bg-layer-03">Selected tab</button>
+            <div data-home-row class="bg-v2-background-bg-base"><button>Default Project</button></div>
             <div role="menu" />
           </div>
         </div>

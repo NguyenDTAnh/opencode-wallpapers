@@ -119,4 +119,14 @@ export const backdropCss = `
   position: relative !important;
   top: auto !important;
 }
+
+/* Sidebar session rows, project rows and the panel's tab buttons: no resting surface, but keep a highlight for hover,
+   focus and the selected item so the current one stays readable. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is(
+  [data-slot=tabs-trigger],
+  [data-home-row],
+  [data-component=home-session-row-container]
+):not(:hover, :focus-within, :focus-visible, [data-selected], [data-state=active], :has([data-menu=true])) {
+  background-color: transparent !important;
+}
 `

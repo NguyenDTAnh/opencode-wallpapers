@@ -107,9 +107,13 @@ with sync_playwright() as p:
         assert paint == "none", paint
         page.screenshot(path=str(fixture.parent / "home.png"))
         assert background("[data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
+        # Sidebar session rows and tab buttons have no resting surface; the selected one keeps its highlight.
+        assert background("#sidebar-tab") == "rgba(0, 0, 0, 0)"
+        assert background("[data-slot=vertical-tabs-mount] [data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
+        assert background("#sidebar-tab-selected") == "rgb(38, 38, 38)"
         assert background("[data-home-row][data-selected]") == "rgb(38, 38, 38)"
-        page.get_by_text("Default Project", exact=True).hover()
-        assert background("[data-home-row]:not([data-selected])") == "rgb(38, 38, 38)"
+        page.locator("[data-slot=home-projects-viewport] [data-home-row] button").first.hover()
+        assert background("[data-slot=home-projects-viewport] [data-home-row]:not([data-selected])") == "rgb(38, 38, 38)"
         page.get_by_text("Toggle wallpaper", exact=True).click()
         assert background("#home-header") == "rgb(28, 28, 28)"
         assert background("#home-date") == "rgb(28, 28, 28)"
