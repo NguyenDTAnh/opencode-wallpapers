@@ -22,7 +22,9 @@
   "type": "module",
   "license": "MIT",
   "exports": {
+    ".": "./dist/index.js",
     "./tui": "./dist/tui.js",
+    "./gui-experimental": "./dist/gui-experimental.cjs",
     "./api": {
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"

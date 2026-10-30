@@ -249,7 +249,7 @@ function lightDot(dots, i, x, y, q, grid, scrim, GW, curve) {
 var EGG = Symbol.for("opencode-wallpapers.egg");
 var clock = globalThis[EGG] ??= { viewed: 0, due: -1 };
 function eggWait(next = false) {
-  if (process.env.WALLPAPER_EGG === "1")
+  if (globalThis.process?.env?.WALLPAPER_EGG === "1")
     return 3;
   const wait = 1800 - Math.log(1 - Math.random()) * 3600;
   if (next || clock.due < 0)

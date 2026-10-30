@@ -33,6 +33,30 @@ Type `/wallpaper` to open the menu and pick a wallpaper; none shows until you do
 Scenes react to your agent: they speed up while it works, a visitor shows up when it finishes, and clouds roll in after
 an error. With mouse support, clicking empty background nudges the scene, and each wallpaper hides a rare surprise.
 
+## OpenCode Desktop
+
+The same package also has a desktop part. The wallpaper fills the **window**, behind the sidebar, the Home projects and
+session list, the timeline and the composer, dimmed by a scrim so text stays readable. The plugin has no panel; its
+settings are a dialog.
+
+Open it from the command palette (**Choose wallpaper**) or by typing `/wallpaper` in the composer. `/wallpaper beach`
+still works, with the same arguments as the terminal. The dialog is built from the app's own `Dialog` and `Menu`
+components, so it looks native, and changes apply while it is open.
+
+The scene is a plugin-owned canvas rendered through the app's `Slot` API with its CSS registered through `Style`: the
+plugin never reaches into the app's DOM. It sits below the app's own surfaces, so nothing it draws covers a label, a
+button or the composer. The composer, menus, dialogs, the session search field and hover or selected rows keep their
+own opaque surfaces. The animation keeps painting during a window resize, so tiling the window does not flash.
+
+Two things differ from the terminal:
+
+- Wallpapers from other packages through the `wallpapers` option are not loaded. A window has no filesystem to import
+  them from. The built-in wallpapers all work.
+- The terminal-only environment variables below and the per-project setting do not apply. One wallpaper serves every
+  project.
+
+The TUI keeps working unchanged; both parts install from the same package and read the same `opencode.jsonc`.
+
 ## Wallpapers
 
 - **Landscapes:** `ocean` · `desert` · `jungle` · `space` · `farm` · `tundra` · `beach` · `city` · `zen` · `prehistoric` · `haunted-house`
