@@ -62,6 +62,7 @@ render(() => <>
         <div data-slot="vertical-tabs-panel">
           <div data-slot="vertical-tabs-peek-surface" class="bg-v2-background-bg-deep" />
           <div data-slot="vertical-tabs-mount" class="bg-v2-background-bg-deep">
+            <button id="plain-sidebar-button" style={{ background: "rgb(24, 27, 34)" }}>Plain row</button>
             <button id="sidebar-tab" data-slot="tabs-trigger" class="bg-v2-background-bg-base">Session tab</button>
             <button id="sidebar-tab-selected" data-slot="tabs-trigger" data-selected="true" class="bg-v2-background-bg-layer-03">Selected tab</button>
             <div data-home-row class="bg-v2-background-bg-base"><button>Default Project</button></div>

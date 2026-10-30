@@ -120,13 +120,11 @@ export const backdropCss = `
   top: auto !important;
 }
 
-/* Sidebar session rows, project rows and the panel's tab buttons: no resting surface, but keep a highlight for hover,
-   focus and the selected item so the current one stays readable. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is(
-  [data-slot=tabs-trigger],
-  [data-home-row],
-  [data-component=home-session-row-container]
-):not(:hover, :focus-within, :focus-visible, [data-selected], [data-state=active], :has([data-menu=true])) {
+/* Sidebar rows and buttons paint their own surface in the app but carry no data-slot, so target the elements inside the
+   sidebar mount. Hover, focus and the selected item keep a highlight so the current session still reads. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is(button, [role=tab], [data-home-row]):not(
+  :hover, :focus-within, :focus-visible, [data-selected], [data-state=active], [aria-selected=true], :has([data-menu=true])
+) {
   background-color: transparent !important;
 }
 `
