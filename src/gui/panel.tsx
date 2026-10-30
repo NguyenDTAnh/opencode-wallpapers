@@ -157,6 +157,9 @@ export function Scene(props: {
       <Show when={mine() && !state(props.store).wallpaper}>
         <div class="wallpapers-empty">No wallpaper chosen yet. Pick one from the settings below.</div>
       </Show>
+      <Show when={ownerFor("window", props.fallback()) === "panel" && state(props.store).backdrop === "window"}>
+        <div class="wallpapers-notice">The window backdrop could not be painted, so the wallpaper is showing here.</div>
+      </Show>
       <div class="wallpapers-bottom">
         <Show when={open()}>
           <div class="wallpapers-settings">

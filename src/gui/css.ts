@@ -125,6 +125,16 @@ export const css = `
 .wallpapers-panel-clear {
   background: transparent;
 }
+
+.wallpapers-notice {
+  margin: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--color-background-200, #1d2026) 88%, transparent);
+  color: var(--color-text-300, #8b909a);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
 `
 
 // The window backdrop. Lives below #root, so it never covers the app's own text, buttons or composer; the scrim keeps
