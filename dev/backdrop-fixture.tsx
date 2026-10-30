@@ -62,7 +62,12 @@ render(() => <>
         <div data-slot="vertical-tabs-panel">
           <div data-slot="vertical-tabs-peek-surface" class="bg-v2-background-bg-deep" />
           <div data-slot="vertical-tabs-mount" class="bg-v2-background-bg-deep">
-            <button id="plain-sidebar-button" style={{ background: "rgb(24, 27, 34)" }}>Plain row</button>
+            <div id="sidebar-div-row-wrap" class="bg-v2-background-bg-base" style={{ backgroundImage: "linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.2))" }}>
+              <button id="sidebar-div-row">Session row inside a surfaced div</button>
+            </div>
+            <div id="sidebar-div-row-selected-wrap" class="bg-v2-background-bg-base" data-selected="">
+              <button id="sidebar-div-row-selected">Selected row</button>
+            </div>
             <button id="sidebar-tab" data-slot="tabs-trigger" class="bg-v2-background-bg-base">Session tab</button>
             <button id="sidebar-tab-selected" data-slot="tabs-trigger" data-selected="true" class="bg-v2-background-bg-layer-03">Selected tab</button>
             <div data-home-row class="bg-v2-background-bg-base"><button>Default Project</button></div>

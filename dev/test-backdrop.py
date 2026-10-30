@@ -110,8 +110,12 @@ with sync_playwright() as p:
         # Sidebar session rows and tab buttons have no resting surface; the selected one keeps its highlight.
         assert background("#sidebar-tab") == "rgba(0, 0, 0, 0)"
         assert background("[data-slot=vertical-tabs-mount] [data-home-row]:not([data-selected])") == "rgba(0, 0, 0, 0)"
-        # A bare button in the sidebar, like the app's own rows, also loses its resting surface.
-        assert background("#plain-sidebar-button") == "rgba(0, 0, 0, 0)"
+        # A row whose surface sits on an inner div (with an added gradient) also clears.
+        assert background("#sidebar-div-row-wrap") == "rgba(0, 0, 0, 0)"
+        assert page.locator("#sidebar-div-row-wrap").evaluate("e => getComputedStyle(e).backgroundImage") == "none"
+        # Selected rows keep a readable surface.
+        selected = background("#sidebar-div-row-selected-wrap")
+        assert selected != "rgba(0, 0, 0, 0)", "selected sidebar row lost its surface"
         assert background("#sidebar-tab-selected") == "rgb(38, 38, 38)"
         assert background("[data-home-row][data-selected]") == "rgb(38, 38, 38)"
         page.locator("[data-slot=home-projects-viewport] [data-home-row] button").first.hover()
