@@ -1,10 +1,11 @@
-import { Command, Plugin, Style } from "@opencode/plugin/gui"
-import { createEffect, createSignal, onCleanup } from "solid-js"
+import { Command, Plugin, Slot, Style } from "@opencode/plugin/gui"
+import { createEffect, createSignal, onCleanup, Show } from "solid-js"
+import type { Engine } from "./desktop/engine"
 import { apply, type Stored } from "./desktop/settings"
 import { findWallpaper } from "./desktop/scenes"
 import { resolveSettings, nextShuffle } from "./desktop/weather"
 import { forecast, REFRESH, type Forecast } from "./forecast"
-import { openBackdrop, type BackdropHandle } from "./gui/backdrop"
+import { Backdrop, backdropCss } from "./gui/backdrop"
 import { Controls } from "./gui/controls"
 import { definition } from "./gui/definition"
 import { css } from "./gui/css"
@@ -13,48 +14,36 @@ import { css } from "./gui/css"
 const FADE = 1.5
 
 const setup: Plugin.Setup<typeof definition> = (ctx) => {
-  ctx.add(Style, css)
+  ctx.add(Style, css + backdropCss)
 
   const store = ctx.stores.prefs
   const prefs = () => store.value
 
-  // The scene is the window's background: it belongs to the window, not to a tab, a panel or a dialog. setup owns it.
-  let backdrop: BackdropHandle | undefined
+  // The scene is the window's background: it belongs to the window, not to a tab, a panel or a dialog.
+  const [backdrop, setBackdrop] = createSignal<Engine>()
   // What the running scene was built from, so a brightness-only change restyles instead of restarting.
   let painted = ""
-  // The override failed in this window, so nothing painted. Kept out of the store so the next window boot tries again.
-  const [failed, setFailed] = createSignal(false)
 
   // Auto time, seasons and hourly shuffle follow the clock, and the scene must follow them. The store alone cannot carry
   // that: writing an identical value back notifies nothing, so the tick is a signal the paint effect reads.
   const [now, setNow] = createSignal(new Date())
   const [local, setLocal] = createSignal<Forecast>()
 
-  const close = () => {
-    backdrop?.destroy()
-    backdrop = undefined
-    painted = ""
-  }
-
-  // Opens the layer once, unless it already failed in this window. There is nowhere else to paint: the wallpaper is the
-  // window's background, and its settings live in a dialog.
-  createEffect(() => {
-    if (backdrop || failed()) return
-    backdrop = openBackdrop({
-      onError: (error) => notify(ctx, error),
-      onFallback: () => {
-        setFailed(true)
-        ctx.toast.show({ title: ctx.t("fallback"), variant: "error" })
-      },
-      theme: ctx.appearance.mode(),
-    })
-  })
-
-  // The scrim follows the interface theme. The mode is read outside the optional chain: inside it, a missing handle
-  // would subscribe to nothing and never run again.
-  createEffect(() => {
-    const theme = ctx.appearance.mode()
-    backdrop?.setTheme(theme)
+  ctx.add(Slot, {
+    at: "window.bottom",
+    order: -100,
+    render: () => (
+      <Show when={findWallpaper(prefs().wallpaper)}>
+        <Backdrop
+          theme={ctx.appearance.mode()}
+          onReady={(engine) => {
+            painted = ""
+            setBackdrop(engine)
+          }}
+          onError={(error) => notify(ctx, error)}
+        />
+      </Show>
+    ),
   })
 
   // Local weather is fetched only while it is the chosen setting, as the TUI does.
@@ -78,12 +67,13 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
   createEffect(() => {
     const current = prefs()
     const at = now()
-    if (!backdrop) return
-    backdrop.power(current.power ?? "saver")
+    const engine = backdrop()
+    if (!engine) return
+    engine.power(current.power ?? "saver")
     const settings = resolveSettings(current, at, local())
     const wallpaper = findWallpaper(current.wallpaper)
     if (!wallpaper) {
-      backdrop.setWallpaper(undefined, settings)
+      engine.stop()
       painted = ""
       return
     }
@@ -91,7 +81,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
     const key = `${wallpaper.id} ${settings.activity} ${settings.time} ${settings.season} ${settings.weather}`
     const same = key === painted
     painted = key
-    backdrop.setWallpaper(wallpaper, settings, same ? undefined : FADE)
+    engine.start(wallpaper, settings, same ? undefined : FADE)
   })
 
   // Agent reactions. The server is resolved in an effect because `servers.get` answers undefined before the app
@@ -99,7 +89,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
   const running = new Map<string, boolean>()
   let outcome: "done" | "error" | "idle" = "idle"
   const begin = (sessionID: string) => {
-    if (![...running.values()].some(Boolean)) backdrop?.react("busy")
+    if (![...running.values()].some(Boolean)) backdrop()?.react("busy")
     running.set(sessionID, true)
   }
   const end = (server: ReturnType<typeof ctx.servers.get>, sessionID: string, result: "done" | "error" | "idle") => {
@@ -108,7 +98,7 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
     const info = server?.data.session.get(sessionID)
     if (outcome !== "error" && !(result === "error" && info?.parentID)) outcome = result
     if ([...running.values()].some(Boolean)) return
-    backdrop?.react(outcome)
+    backdrop()?.react(outcome)
     outcome = "idle"
   }
   createEffect(() => {
@@ -130,15 +120,14 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
     if (next) store.set(apply(current, next).state)
   }, 60_000)
 
-  onCleanup(() => {
-    clearInterval(timer)
-    close()
-  })
+  onCleanup(() => clearInterval(timer))
 
   // The settings live in a dialog, opened by /wallpaper and by the command palette.
   const openDialog = () =>
     ctx.dialogs.open((dialog) => (
-      <Controls state={prefs()} onChange={(next: Stored) => store.set(next)} onDone={() => dialog.close()} />
+      <ctx.ui.Dialog title="Wallpaper" footer={<ctx.ui.Button onClick={() => dialog.close()}>Done</ctx.ui.Button>}>
+        <Controls ui={ctx.ui} state={prefs()} onChange={(next: Stored) => store.set(next)} />
+      </ctx.ui.Dialog>
     ))
 
   ctx.add(Command, () => ({

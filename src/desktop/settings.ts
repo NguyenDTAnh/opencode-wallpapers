@@ -30,7 +30,7 @@ export interface Stored {
   changed?: Record<string, number>
 }
 
-export const INITIAL: Stored = { wallpaper: "" }
+export const INITIAL: Stored = { wallpaper: "zen" }
 
 export const StoredSchema = Schema.Struct({
   wallpaper: Schema.String,

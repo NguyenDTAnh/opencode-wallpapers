@@ -35,21 +35,21 @@ an error. With mouse support, clicking empty background nudges the scene, and ea
 
 ## OpenCode Desktop
 
-The same package also has a desktop part. The wallpaper fills the **window**, behind the sidebar, the timeline and the
-composer, dimmed by a scrim so text stays readable. The plugin's panel holds the settings and nothing else.
+The same package also has a desktop part. The wallpaper fills the **window**, behind the sidebar, the Home projects and
+session list, the timeline and the composer, dimmed by a scrim so text stays readable. The plugin has no panel; its
+settings are a dialog.
 
 Open it from the command palette (**Choose wallpaper**) or by typing `/wallpaper` in the composer. `/wallpaper beach`
-still works, with the same arguments as the terminal. Settings live behind the panel's own **Settings** button, which
-toggles a row of choices above the bar; brightness changes restyle the running scene instead of restarting it.
+still works, with the same arguments as the terminal. The dialog is built from the app's own `Dialog` and `Menu`
+components, so it looks native, and changes apply while it is open.
 
-The window backdrop is a layer below the app's own surfaces, never on top of them: nothing the plugin draws covers a
-label, a button or the composer, and dialogs paint their own background as usual. It survives closing the panel tab,
-collapsing the side region and switching sessions.
+The scene is a plugin-owned canvas rendered through the app's `Slot` API with its CSS registered through `Style`: the
+plugin never reaches into the app's DOM. It sits below the app's own surfaces, so nothing it draws covers a label, a
+button or the composer. The composer, menus, dialogs, the session search field and hover or selected rows keep their
+own opaque surfaces. The animation keeps painting during a window resize, so tiling the window does not flash.
 
-Three things differ from the terminal:
+Two things differ from the terminal:
 
-- If the desktop app changes the internal style variables the backdrop relies on, the wallpaper moves to the panel and
-  a notice says so, rather than leaving a black window.
 - Wallpapers from other packages through the `wallpapers` option are not loaded. A window has no filesystem to import
   them from. The built-in wallpapers all work.
 - The terminal-only environment variables below and the per-project setting do not apply. One wallpaper serves every

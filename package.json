@@ -45,6 +45,7 @@
     "screenshots": "bun dev/screenshots.ts",
     "screenshots:update": "bun dev/screenshots.ts --update",
     "build:gui": "bun ./node_modules/vite/bin/vite.js build",
+    "test:gui": "bun dev/build-backdrop-fixture.ts && uv run --with playwright --with pillow python dev/test-backdrop.py",
     "watch:gui": "bun ./node_modules/vite/bin/vite.js build --watch"
   },
   "peerDependencies": {

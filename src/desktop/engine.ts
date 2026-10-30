@@ -122,21 +122,27 @@ export function createEngine(options: EngineOptions): Engine {
     const { w, h, cssWidth, cssHeight } = measure()
     const deviceWidth = Math.max(1, Math.round(cssWidth * (window.devicePixelRatio || 1)))
     const deviceHeight = Math.max(1, Math.round(cssHeight * (window.devicePixelRatio || 1)))
+    const displayChanged = canvas.width !== deviceWidth || canvas.height !== deviceHeight
+    const sceneChanged = w !== width || h !== height
+    if (!displayChanged && !sceneChanged) return
     if (canvas.width !== deviceWidth) canvas.width = deviceWidth
     if (canvas.height !== deviceHeight) canvas.height = deviceHeight
-    if (w === width && h === height) return
-    width = w
-    height = h
-    source.width = w
-    source.height = h
-    previous.width = w
-    previous.height = h
-    frameData = undefined
-    outgoingData = undefined
-    mixed = undefined
     try {
-      current?.scene.resize(w, h, false)
-      outgoing?.scene.resize(w, h, false)
+      if (sceneChanged) {
+        width = w
+        height = h
+        source.width = w
+        source.height = h
+        previous.width = w
+        previous.height = h
+        frameData = undefined
+        outgoingData = undefined
+        mixed = undefined
+        current?.scene.resize(w, h, false)
+        outgoing?.scene.resize(w, h, false)
+      }
+      // Resizing clears the display buffer. Repaint before layout is presented, even between animation ticks.
+      blit()
     } catch (error) {
       report(error)
       stop()
@@ -177,15 +183,14 @@ export function createEngine(options: EngineOptions): Engine {
         blended[i + 2] = a[i + 2] + (b[i + 2] - a[i + 2]) * (1 - t)
         blended[i + 3] = 255
       }
-      context.putImageData(new ImageData(blended, source.width, source.height), 0, 0)
+      sourceContext!.putImageData(new ImageData(blended, source.width, source.height), 0, 0)
       // The outgoing scene is done fading; release it so only one scene is kept between changes.
       if (fading >= 1) {
         outgoing = undefined
         outgoingData = undefined
       }
-    } else {
-      context.drawImage(source, 0, 0, canvas.width, canvas.height)
     }
+    context.drawImage(source, 0, 0, canvas.width, canvas.height)
   }
 
   const step = (at: number) => {

@@ -2,18 +2,17 @@
 
 ## Unreleased
 
-- The wallpaper fills the OpenCode Desktop window, behind the interface, with a scrim that follows the light or dark
-  theme so text stays readable. The plugin's panel holds the settings; it paints the scene only if the window backdrop
-  cannot be.
-- The backdrop is a layer below the app's own surfaces, so nothing it draws covers a label, a button or the composer.
-- If an app update changes the style variables the backdrop relies on, the wallpaper moves to the panel with a notice,
-  instead of leaving a black window.
-- An OpenCode Desktop part: the same wallpapers behind the window. Open its settings from the command palette or
-  `/wallpaper`; the panel in the session's side region holds them.
-- The desktop part reuses every scene unchanged and replaces only the renderer: a canvas needs real pixels, not the
-  terminal's two colours per cell.
-- Desktop leaves out what needs a terminal or a filesystem: the `WALLPAPER_*` variables, kitty pixel mode, wallpapers
-  from other packages, and the per-project setting.
+- The wallpaper now fills the OpenCode Desktop window behind the interface, including the sidebar, the Home
+  projects and session list, the timeline and the chat surface. Controls stay readable: the composer, menus,
+  dialogs, the search field and hover/selected rows keep their own opaque surfaces.
+- The scene is a plugin-owned component rendered through the GUI `Slot` API, with its CSS registered through
+  `Style`. The plugin no longer locates or inserts nodes into the app's DOM.
+- The animation repaints during a window resize instead of clearing to the app's background, so tiling or resizing
+  the window no longer flashes.
+- `/wallpaper` opens the settings in a native dialog built from `ctx.ui.Dialog` and `ctx.ui.Menu`; `/wallpaper
+  <argument>` still applies one setting. The side panel is gone, and the TUI is unchanged.
+- Desktop leaves out what needs a terminal or a filesystem: the `WALLPAPER_*` variables, kitty pixel mode,
+  wallpapers from other packages, and the per-project setting.
 
 ## 0.1.0
 
