@@ -38,14 +38,14 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun dev/build.ts && vite build",
+    "build": "bun dev/build.ts && bun ./node_modules/vite/bin/vite.js build",
     "prepack": "bun run build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.gui.json --noEmit",
     "check": "bun dev/check.ts",
     "screenshots": "bun dev/screenshots.ts",
     "screenshots:update": "bun dev/screenshots.ts --update",
-    "build:gui": "vite build",
-    "watch:gui": "vite build --watch"
+    "build:gui": "bun ./node_modules/vite/bin/vite.js build",
+    "watch:gui": "bun ./node_modules/vite/bin/vite.js build --watch"
   },
   "peerDependencies": {
     "@opentui/core": ">=0.5.14",
