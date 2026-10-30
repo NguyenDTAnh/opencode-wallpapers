@@ -75,10 +75,17 @@ export const backdropCss = `
   background-color: transparent !important;
 }
 
-/* Only the colours change. The app positions the "New session" button from the header's own height, so
-   resizing or re-anchoring the header moves the button away from the date row. */
+/* Only the colours change here; the sticky behaviour is fixed separately below. */
 #root:has(.wallpapers-backdrop) [data-slot=home-panel] section > .sticky:has([data-component=home-session-search]) {
   background: transparent !important;
+}
+
+/* The search row and the "New session" button share this wrapper. It sticks to the top today, which lifts the
+   whole header over the list while scrolling. Relative keeps it a positioning context for that absolutely placed
+   button without pinning it. */
+#root:has(.wallpapers-backdrop) [data-slot=home-panel] section > div:has([data-component=home-session-search]) {
+  position: relative !important;
+  top: auto !important;
 }
 
 #root:has(.wallpapers-backdrop) [data-component=home-session-search] > label {

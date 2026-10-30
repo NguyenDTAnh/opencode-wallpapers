@@ -89,8 +89,11 @@ render(() => <>
         <div data-home-row data-selected><button>Selected Project</button></div>
       </div>
       <section>
-        <div class="sticky bg-v2-background-bg-base" id="home-header">
+        <div class="sticky top-0 bg-v2-background-bg-base" id="home-header">
           <div data-component="home-session-search"><label><input placeholder="Search sessions" /></label></div>
+          <div class="pointer-events-none absolute right-0 top-[68px] z-20" id="home-new-session-wrap">
+            <button data-action="home-new-session">New session</button>
+          </div>
         </div>
         <div data-slot="home-sessions-list">
           <div class="sticky bg-v2-background-bg-base home-session-group-header" id="home-date">Today</div>

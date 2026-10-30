@@ -90,6 +90,7 @@ with sync_playwright() as p:
         assert background("[data-component=home-session-search] > label") == "rgb(38, 38, 38)"
         assert page.locator("[data-component=home-session-search] > label").evaluate("e => getComputedStyle(e).boxShadow") == "none"
         assert background("#home-date") == "rgba(0, 0, 0, 0)"
+        assert page.locator("#home-header").evaluate("e => getComputedStyle(e).position") == "relative"
         assert page.locator("#home-date").evaluate("e => getComputedStyle(e).position") == "relative"
         assert page.locator("#home-date").evaluate("e => getComputedStyle(e, '::before').backgroundColor") == "rgba(0, 0, 0, 0)"
         paint = page.locator("#home-date").evaluate("e => getComputedStyle(e, '::after').backgroundImage")
