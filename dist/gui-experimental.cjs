@@ -12,7 +12,7 @@ Object.defineProperties(exports,{__esModule:{value:!0},[Symbol.toStringTag]:{val
   height: 100%;
   display: block;
   /* The scene sits behind a scrim, so lift it a little to keep the colours from going muddy. */
-  filter: brightness(1.2);
+  filter: brightness(1.9);
 }
 .wallpapers-backdrop-scrim {
   position: absolute;
