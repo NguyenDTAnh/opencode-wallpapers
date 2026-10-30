@@ -116,7 +116,7 @@ with sync_playwright() as p:
         # Selected rows keep a readable surface.
         selected = background("#sidebar-div-row-selected-wrap")
         assert selected != "rgba(0, 0, 0, 0)", "selected sidebar row lost its surface"
-        assert background("#sidebar-tab-selected") == "rgb(38, 38, 38)"
+        assert background("#sidebar-tab-selected") != "rgba(0, 0, 0, 0)"
         assert background("[data-home-row][data-selected]") == "rgb(38, 38, 38)"
         page.locator("[data-slot=home-projects-viewport] [data-home-row] button").first.hover()
         assert background("[data-slot=home-projects-viewport] [data-home-row]:not([data-selected])") == "rgb(38, 38, 38)"

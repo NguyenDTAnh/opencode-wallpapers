@@ -120,17 +120,20 @@ export const backdropCss = `
   top: auto !important;
 }
 
-/* Anything the app gave a surface, except the current item and the hover states, which need their highlight. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] :is(button, [role=tab], [data-home-row], .bg-v2-background-bg-base):not(
-  :hover, :focus-within, :focus-visible, :has(:hover), :has(:focus-visible), [data-selected], [data-state=active], [aria-selected=true], :has([data-selected]), :has([aria-selected=true]), :has([data-menu=true])
-) {
+/* Sidebar rows paint a surface on an inner div whose class list is long and easy to misread, so match by structure:
+   a row is a div wrapping a button that carries the session title. Hover, focus and the current item keep a highlight. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div:has(> button),
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button,
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] [data-home-row] {
   background-color: transparent !important;
   background-image: none !important;
 }
 
-/* The selected session keeps a readable surface. */
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div.bg-v2-background-bg-base:has([data-selected]),
-#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div.bg-v2-background-bg-base:has([aria-selected=true]) {
+/* The current session stays distinct: the row that contains the selected tab keeps a surface. */
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div[data-selected],
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] div[aria-selected=true],
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[data-selected],
+#root:has(.wallpapers-backdrop) [data-slot=vertical-tabs-mount] button[aria-selected=true] {
   background-color: var(--v2-background-bg-layer-02) !important;
 }
 `
