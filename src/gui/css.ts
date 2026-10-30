@@ -121,3 +121,6 @@ export const css = `
   border-color: var(--color-border-300, #44494f);
 }
 `
+
+// The window backdrop. Lives below #root, so it never covers the app's own text, buttons or composer; the scrim keeps
+// them readable over a moving scene. Its own styles ship from src/gui/backdrop.ts, next to the code that applies them.
