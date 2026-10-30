@@ -12,8 +12,9 @@ const FADE = 1.5
 // A stored global is loaded before setup runs, so a missing value means the store is not ready yet.
 const state = (store: Persisted<Stored>): Stored => store.value ?? INITIAL
 
-// One panel tab. The engine lives and dies with the component, so moving the tab or switching sessions does not leave
-// an animation loop running.
+// The panel. In panel mode it owns the engine and paints the scene in its own canvas. In window mode the backdrop owns
+// the engine, so the panel renders the settings only — two canvases stepping one scene would double the cost and let
+// the copies drift.
 export function Scene(props: {
   readonly session: MountedSession
   readonly store: Persisted<Stored>
@@ -30,25 +31,41 @@ export function Scene(props: {
   let started: string | undefined
   let startedKey = ""
   const panel = usePanel()
+  // The backdrop owns the engine in window mode; the panel then paints nothing.
+  const mine = () => (state(props.store).backdrop ?? "window") === "panel"
 
   onMount(() => {
-    engine = createEngine({ canvas, onError: props.onError })
     if (!state(props.store).wallpaper) setOpen(true)
     // Auto time and season follow the clock, hourly shuffle needs a tick, and local weather refreshes on its own
     // schedule. One minute is enough for the first two; the forecast call caches internally.
     const clock = setInterval(() => setNow(new Date()), 60_000)
     onCleanup(() => clearInterval(clock))
+  })
+
+  // The engine exists only while the panel owns the painting. It follows the mode, so a switch to window mode stops it
+  // instead of leaving a second loop running behind the backdrop.
+  createEffect(() => {
+    if (!mine()) {
+      engine?.destroy()
+      engine = undefined
+      return
+    }
+    if (engine) return
+    engine = createEngine({ canvas, onError: props.onError })
+    onCleanup(() => {
+      engine?.destroy()
+      engine = undefined
+    })
     // Scenes follow the agent the way they do in the TUI: busy while any session runs, then done, error or idle once
     // the last one stops. A subagent's failure is left to its parent, and repeated ends for a session count once.
-    const servers = props.servers
-    const server = servers.get(props.session.server.id) ?? servers.get("sidecar")
+    const server = props.servers.get(props.session.server.id) ?? props.servers.get("sidecar")
     const running = new Map<string, boolean>()
     let outcome: "done" | "error" | "idle" = "idle"
-    const started = (sessionID: string) => {
+    const begin = (sessionID: string) => {
       if (![...running.values()].some(Boolean)) engine?.react("busy")
       running.set(sessionID, true)
     }
-    const ended = (sessionID: string, result: "done" | "error" | "idle") => {
+    const end = (sessionID: string, result: "done" | "error" | "idle") => {
       if (running.get(sessionID) === false) return
       running.set(sessionID, false)
       const info = server?.data.session.get(sessionID)
@@ -59,18 +76,13 @@ export function Scene(props: {
     }
     const stops = server
       ? [
-          server.data.on("session.execution.started", (event) => started(event.data.sessionID)),
-          server.data.on("session.execution.succeeded", (event) => ended(event.data.sessionID, "done")),
-          server.data.on("session.execution.failed", (event) => ended(event.data.sessionID, "error")),
-          server.data.on("session.execution.interrupted", (event) => ended(event.data.sessionID, "idle")),
+          server.data.on("session.execution.started", (event) => begin(event.data.sessionID)),
+          server.data.on("session.execution.succeeded", (event) => end(event.data.sessionID, "done")),
+          server.data.on("session.execution.failed", (event) => end(event.data.sessionID, "error")),
+          server.data.on("session.execution.interrupted", (event) => end(event.data.sessionID, "idle")),
         ]
       : []
     onCleanup(() => stops.forEach((stop) => stop()))
-  })
-
-  onCleanup(() => {
-    engine?.destroy()
-    engine = undefined
   })
 
   // Local weather is fetched only while it is the chosen setting, as the TUI does.
@@ -134,9 +146,11 @@ export function Scene(props: {
   }
 
   return (
-    <div class="wallpapers-panel" ref={surface}>
-      <canvas ref={canvas} class="wallpapers-canvas" onClick={poke} />
-      <Show when={!state(props.store).wallpaper}>
+    <div class={`wallpapers-panel${mine() ? "" : " wallpapers-panel-clear"}`} ref={surface}>
+      <Show when={mine()}>
+        <canvas ref={canvas} class="wallpapers-canvas" onClick={poke} />
+      </Show>
+      <Show when={mine() && !state(props.store).wallpaper}>
         <div class="wallpapers-empty">No wallpaper chosen yet. Pick one from the settings below.</div>
       </Show>
       <div class="wallpapers-bottom">

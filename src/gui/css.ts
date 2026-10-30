@@ -120,6 +120,11 @@ export const css = `
 .wallpapers-bar button:hover {
   border-color: var(--color-border-300, #44494f);
 }
+
+/* In window mode the backdrop owns the scene, so the panel's own frame must not paint over it. */
+.wallpapers-panel-clear {
+  background: transparent;
+}
 `
 
 // The window backdrop. Lives below #root, so it never covers the app's own text, buttons or composer; the scrim keeps
