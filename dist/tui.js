@@ -20838,8 +20838,444 @@ var tundra = {
   create: (settings) => new Tundra(settings)
 };
 
-// wallpapers/zen.ts
+// wallpapers/universe.ts
 var TIME_SCALE20 = 0.35;
+var MIDDLE = 0.53;
+var FLAT2 = 0.36;
+var TILT = -0.11;
+var SPIN = 0.26;
+var LOGO = 0.15;
+var TILE = 0.032;
+var SURGE2 = 4;
+var EXTRAS2 = 8;
+var COOL = [0.78, 0.8, 0.86];
+var WARM = [1, 0.64, 0.34];
+var EMBER = { right: 0.2, y: 0.78, r: 0.6, color: [0.05, 0.02, 0.008] };
+var CAST3 = {
+  calm: { streaks: 220, icons: 5, marks: 4 },
+  lively: { streaks: 380, icons: 10, marks: 8 },
+  teeming: { streaks: 460, icons: 14, marks: 12 }
+};
+var MARKS = [
+  [1, 0.22, 0.16],
+  [0.2, 0.85, 0.3],
+  [0.12, 0.72, 1],
+  [0.95, 0.25, 0.85],
+  [1, 0.75, 0.12],
+  [0.3, 0.42, 1],
+  [1, 0.48, 0.1],
+  [0.62, 0.32, 1]
+];
+var ICONS = [
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "key" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "lock" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "shield" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "person" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "globe" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "doc" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "terminal" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.48, 0.48, 0.52], kind: "image" },
+  { tile: [0.085, 0.085, 0.095], glyph: [0.66, 0.66, 0.7], kind: "dot" },
+  { tile: [0.55, 0.36, 0.25], glyph: [0.95, 0.85, 0.75], kind: "anthropic" },
+  { tile: [0.06, 0.24, 0.7], glyph: [0.65, 0.8, 1], kind: "meta" },
+  { tile: [0.8, 0.28, 0.07], glyph: [1, 0.78, 0.55], kind: "mistral" },
+  { tile: [0.08, 0.38, 0.75], glyph: [0.85, 0.95, 1], kind: "azure" },
+  { tile: [0.82, 0.52, 0.06], glyph: [0.3, 0.16, 0.02], kind: "doc" },
+  { tile: [0.28, 0.28, 0.85], glyph: [0.85, 0.88, 1], kind: "globe" }
+];
+
+class Universe extends Canvas {
+  cast;
+  streaks = [];
+  icons = [];
+  stars = [];
+  surge = 0;
+  time = 0;
+  logo = { x: 0, y: 0, w: 0, h: 0, rgba: new Float32Array(0) };
+  constructor(settings) {
+    super();
+    this.supersample = 1;
+    this.cast = CAST3[settings.activity];
+  }
+  reach() {
+    return Math.hypot(this.A / 2 + 0.1, (0.5 + 0.08) / FLAT2);
+  }
+  streak() {
+    const r = lerp(0.11, this.reach(), Math.random() ** 1.1);
+    const length = 0.04 + 0.32 * Math.random() ** 2;
+    return { r, a: rand(0, TAU), span: Math.min(1.5, length / r), bright: 0.07 + 0.38 * Math.random() ** 2.2, warm: Math.random() < 0.16 ? rand(0.4, 1) : rand(0, 0.12) };
+  }
+  icon(extra = false, mark = false) {
+    return {
+      r: lerp(0.24, this.reach() * 0.85, Math.random() ** 1.2),
+      a: rand(0, TAU),
+      icon: mark ? { tile: [0.03, 0.03, 0.034], glyph: MARKS[Math.floor(Math.random() * MARKS.length)], kind: "opencode" } : ICONS[Math.floor(Math.random() * ICONS.length)],
+      bright: mark ? rand(0.6, 1) : rand(0.35, 1),
+      age: 0,
+      life: rand(30, 60),
+      extra
+    };
+  }
+  step(dt) {
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE20;
+    this.time += dt;
+    this.stepGloom(dt);
+    this.surge = Math.max(0, this.surge - dt);
+    const pace = dt * SPIN * (1 - 0.6 * this.gloom) * (1 + 1.5 * this.rush());
+    for (const s of this.streaks)
+      s.a += pace * spin(s.r);
+    for (const [i, c] of this.icons.entries()) {
+      c.a += pace * 0.85 * spin(c.r);
+      c.age += dt;
+      if (c.age < c.life)
+        continue;
+      if (c.extra)
+        c.life = 0;
+      if (!c.extra)
+        this.icons[i] = this.icon(false, c.icon.kind === "opencode");
+    }
+    this.icons = this.icons.filter((c) => c.life > 0);
+  }
+  rush() {
+    return smoothstep(0, 1, this.surge) * smoothstep(SURGE2, SURGE2 - 1, this.surge);
+  }
+  render() {
+    this.restore();
+    const { W, H, hdr } = this;
+    for (const s of this.stars)
+      this.point(s.x * W, s.y * H, s.b * s.tint[0], s.b * s.tint[1], s.b * s.tint[2], s.b > 0.05 ? 2 : 1);
+    const dim2 = (1 - 0.5 * this.gloom) * (1 + 0.2 * this.rush()) * (this.cells ? 1.15 : 1);
+    const cx = this.A / 2 * H;
+    const cy = MIDDLE * H;
+    const ex = (this.A - EMBER.right) * H;
+    const ey = EMBER.y * H;
+    const er = EMBER.r * H;
+    for (const s of this.streaks) {
+      if (this.cells && s.bright < 0.12)
+        continue;
+      const hx = cx + orbitX(s.r, s.a) * H;
+      const hy = cy + orbitY(s.r, s.a) * H;
+      const glow2 = Math.exp(-((hx - ex) ** 2 + (hy - ey) ** 2) / (er * er));
+      const w = clamp(s.warm + 0.85 * glow2, 0, 1);
+      const k = s.bright * dim2;
+      arc(hdr, W, H, cx, cy, s.r * H, s.a, s.span, lerp(COOL[0], WARM[0], w) * k, lerp(COOL[1], WARM[1], w) * k, lerp(COOL[2], WARM[2], w) * k);
+    }
+    const side = Math.max(TILE * H, this.cells ? 5 : 0);
+    for (const c of this.icons) {
+      const fade = smoothstep(0, 4, c.age) * smoothstep(c.life, c.life - 4, c.age) * c.bright * (1 - 0.5 * this.gloom);
+      if (fade <= 0.01)
+        continue;
+      const x = cx + orbitX(c.r, c.a) * H;
+      const y = cy + orbitY(c.r, c.a) * H;
+      const s = c.icon.kind === "opencode" ? side * 1.25 : side;
+      if (x < -s || y < -s || x > W + s || y > H + s)
+        continue;
+      tile(hdr, W, H, x, y, s, c.icon.tile, c.icon.glyph, c.icon.kind, fade, this.cells ? 2 : 3);
+      this.touch(x - s, y - s, x + s, y + s);
+    }
+    const logo = this.logo;
+    composite(hdr, W, H, logo.x, logo.y, logo.w, logo.h, logo.rgba);
+    this.touch(logo.x, logo.y, logo.x + logo.w - 1, logo.y + logo.h - 1);
+    this.finish();
+  }
+  visit() {
+    this.surge = SURGE2;
+  }
+  poke(x, y) {
+    if (this.icons.filter((c) => c.extra).length >= EXTRAS2)
+      return;
+    const dx = x - this.A / 2;
+    const dy = y - MIDDLE;
+    const u = dx * Math.cos(TILT) + dy * Math.sin(TILT);
+    const v = (-dx * Math.sin(TILT) + dy * Math.cos(TILT)) / FLAT2;
+    this.icons.push({ ...this.icon(true), r: Math.max(0.15, Math.hypot(u, v)), a: Math.atan2(v, u), bright: 1, life: 24 });
+  }
+  layout() {
+    const { W, H, hdr, A } = this;
+    const count = (n) => Math.round(n * clamp(A / (16 / 9), 0.6, 1.6));
+    const streaks = count(this.cast.streaks);
+    this.streaks = [...this.streaks.slice(0, streaks), ...Array.from({ length: Math.max(0, streaks - this.streaks.length) }, () => this.streak())];
+    const fill = (n, mark) => {
+      const own = this.icons.filter((c) => !c.extra && c.icon.kind === "opencode" === mark);
+      return [...own.slice(0, n), ...Array.from({ length: Math.max(0, n - own.length) }, () => ({ ...this.icon(false, mark), age: rand(0, 30) }))];
+    };
+    this.icons = [...fill(count(this.cast.icons), false), ...fill(count(this.cast.marks), true), ...this.icons.filter((c) => c.extra)];
+    if (!this.stars.length)
+      this.stars = Array.from({ length: count(140) }, () => ({
+        x: rand(0, 1),
+        y: rand(0, 1),
+        b: rand(0.015, 0.07),
+        tint: [[0.9, 0.85, 0.8], [0.8, 0.85, 1], [1, 0.8, 0.6]][Math.floor(Math.random() * 3)]
+      }));
+    for (let y = 0;y < H; y++) {
+      const v = (y + 0.5) / H;
+      for (let x = 0;x < W; x++) {
+        const u = (x + 0.5) / H;
+        const dx = u - A / 2;
+        const dy = v - MIDDLE;
+        const pu = dx * Math.cos(TILT) + dy * Math.sin(TILT);
+        const pv = (-dx * Math.sin(TILT) + dy * Math.cos(TILT)) / FLAT2;
+        const disk = Math.exp(-(pu * pu + pv * pv) / 0.35);
+        const ember = Math.exp(-((u - (A - EMBER.right)) ** 2 + (v - EMBER.y) ** 2) / (EMBER.r * EMBER.r));
+        const o = (y * W + x) * 3;
+        hdr[o] = 0.026 + 0.012 * disk + EMBER.color[0] * ember;
+        hdr[o + 1] = 0.04 + 0.012 * disk + EMBER.color[1] * ember;
+        hdr[o + 2] = 0.042 + 0.016 * disk + EMBER.color[2] * ember;
+      }
+    }
+    this.logo = paintLogo(W, H, A / 2 * H, MIDDLE * H, LOGO * H);
+  }
+}
+function spin(r) {
+  return (0.5 / Math.max(r, 0.11)) ** 1.1;
+}
+function orbitX(r, a) {
+  return r * (Math.cos(a) * Math.cos(TILT) - Math.sin(a) * FLAT2 * Math.sin(TILT));
+}
+function orbitY(r, a) {
+  return r * (Math.cos(a) * Math.sin(TILT) + Math.sin(a) * FLAT2 * Math.cos(TILT));
+}
+function arc(hdr, W, H, cx, cy, r, a, span, cr, cg, cb) {
+  const n = Math.max(2, Math.min(500, Math.ceil(span * r / 0.7)));
+  const step = span / n;
+  const cs = Math.cos(step);
+  const sn = Math.sin(step);
+  const ct = Math.cos(TILT);
+  const st = Math.sin(TILT);
+  let c = Math.cos(a - span);
+  let s = Math.sin(a - span);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0;i <= n; i++) {
+    const t = i / n;
+    const k = t ** 1.4 * smoothstep(1, 0.93, t);
+    const x = cx + r * (c * ct - s * FLAT2 * st) - 0.5;
+    const y = cy + r * (c * st + s * FLAT2 * ct) - 0.5;
+    const nc = c * cs - s * sn;
+    s = s * cs + c * sn;
+    c = nc;
+    if (k <= 0 || x < -1 || y < -1 || x >= W || y >= H)
+      continue;
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const fx = x - xi;
+    const fy = y - yi;
+    for (let j = 0;j < 2; j++) {
+      const yy = yi + j;
+      if (yy < 0 || yy >= H)
+        continue;
+      for (let q = 0;q < 2; q++) {
+        const xx = xi + q;
+        if (xx < 0 || xx >= W)
+          continue;
+        const w = (q ? fx : 1 - fx) * (j ? fy : 1 - fy) * k;
+        const o = (yy * W + xx) * 3;
+        hdr[o] += cr * w;
+        hdr[o + 1] += cg * w;
+        hdr[o + 2] += cb * w;
+      }
+    }
+    x0 = Math.min(x0, xi);
+    y0 = Math.min(y0, yi);
+    x1 = Math.max(x1, xi + 1);
+    y1 = Math.max(y1, yi + 1);
+    if (i % 16 && i < n)
+      continue;
+    if (x1 >= x0)
+      touch(hdr, x0, y0, x1, y1);
+    x0 = Infinity;
+    y0 = Infinity;
+    x1 = -Infinity;
+    y1 = -Infinity;
+  }
+  if (x1 >= x0)
+    touch(hdr, x0, y0, x1, y1);
+}
+function tile(hdr, W, H, cx, cy, side, color, ink, kind, alpha, ss) {
+  const half = side / 2 + 1;
+  const bx0 = Math.max(0, Math.floor(cx - half));
+  const by0 = Math.max(0, Math.floor(cy - half));
+  const bx1 = Math.min(W - 1, Math.ceil(cx + half));
+  const by1 = Math.min(H - 1, Math.ceil(cy + half));
+  const share = 1 / (ss * ss);
+  for (let y = by0;y <= by1; y++)
+    for (let x = bx0;x <= bx1; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let j = 0;j < ss; j++)
+        for (let i = 0;i < ss; i++) {
+          const u = (x + (i + 0.5) / ss - cx) / side;
+          const v = (y + (j + 0.5) / ss - cy) / side;
+          if (roundBox(u, v, 0.5, 0.5, 0.15) > 0)
+            continue;
+          const lit2 = 1 + 0.6 * smoothstep(-0.38, -0.5, v);
+          const on = kind === "opencode" ? mark(u, v) : glyph2(kind, u, v) < 0 ? 1 : 0;
+          r += on ? ink[0] * on : color[0] * lit2;
+          g += on ? ink[1] * on : color[1] * lit2;
+          b += on ? ink[2] * on : color[2] * lit2;
+          n++;
+        }
+      if (!n)
+        continue;
+      const cov = n * share * alpha;
+      const o = (y * W + x) * 3;
+      hdr[o] += (r / n - hdr[o]) * cov;
+      hdr[o + 1] += (g / n - hdr[o + 1]) * cov;
+      hdr[o + 2] += (b / n - hdr[o + 2]) * cov;
+    }
+}
+function mark(u, v) {
+  const U = u / 0.13;
+  const V = v / 0.13;
+  if (Math.abs(U) >= 2 || Math.abs(V) >= 2.5)
+    return 0;
+  if (Math.abs(U) >= 1 || Math.abs(V) >= 1.5)
+    return 1;
+  return V < -0.5 ? 0 : 0.35;
+}
+function glyph2(kind, u, v) {
+  const w = 0.055;
+  if (kind === "key")
+    return Math.min(Math.abs(Math.hypot(u + 0.1, v - 0.1) - 0.1), seg(u, v, -0.03, 0.03, 0.2, -0.2), seg(u, v, 0.11, -0.11, 0.18, -0.04)) - w;
+  if (kind === "lock")
+    return Math.min(roundBox(u, v - 0.08, 0.16, 0.12, 0.03), v < 0 ? Math.abs(Math.hypot(u, v + 0.02) - 0.1) - w : Infinity);
+  if (kind === "shield")
+    return Math.max(Math.abs(u) - 0.16 + Math.max(0, v) * 0.6, v - 0.2, -v - 0.2);
+  if (kind === "person")
+    return Math.min(Math.hypot(u, v + 0.09) - 0.09, Math.max(Math.hypot(u, v - 0.24) - 0.17, v - 0.19));
+  if (kind === "globe")
+    return Math.min(Math.abs(Math.hypot(u, v) - 0.19), Math.abs(Math.hypot(u * 2.2, v) - 0.19), Math.abs(v) + (Math.abs(u) > 0.19 ? 1 : 0)) - w * 0.8;
+  if (kind === "doc")
+    return Math.min(Math.abs(roundBox(u, v, 0.14, 0.19, 0.03)) - w * 0.8, seg(u, v, -0.06, -0.04, 0.06, -0.04) - w * 0.7, seg(u, v, -0.06, 0.06, 0.06, 0.06) - w * 0.7);
+  if (kind === "terminal")
+    return Math.min(seg(u, v, -0.16, -0.11, -0.04, 0), seg(u, v, -0.04, 0, -0.16, 0.11), seg(u, v, 0.02, 0.12, 0.17, 0.12)) - w;
+  if (kind === "image")
+    return Math.min(Math.abs(roundBox(u, v, 0.19, 0.16, 0.03)) - w * 0.8, Math.hypot(u - 0.07, v + 0.05) - 0.04, seg(u, v, -0.14, 0.12, -0.02, 0) - w, seg(u, v, -0.02, 0, 0.12, 0.12) - w);
+  if (kind === "anthropic")
+    return Math.min(seg(u, v, -0.19, 0.18, -0.06, -0.18), seg(u, v, -0.06, -0.18, 0.05, 0.18), seg(u, v, -0.14, 0.06, 0.01, 0.06), seg(u, v, 0.06, -0.18, 0.19, 0.18)) - w;
+  if (kind === "meta")
+    return Math.min(Math.abs(Math.hypot((u + 0.1) * 0.85, v) - 0.1), Math.abs(Math.hypot((u - 0.1) * 0.85, v) - 0.1)) - w;
+  if (kind === "mistral")
+    return Math.min(seg(u, v, -0.18, 0.16, -0.18, -0.16), seg(u, v, -0.18, -0.16, 0, 0.04), seg(u, v, 0, 0.04, 0.18, -0.16), seg(u, v, 0.18, -0.16, 0.18, 0.16)) - w;
+  if (kind === "azure")
+    return Math.max(Math.abs(u) * 1.1 - (v + 0.2) * 0.5, v - 0.17);
+  return Math.hypot(u, v) - 0.2;
+}
+function seg(u, v, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const t = clamp(((u - ax) * dx + (v - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+  return Math.hypot(u - ax - dx * t, v - ay - dy * t);
+}
+function roundBox(u, v, hx, hy, rad) {
+  const qx = Math.abs(u) - hx + rad;
+  const qy = Math.abs(v) - hy + rad;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - rad;
+}
+function paintLogo(W, H, cx, cy, size) {
+  const pad = size * 0.45;
+  const x = Math.max(0, Math.floor(cx - size / 2 - pad));
+  const y = Math.max(0, Math.floor(cy - size / 2 - pad));
+  const w = Math.min(W, Math.ceil(cx + size / 2 + pad)) - x;
+  const h = Math.min(H, Math.ceil(cy + size / 2 + pad)) - y;
+  const rgba = new Float32Array(Math.max(0, w * h * 4));
+  const ss = 4;
+  const block = 0.46 / 4;
+  for (let py = 0;py < h; py++)
+    for (let px = 0;px < w; px++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let j = 0;j < ss; j++)
+        for (let i = 0;i < ss; i++) {
+          const u = (x + px + (i + 0.5) / ss - cx) / size;
+          const v = (y + py + (j + 0.5) / ss - cy) / size;
+          const body2 = roundBox(u, v, 0.5, 0.5, 0.22);
+          if (body2 < 0) {
+            const U = u / block;
+            const V = v / block;
+            const ring = Math.abs(U) < 2 && Math.abs(V) < 2.5;
+            const counter = Math.abs(U) < 1 && Math.abs(V) < 1.5;
+            const shade2 = 0.035 + 0.035 * smoothstep(0.5, -0.5, v) + 0.25 * smoothstep(-0.03, 0, body2) * smoothstep(0.1, -0.5, v);
+            const c = !ring ? [shade2, shade2, shade2 * 1.08] : counter && V < -0.5 ? [0.01, 0.01, 0.012] : counter ? [0.3, 0.3, 0.32] : [0.82 - 0.08 * (V / 2.5), 0.82 - 0.08 * (V / 2.5), 0.86 - 0.08 * (V / 2.5)];
+            r += c[0];
+            g += c[1];
+            b += c[2];
+            a += 1;
+            continue;
+          }
+          if (roundBox(u, v - 0.04, 0.5, 0.5, 0.22) < 0) {
+            r += 0.006;
+            g += 0.006;
+            b += 0.007;
+            a += 1;
+            continue;
+          }
+          a += 0.9 * Math.exp(-((body2 / 0.22) ** 2));
+        }
+      const o = (py * w + px) * 4;
+      const k = 1 / (ss * ss);
+      rgba[o] = r * k;
+      rgba[o + 1] = g * k;
+      rgba[o + 2] = b * k;
+      rgba[o + 3] = a * k;
+    }
+  return { x, y, w, h, rgba };
+}
+function composite(hdr, W, H, x, y, w, h, rgba) {
+  for (let py = 0;py < h; py++) {
+    if (y + py < 0 || y + py >= H)
+      continue;
+    for (let px = 0;px < w; px++) {
+      if (x + px < 0 || x + px >= W)
+        continue;
+      const s = (py * w + px) * 4;
+      const o = ((y + py) * W + x + px) * 3;
+      const keep = 1 - rgba[s + 3];
+      hdr[o] = hdr[o] * keep + rgba[s];
+      hdr[o + 1] = hdr[o + 1] * keep + rgba[s + 1];
+      hdr[o + 2] = hdr[o + 2] * keep + rgba[s + 2];
+    }
+  }
+}
+var universe = {
+  id: "universe",
+  name: "Universe",
+  description: "A galaxy of light streaks swirling around the OpenCode icon, with app icons and little colored OpenCode marks drifting on its orbits",
+  fixedTime: "day",
+  collection: "Akira",
+  activity: {
+    calm: "A thin swirl of streaks and a few icons",
+    lively: "A fuller swirl with more icons drifting through it",
+    teeming: "The whole galaxy, dense with streaks and icons"
+  },
+  scrim: {
+    day: [
+      [4, 4, 6],
+      [3, 3, 5],
+      [4, 2, 2]
+    ],
+    sunset: [
+      [4, 4, 6],
+      [3, 3, 5],
+      [4, 2, 2]
+    ],
+    night: [
+      [4, 4, 6],
+      [3, 3, 5],
+      [4, 2, 2]
+    ]
+  },
+  create: (settings) => new Universe(settings)
+};
+
+// wallpapers/zen.ts
+var TIME_SCALE21 = 0.35;
 var CREATURE_SPEED14 = 0.25;
 var HORIZON9 = 0.52;
 var GROUND2 = 0.565;
@@ -20986,7 +21422,7 @@ class Zen extends Canvas {
   lights = new LightMap;
   storm = makeStorm();
   sparrows = [];
-  tanuki = { wait: eggWait() * TIME_SCALE20, t: -1 };
+  tanuki = { wait: eggWait() * TIME_SCALE21, t: -1 };
   trees = new SwayLayer(-1);
   constructor(settings) {
     super();
@@ -21009,7 +21445,7 @@ class Zen extends Canvas {
     this.fireflies = Array.from({ length: flies }, () => ({ x: Math.random() * 2, y: 0.58 + Math.random() * 0.36, vx: 0, vy: 0, phase: Math.random() * TAU }));
   }
   step(dt) {
-    dt = clamp(dt, 0, 0.1) * TIME_SCALE20;
+    dt = clamp(dt, 0, 0.1) * TIME_SCALE21;
     this.time += dt;
     const cdt = dt * CREATURE_SPEED14;
     this.creatureTime += cdt;
@@ -21822,7 +22258,7 @@ class Zen extends Canvas {
     if (k.t < TANUKI.gone)
       return;
     k.t = -1;
-    k.wait = eggWait(true) * TIME_SCALE20;
+    k.wait = eggWait(true) * TIME_SCALE21;
   }
   drawTanuki() {
     const { A, H } = this;
@@ -22013,7 +22449,7 @@ var zen = {
 };
 
 // wallpapers/index.ts
-var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, hauntedHouse, rider, megacity, dome, flowerbox, maze, pipes, mystify, flyingOpenCode, matrix];
+var WALLPAPERS = [ocean, desert, jungle, space, farm, tundra, beach, city, zen, prehistoric, hauntedHouse, rider, megacity, dome, flowerbox, maze, pipes, mystify, flyingOpenCode, universe, matrix];
 
 // tui.tsx
 var tui_default = Plugin.define({
@@ -22079,7 +22515,7 @@ ${external.skipped.join(`
       if (id && due(draft))
         choose(draft, other(draft, id));
     });
-    const [session, mark] = context.storage.memory("session", {
+    const [session, mark2] = context.storage.memory("session", {
       initial: {
         shuffled: false
       }
@@ -22090,7 +22526,7 @@ ${external.skipped.join(`
       setPicked(id);
       update((draft) => choose(draft, id)).finally(() => setPicked(undefined));
     }
-    mark((draft) => {
+    mark2((draft) => {
       draft.shuffled = true;
     });
     const shown = () => picked() ?? current(stored);
